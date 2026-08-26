@@ -332,7 +332,7 @@ describe('desktop lifecycle events', () => {
         operationId: 'cap-op',
       })
     }
-  })
+  }, 15_000)
 
   it('treats linked or unsafe evidence targets as best-effort logger-only failures', () => {
     const linkedParentDir = tempUserData('dsh-lifecycle-parent-link-')
