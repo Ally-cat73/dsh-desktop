@@ -888,26 +888,16 @@ describe('published package surface', () => {
     expect(manifest.devDependencies?.['@electron/asar']).toBe('3.4.1')
   })
 
-  it('runs platform package gates before reusing native packaging outputs', () => {
-    const windowsJob = ciWorkflow.slice(
-      ciWorkflow.indexOf('  desktop-windows:'),
-      ciWorkflow.indexOf('  desktop-macos:'),
-    )
-    const macosJob = ciWorkflow.slice(
-      ciWorkflow.indexOf('  desktop-macos:'),
-      ciWorkflow.indexOf('  upstream-command-windows:'),
-    )
-
-    expect(windowsJob).not.toContain('- run: yarn check')
-    expect(windowsJob).toContain('- run: yarn workspace dsh-plugin-desktop check:win-package')
-    expect(windowsJob).toContain('run: yarn workspace dsh-plugin-desktop dist:win')
-    expect(windowsJob).toContain('run: yarn workspace dsh-plugin-desktop dist:win-portable')
-    expect(windowsJob).toContain('DSH_PACKAGE_CHECK_ALREADY_RAN: \'1\'')
-    expect(macosJob).not.toContain('- run: yarn check')
-    expect(macosJob).toContain('- run: yarn workspace dsh-plugin-desktop check:mac-package')
-    expect(macosJob).toContain('run: yarn workspace dsh-plugin-desktop dist:mac-smoke')
-    expect(macosJob).toContain('DSH_PACKAGE_CHECK_ALREADY_RAN: \'1\'')
-    expect(macosJob).not.toContain('- run: yarn dist:mac-smoke')
+  it('keeps native package acceptance separate from UbiCloud Linux CI', () => {
+    expect(ciWorkflow).toContain('runs-on: ubicloud-standard-2-ubuntu-2404')
+    expect(ciWorkflow).toContain('runs-on: ubicloud-standard-4-ubuntu-2404')
+    expect(ciWorkflow).not.toContain('  desktop-windows:')
+    expect(ciWorkflow).not.toContain('  desktop-macos:')
+    expect(ciWorkflow).not.toContain('runs-on: windows-latest')
+    expect(ciWorkflow).not.toContain('runs-on: macos-latest')
+    expect(ciWorkflow).toContain('separately governed release lane on real platform')
+    expect(manifest.scripts?.['check:win-package']).toContain('tests/package-win.spec.ts')
+    expect(manifest.scripts?.['check:mac-package']).toContain('tests/package-mac.spec.ts')
   })
 
   it('skips product packaging only for documentation-only changes', () => {
