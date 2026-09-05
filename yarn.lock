@@ -23,10 +23,10 @@ __metadata:
 
 "@aera/evidentiary-work-graph@file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/evidentiary-work-graph@file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz::hash=e8833a&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/evidentiary-work-graph@file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz::hash=3adde5&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
-  checksum: 10c0/33bf0fd527fdaaab5208074323094da0ba8f9caa418b3e6cf9cc8f6c26e6f5092c55704cd1b96389f5a3b7b8a24065e1c0925e5489eda36bed20d32db433fefe
+  checksum: 10c0/10861d8f8668040abf9e24931f362f75ef5b5be45fbfbd540bd86bb376ec1786992df3de8aa1be75d60eede6e0cef789479262c6186b490a1e57576a957a7b66
   languageName: node
   linkType: hard
 

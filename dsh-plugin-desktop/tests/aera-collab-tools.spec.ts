@@ -150,6 +150,28 @@ beforeAll(async () => {
       ownerAdjudication: { document: 'OWNER_ADJUDICATION_TEST_RULING.md', option: 'OPTION 1 — ACCEPT (TEST)' },
     }),
   )
+  // Registration record (remit G): a receipt whose `ownerAdjudications` array
+  // registers an already-issued owner decision by EXACT projection-wide path —
+  // including a document outside the decision filename pattern. This is the
+  // custodied shape that closes residual R-F1 for the real dogfood order.
+  mkdirSync(join(orderRoot, 'evidence', 'remit-g'), { recursive: true })
+  writeFileSync(
+    join(orderRoot, 'OWNER_CONTINUATION_TEST_SCOPE.md'),
+    '# OWNER CONTINUATION — TEST SCOPE RULING\n\nBounded TEST scope ruling registered by exact path.\n',
+  )
+  writeFileSync(
+    join(orderRoot, 'evidence', 'remit-g', 'receipt.json'),
+    JSON.stringify({
+      receiptVersion: 1,
+      workOrderId: TEST_WO,
+      ownerAdjudications: [
+        {
+          documentPath: 'Aera_Studios_Docs/wo-test/OWNER_CONTINUATION_TEST_SCOPE.md',
+          decision: 'TEST scope ruling — registered by exact path (remit G shape)',
+        },
+      ],
+    }),
+  )
   execFileSync('git', ['-C', corpusRoot, 'add', '.'])
   execFileSync('git', ['-C', corpusRoot, '-c', 'user.email=test@example.invalid', '-c', 'user.name=TEST', 'commit', '-qm', 'test: recorded owner adjudication for the TEST order'])
 
@@ -243,12 +265,17 @@ describe('§4 agent-callable access through the real runtime mechanics', () => {
     // order — the decision document itself is the source locator (remit F §3;
     // before the ingest repair this came back as an empty, not-ingested set).
     expect(eventsJson).toContain('OWNER_ADJUDICATION_TEST_RULING.md')
+    // …and the decision registered through the remit-G `ownerAdjudications`
+    // exact-path registration record — a document OUTSIDE the decision
+    // filename pattern, returned solely because the custodied record states it.
+    expect(eventsJson).toContain('OWNER_CONTINUATION_TEST_SCOPE.md')
     // A recorded source locator came back through a tool result. With the
     // remit-F ingest rule the order node is asserted by the RECEIPT that
     // stated it (the corpus node and the participation-store node share one
     // derived id and the corpus assertion wins the merge), so the canonical
-    // locator surfaced here is the receipt itself.
-    expect(eventsJson).toContain('wo-test/evidence/remit-x/receipt.json')
+    // locator surfaced here is a stating receipt — the FIRST in canonical
+    // path order, which since the remit-G registration record is remit-g.
+    expect(eventsJson).toContain('wo-test/evidence/remit-g/receipt.json')
 
     // Durable proof through the established owners: the agent principal is a
     // durable AGENT participant; its session carries the recorded delegation;
