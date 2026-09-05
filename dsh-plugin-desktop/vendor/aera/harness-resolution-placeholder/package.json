@@ -1,0 +1,6 @@
+{
+  "name": "@aera/harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RESOLUTION PLACEHOLDER ONLY (WO-AGC-002 Remit C): @aera/participation-runtime declares @aera/harness, but the dependency is type-only at runtime (its dist imports no @aera/harness module). The real @aera/harness (AgentLoop, providers, Gateway machinery) is deliberately NOT shipped in the desktop runtime per the owner correction section 4. Any runtime import of this placeholder fails loudly."
+}

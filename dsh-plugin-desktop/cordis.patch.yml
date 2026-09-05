@@ -16,6 +16,8 @@
       name: dsh-plugin-desktop/pnpm
     - id: desktop-profiles
       name: dsh-plugin-desktop/profiles
+    - id: aera-collab-workspace
+      name: dsh-plugin-desktop/aera-collab
     - id: desktop-updates
       name: dsh-plugin-desktop/updates
       # Aera Code releases are source-custodied. The inherited upstream update

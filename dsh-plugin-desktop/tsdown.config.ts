@@ -30,6 +30,7 @@ export default defineConfig([
       'windows-subprocess': 'src/windows-subprocess.ts',
       'windows-pwsh-sandbox': 'src/windows-pwsh-sandbox.ts',
       'windows-acl-runner': 'src/windows-acl-runner.ts',
+      'aera-collab': 'src/aera-collab.ts',
       main: 'src/main.ts',
     },
     outDir: 'lib',

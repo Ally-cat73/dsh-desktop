@@ -2,7 +2,7 @@
 
 import { app, crashReporter, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { isAbsolute as isAbsolutePath, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   boot,
@@ -1027,12 +1027,24 @@ async function run(): Promise<void> {
   app.setName(PRODUCT_NAME)
   process.title = PRODUCT_NAME
   const appData = app.getPath('appData')
-  const userDataDir = join(appData, AERA_CODE_PRODUCT.userDataDirectoryName)
+  // Isolated acceptance/verification profiles (WO-AGC-002 Remit C): an
+  // absolute AERA_DESKTOP_USER_DATA_DIR redirects the whole Electron user-data
+  // root so a packaged acceptance candidate never touches the real profile.
+  // Relative or empty values are ignored; the legacy migration only runs for
+  // the default location.
+  const userDataOverride = process.env.AERA_DESKTOP_USER_DATA_DIR
+  const overriddenUserData
+    = userDataOverride !== undefined && userDataOverride.trim() !== '' && isAbsolutePath(userDataOverride)
+      ? userDataOverride
+      : undefined
+  const userDataDir = overriddenUserData ?? join(appData, AERA_CODE_PRODUCT.userDataDirectoryName)
   app.setPath('userData', userDataDir)
-  migrateAeraCodeUserData(
-    join(appData, AERA_CODE_PRODUCT.legacyUserDataDirectoryName),
-    userDataDir,
-  )
+  if (overriddenUserData === undefined) {
+    migrateAeraCodeUserData(
+      join(appData, AERA_CODE_PRODUCT.legacyUserDataDirectoryName),
+      userDataDir,
+    )
+  }
   const selection = readDesktopProfileState(join(userDataDir, 'profile-selection', 'state.json'))
   bootstrapAeraGatewayCredential({ activeProfile: selection.active })
   if (process.argv.includes('--export-diagnostics')) {
