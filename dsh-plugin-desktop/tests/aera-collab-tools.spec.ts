@@ -130,6 +130,29 @@ beforeAll(async () => {
   seedRepo(stackRoot)
   seedRepo(gitDir)
 
+  // Recorded owner order/decision registration (remit F §3): a receipt that
+  // states the canonical TEST order id and its owner-adjudication document,
+  // beside that document — the exact custodied shape the graph's
+  // `ingestOwnerDecisionRecords` rule projects into a GOVERNS edge. This is
+  // what makes the governing-decisions tool return a REAL recorded decision
+  // with a source locator instead of an unresolved empty set.
+  const orderRoot = join(corpusRoot, 'wo-test')
+  mkdirSync(join(orderRoot, 'evidence', 'remit-x'), { recursive: true })
+  writeFileSync(
+    join(orderRoot, 'OWNER_ADJUDICATION_TEST_RULING.md'),
+    '# OWNER ADJUDICATION — TEST RULING\n\nOPTION 1 — ACCEPT (TEST).\n',
+  )
+  writeFileSync(
+    join(orderRoot, 'evidence', 'remit-x', 'receipt.json'),
+    JSON.stringify({
+      receiptVersion: 1,
+      workOrderId: TEST_WO,
+      ownerAdjudication: { document: 'OWNER_ADJUDICATION_TEST_RULING.md', option: 'OPTION 1 — ACCEPT (TEST)' },
+    }),
+  )
+  execFileSync('git', ['-C', corpusRoot, 'add', '.'])
+  execFileSync('git', ['-C', corpusRoot, '-c', 'user.email=test@example.invalid', '-c', 'user.name=TEST', 'commit', '-qm', 'test: recorded owner adjudication for the TEST order'])
+
   // Canonical TEST Work Order through the established owner, then one HUMAN
   // window session writing a note so all four store record files exist and
   // custody is complete (the merged projection then carries the store nodes).
@@ -216,8 +239,16 @@ describe('§4 agent-callable access through the real runtime mechanics', () => {
     }
     // The resolve result carried the real session identity and delegation.
     expect(eventsJson).toContain(DELEGATION_ID)
-    // A durable-store source locator came back through a tool result.
-    expect(eventsJson).toContain('participation-store/')
+    // The governing-decisions tool returned the RECORDED adjudication for the
+    // order — the decision document itself is the source locator (remit F §3;
+    // before the ingest repair this came back as an empty, not-ingested set).
+    expect(eventsJson).toContain('OWNER_ADJUDICATION_TEST_RULING.md')
+    // A recorded source locator came back through a tool result. With the
+    // remit-F ingest rule the order node is asserted by the RECEIPT that
+    // stated it (the corpus node and the participation-store node share one
+    // derived id and the corpus assertion wins the merge), so the canonical
+    // locator surfaced here is the receipt itself.
+    expect(eventsJson).toContain('wo-test/evidence/remit-x/receipt.json')
 
     // Durable proof through the established owners: the agent principal is a
     // durable AGENT participant; its session carries the recorded delegation;
