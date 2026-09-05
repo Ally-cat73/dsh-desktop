@@ -51,7 +51,12 @@ import {
   worktreeInstance,
   type WorktreeInstanceV1,
 } from '@aera/participation-contracts'
-import { isUnattributedChange, type ParticipationSession } from '@aera/evidentiary-work-graph-contracts'
+import {
+  isAgentRole,
+  isUnattributedChange,
+  type AgentRole,
+  type ParticipationSession,
+} from '@aera/evidentiary-work-graph-contracts'
 import { isAeraPrincipalId } from '@aera/cis-contracts'
 import {
   buildContextView,
@@ -69,6 +74,14 @@ export interface CollabWorkspaceConfig {
   readonly repositoryId?: string
   /** The observed workspace root (working-state observation target). */
   readonly workspaceRoot?: string
+  /** Durable display name of the participating AGENT principal (agent plane). */
+  readonly agentName?: string
+  /** Declared role of the participating agent (`ORCHESTRATOR` | `IMPLEMENTER` | `REVIEWER` | `NAVIGATOR`). */
+  readonly agentRole?: string
+  /** Recorded delegation id authorising the agent's participation (never minted silently). */
+  readonly delegationId?: string
+  /** Advisory provider-class hint for the agent principal (never authority). */
+  readonly agentProviderHint?: string
 }
 
 /** Resolve configuration from process env + the host-provided workspace root. */
@@ -86,6 +99,10 @@ export function resolveCollabConfig(
   const principalId = pick('AERA_COLLAB_PRINCIPAL_ID')
   const principalName = pick('AERA_COLLAB_PRINCIPAL_NAME')
   const repositoryId = pick('AERA_COLLAB_REPOSITORY_ID')
+  const agentName = pick('AERA_COLLAB_AGENT_NAME')
+  const agentRole = pick('AERA_COLLAB_AGENT_ROLE')
+  const delegationId = pick('AERA_COLLAB_DELEGATION_ID')
+  const agentProviderHint = pick('AERA_COLLAB_AGENT_PROVIDER_HINT')
   return {
     ...(storeDir === undefined ? {} : { storeDir }),
     ...(corpusRoot === undefined ? {} : { corpusRoot }),
@@ -94,6 +111,10 @@ export function resolveCollabConfig(
     ...(principalName === undefined ? {} : { principalName }),
     ...(repositoryId === undefined ? {} : { repositoryId }),
     ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    ...(agentName === undefined ? {} : { agentName }),
+    ...(agentRole === undefined ? {} : { agentRole }),
+    ...(delegationId === undefined ? {} : { delegationId }),
+    ...(agentProviderHint === undefined ? {} : { agentProviderHint }),
   }
 }
 
@@ -106,6 +127,7 @@ export class CollabHonestError extends Error {
       | 'PRINCIPAL_UNAVAILABLE'
       | 'WORK_ORDER_NOT_FOUND'
       | 'NOT_JOINED'
+      | 'AGENT_UNAVAILABLE'
       | 'INVALID_INPUT'
       | 'EVIDENCE_NOT_FOUND'
       | 'SOURCE_ACCESS_REFUSED',
@@ -132,6 +154,11 @@ export class CollabWorkspaceService {
   private navigator: ContextNavigator | null = null
   private session: ParticipationSession | null = null
   private workOrderId: string | null = null
+  // Agent plane (WO-AGC-001 Remit E, §4): a SEPARATE joined state so the human
+  // window session and the participating agent's session never share identity.
+  private agentClient: ParticipationCollaborationClient | null = null
+  private agentSession: ParticipationSession | null = null
+  private agentWorkOrderId: string | null = null
 
   constructor(private readonly config: CollabWorkspaceConfig) {}
 
@@ -402,6 +429,199 @@ export class CollabWorkspaceService {
       evidenceIds: [evidenceNodeId],
     })
     return { eventId: result.eventId }
+  }
+
+  // ------------------------------------------------------------------
+  // Agent plane — WO-AGC-001 Remit E (§4 of the owner objective restoration).
+  //
+  // The participating agent's operations run through the SAME established
+  // owners (`ParticipationCollaborationClient` → `ParticipationStore`,
+  // `ContextNavigator`) — no second store, registry or authority. The agent's
+  // ParticipationSession is a REAL session opened for a durable AGENT
+  // principal (`ensureAgentPrincipal`, never one principal per inference)
+  // under a RECORDED delegation from the configured human principal.
+  // Missing agent configuration refuses honestly; nothing is minted silently.
+  // ------------------------------------------------------------------
+
+  /** The recorded delegation for the agent plane, from configuration only. */
+  private requireAgentDelegation(): { delegationId: string, delegatorPrincipalId: string } {
+    const { delegationId, principalId } = this.config
+    if (delegationId === undefined || principalId === undefined || !isAeraPrincipalId(principalId)) {
+      throw new CollabHonestError(
+        'AGENT_UNAVAILABLE',
+        'Agent participation is unavailable: AERA_COLLAB_DELEGATION_ID and a canonical AERA_COLLAB_PRINCIPAL_ID (the delegator) must be configured. A delegation is never minted silently.',
+      )
+    }
+    return { delegationId, delegatorPrincipalId: principalId }
+  }
+
+  /**
+   * §4 group 1 — open the agent's WorkContext: durable AGENT principal via the
+   * established owner, real ParticipationSession with the recorded delegation.
+   */
+  async openAgentWorkContext(workOrderId: string): Promise<{
+    sessionId: string
+    principalId: string
+    workOrderId: string
+    delegationId: string
+    workOrder?: { nodeId: string, label?: string }
+  }> {
+    const store = this.requireStore()
+    const { agentName, agentRole, agentProviderHint } = this.config
+    if (agentName === undefined || agentRole === undefined || !isAgentRole(agentRole)) {
+      throw new CollabHonestError(
+        'AGENT_UNAVAILABLE',
+        'Agent participation is unavailable: AERA_COLLAB_AGENT_NAME and a valid AERA_COLLAB_AGENT_ROLE (ORCHESTRATOR | IMPLEMENTER | REVIEWER | NAVIGATOR) must be configured. Agent identities are never invented.',
+      )
+    }
+    const delegation = this.requireAgentDelegation()
+
+    const navigator = this.mergedNavigator()
+    const inGraph = navigator
+      .findWorkOrders(workOrderId)
+      .some(node => node.kind === 'WORK_ORDER' && (node as { workOrderId?: string }).workOrderId === workOrderId)
+    const inStore = store.listWorkOrders().some(order => order.workOrderId === workOrderId)
+    if (!inGraph && !inStore) {
+      throw new CollabHonestError(
+        'WORK_ORDER_NOT_FOUND',
+        `No canonical Work Order ${workOrderId} exists in the graph projection or the durable store. Opening does not create one.`,
+      )
+    }
+
+    const principal = store.ensureAgentPrincipal({
+      displayName: agentName,
+      agentRole: agentRole as AgentRole,
+      createdBy: delegation.delegatorPrincipalId as Parameters<ParticipationStore['ensureAgentPrincipal']>[0]['createdBy'],
+      ...(agentProviderHint === undefined ? {} : { providerClassHint: agentProviderHint }),
+    })
+    const client = new ParticipationCollaborationClient(navigator, store)
+    this.agentSession = await client.joinWorkContext({
+      workOrderId: workOrderId as Parameters<ParticipationCollaborationClient['joinWorkContext']>[0]['workOrderId'],
+      principal,
+      delegationRef: {
+        delegationId: delegation.delegationId,
+        delegatorPrincipalId: delegation.delegatorPrincipalId as Parameters<ParticipationStore['ensureAgentPrincipal']>[0]['createdBy'],
+        authorityMode: 'RECORDED_NOT_ENFORCED',
+      },
+    })
+    this.agentClient = client
+    this.agentWorkOrderId = workOrderId
+    const workOrder = await client.getWorkOrder()
+    return {
+      sessionId: this.agentSession.sessionId,
+      principalId: principal.principalId,
+      workOrderId,
+      delegationId: delegation.delegationId,
+      ...(workOrder === undefined
+        ? {}
+        : { workOrder: { nodeId: workOrder.nodeId as string, ...(workOrder.label === undefined ? {} : { label: workOrder.label as string }) } }),
+    }
+  }
+
+  /** The agent's joined client + session, or an honest refusal. */
+  private requireAgentJoined(): { client: ParticipationCollaborationClient, session: ParticipationSession, workOrderId: string } {
+    if (this.agentClient === null || this.agentSession === null || this.agentWorkOrderId === null) {
+      throw new CollabHonestError('NOT_JOINED', 'No agent WorkContext is open. Resolve a Work Order by its WorkOrderId first.')
+    }
+    return { client: this.agentClient, session: this.agentSession, workOrderId: this.agentWorkOrderId }
+  }
+
+  /** Source locator for a projected node, when the projection records one. */
+  private nodeSourcePath(nodeId: string): string | undefined {
+    if (this.navigator === null) return undefined
+    const node = this.navigator.projection.nodes.find(n => n.nodeId === nodeId)
+    return node?.assertedBy?.sourcePath
+  }
+
+  /**
+   * §4 groups 2–4 — the agent's context packet, resolved through the SAME
+   * canonical resolution path every native client uses, decorated with the
+   * projection's recorded source locators.
+   */
+  async agentContextPacket(): Promise<{
+    workOrderId: string
+    currentCanonicalState: { nodeId: string, label?: string, sourcePath?: string }[]
+    governingDecisions: { nodeId: string, label?: string, sourcePath?: string }[]
+    evidence: { nodeId: string, label?: string, sourcePath?: string }[]
+    knownResiduals: { nodeId: string, label?: string, sourcePath?: string }[]
+  }> {
+    const { client, workOrderId } = this.requireAgentJoined()
+    const packet = await client.getContextPacket()
+    const decorate = (refs: readonly { nodeId: string, label?: string }[]): { nodeId: string, label?: string, sourcePath?: string }[] =>
+      refs.map((ref) => {
+        const sourcePath = this.nodeSourcePath(ref.nodeId)
+        return {
+          nodeId: ref.nodeId,
+          ...(ref.label === undefined ? {} : { label: ref.label }),
+          ...(sourcePath === undefined ? {} : { sourcePath }),
+        }
+      })
+    return {
+      workOrderId,
+      currentCanonicalState: decorate(packet.currentCanonicalState),
+      governingDecisions: decorate(packet.governingDecisions),
+      evidence: decorate(packet.evidence),
+      knownResiduals: decorate(packet.knownResiduals),
+    }
+  }
+
+  /**
+   * §4 group 4 — evidence attached to one node, via the native operation.
+   */
+  async agentFindEvidence(nodeId: string): Promise<{ nodeId: string, kind: string, label?: string, sourcePath?: string }[]> {
+    const { client } = this.requireAgentJoined()
+    const summaries = await client.findEvidence(nodeId) as readonly { nodeId: string, kind: string, label?: string }[]
+    return summaries.map((summary) => {
+      const sourcePath = this.nodeSourcePath(summary.nodeId)
+      return {
+        nodeId: summary.nodeId,
+        kind: summary.kind,
+        ...(summary.label === undefined ? {} : { label: summary.label }),
+        ...(sourcePath === undefined ? {} : { sourcePath }),
+      }
+    })
+  }
+
+  /** §4 group 5 — the agent's attributed progress note (authorised write op). */
+  async agentRecordProgressNote(summary: string): Promise<{ eventId: string, attributed: boolean }> {
+    const { client, session } = this.requireAgentJoined()
+    const trimmed = summary.trim()
+    if (trimmed.length === 0 || trimmed.length > 4000) {
+      throw new CollabHonestError('INVALID_INPUT', 'A progress note must be 1–4000 characters.')
+    }
+    const result = await client.recordChange(session.sessionId, { summary: trimmed })
+    return { eventId: result.eventId as string, attributed: !isUnattributedChange(result.attribution) }
+  }
+
+  /**
+   * §4 group 5 — the agent's evidence reference to an EXISTING node
+   * (authorised write op; referencing never creates evidence).
+   */
+  async agentAttachEvidenceReference(evidenceNodeId: string, summary: string): Promise<{ eventId: string, attributed: boolean }> {
+    const { client, session } = this.requireAgentJoined()
+    const navigator = this.mergedNavigator()
+    const exists = navigator.projection.nodes.some(node => node.nodeId === evidenceNodeId)
+    if (!exists) {
+      throw new CollabHonestError(
+        'EVIDENCE_NOT_FOUND',
+        `No node ${evidenceNodeId} exists in the projection; an evidence reference must point at an existing item.`,
+      )
+    }
+    const result = await client.attachEvidence(session.sessionId, {
+      summary: summary.trim().length === 0 ? `Referenced existing evidence ${evidenceNodeId}` : summary.trim(),
+      evidenceIds: [evidenceNodeId],
+    })
+    return { eventId: result.eventId as string, attributed: !isUnattributedChange(result.attribution) }
+  }
+
+  /** Close the agent's WorkContext. Durable records survive; the session ends. */
+  async closeAgentWorkContext(): Promise<void> {
+    if (this.agentClient !== null && this.agentSession !== null) {
+      await this.agentClient.leaveWorkContext(this.agentSession.sessionId)
+    }
+    this.agentClient = null
+    this.agentSession = null
+    this.agentWorkOrderId = null
   }
 
   /**

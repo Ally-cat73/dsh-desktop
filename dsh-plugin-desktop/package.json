@@ -27,6 +27,10 @@
       "types": "./lib/types/aera-collab.d.ts",
       "default": "./lib/aera-collab.js"
     },
+    "./aera-collab-tools": {
+      "types": "./lib/types/aera-collab-tools.d.ts",
+      "default": "./lib/aera-collab-tools.js"
+    },
     "./profile": {
       "types": "./lib/types/profile.d.ts",
       "default": "./lib/profile.js"

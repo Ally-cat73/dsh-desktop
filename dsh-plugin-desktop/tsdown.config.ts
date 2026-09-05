@@ -31,6 +31,7 @@ export default defineConfig([
       'windows-pwsh-sandbox': 'src/windows-pwsh-sandbox.ts',
       'windows-acl-runner': 'src/windows-acl-runner.ts',
       'aera-collab': 'src/aera-collab.ts',
+      'aera-collab-tools': 'src/aera-collab-tools.ts',
       main: 'src/main.ts',
     },
     outDir: 'lib',
