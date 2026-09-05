@@ -49,6 +49,33 @@ describe('aera-gateway-agc-binding', () => {
     })).toThrow(/without a path/)
   })
 
+  // WO-R10-001 REMIT D: optional DR-018 claim-reference headers (lookup
+  // keys only — the router verifies them against its own trusted records).
+  it('carries the optional DR-018 claim references as plain static headers', () => {
+    const section = buildAgcIsolatedGatewayProviderSection({
+      ...INPUT,
+      workOrderId: 'WO-AERA-AGC-DOGFOOD-OFFICE-PACKAGING-FRESHNESS-GUARD-001',
+      participationSessionId: 'psession-0025-0cd94ca8',
+    })
+    const validated = (Config as unknown as (value: unknown) => {
+      providers: Record<string, { headers?: Record<string, string> }>
+    })(section)
+    const headers = validated.providers[AERA_GATEWAY_ROUTE]!.headers!
+    expect(headers['x-aera-work-order-id']).toBe('WO-AERA-AGC-DOGFOOD-OFFICE-PACKAGING-FRESHNESS-GUARD-001')
+    expect(headers['x-aera-participation-session-id']).toBe('psession-0025-0cd94ca8')
+    // Omitted references add no headers at all.
+    const bare = buildAgcIsolatedGatewayProviderProfile(INPUT)
+    expect(bare.headers['x-aera-work-order-id']).toBeUndefined()
+    expect(bare.headers['x-aera-participation-session-id']).toBeUndefined()
+  })
+
+  it('refuses malformed claim-reference identifiers', () => {
+    expect(() => buildAgcIsolatedGatewayProviderProfile({
+      ...INPUT,
+      workOrderId: 'bad value with spaces',
+    })).toThrow(/routing identifier/)
+  })
+
   it('refuses malformed routing identifiers', () => {
     expect(() => buildAgcIsolatedGatewayProviderProfile({
       ...INPUT,

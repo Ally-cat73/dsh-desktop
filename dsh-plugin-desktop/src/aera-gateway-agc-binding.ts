@@ -54,6 +54,19 @@ export interface AgcIsolatedGatewayBindingInput {
   readonly connectionId: string
   /** Registered canonical GatewaySession id for this participation run. */
   readonly gatewaySessionId: string
+  /**
+   * WO-R10-001 REMIT D — OPTIONAL DR-018 claim REFERENCES for the governed
+   * `/v1/responses` route. Both are plain routing/lookup identifiers (the
+   * canonical WorkOrder id and ParticipationSession id of this run), carried
+   * as static headers because the unmodified pi-ai adapter supports only
+   * static profile headers. They are NEVER self-authenticating: the router
+   * treats them purely as a lookup key, resolves them against its own
+   * trusted records, and digest-verifies the actual transmitted instruction
+   * bytes before any provenance exists. Omitting them simply leaves DR-018
+   * ineligible (the ordinary Sentinel result stands).
+   */
+  readonly workOrderId?: string
+  readonly participationSessionId?: string
 }
 
 /**
@@ -114,6 +127,8 @@ export function buildAgcIsolatedGatewayProviderProfile(
   assertLoopbackOrigin(input.routerOrigin)
   assertIdentifier('connectionId', input.connectionId)
   assertIdentifier('gatewaySessionId', input.gatewaySessionId)
+  if (input.workOrderId !== undefined) assertIdentifier('workOrderId', input.workOrderId)
+  if (input.participationSessionId !== undefined) assertIdentifier('participationSessionId', input.participationSessionId)
   const origin = new URL(input.routerOrigin).origin
   return {
     displayName: 'AERA Gateway (AGC isolated acceptance)',
@@ -123,6 +138,10 @@ export function buildAgcIsolatedGatewayProviderProfile(
     headers: {
       'x-aera-connection-id': input.connectionId,
       'x-aera-session-id': input.gatewaySessionId,
+      ...(input.workOrderId !== undefined ? { 'x-aera-work-order-id': input.workOrderId } : {}),
+      ...(input.participationSessionId !== undefined
+        ? { 'x-aera-participation-session-id': input.participationSessionId }
+        : {}),
     },
     transport: 'sse',
     models: [
