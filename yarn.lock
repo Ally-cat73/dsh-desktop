@@ -30,11 +30,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aera/harness@link:./dsh-plugin-desktop/vendor/aera/harness-resolution-placeholder::locator=deepseek-harness-desktop%40workspace%3A.":
-  version: 0.0.0-use.local
-  resolution: "@aera/harness@link:./dsh-plugin-desktop/vendor/aera/harness-resolution-placeholder::locator=deepseek-harness-desktop%40workspace%3A."
+"@aera/harness@file:./dsh-plugin-desktop/vendor/aera/aera-harness-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/harness@file:./dsh-plugin-desktop/vendor/aera/aera-harness-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-harness-0.1.0.tgz::hash=2de20f&locator=deepseek-harness-desktop%40workspace%3A."
+  checksum: 10c0/e065852a720a686dfa8e4aa761879e4d5538f293d054c71548c0f85a2b133d62a8a8268f1f27b799775e1db98bb7378b6fb2f9c65df08fe042b815f7cec14dd9
   languageName: node
-  linkType: soft
+  linkType: hard
 
 "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
