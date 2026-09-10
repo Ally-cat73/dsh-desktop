@@ -190,6 +190,36 @@ beforeAll(async () => {
   await seedService.closeWorkContext()
 })
 
+/**
+ * WO-AGC-004 §18 — packaging proves the plugin ships; this proves the plugin
+ * the manifest mounts is the one that puts all five tools in the registry.
+ * The composition row `aera-collab-agent-tools` names exactly this module.
+ */
+describe('§18 the packaged plugin registers all five collaboration tools', () => {
+  it('registers the five §4 tool names under the plugin the manifest mounts', async () => {
+    const service = new CollabWorkspaceService({
+      storeDir, corpusRoot, stackRoot,
+      principalId: humanPrincipalId as string,
+      principalName: 'TEST Workspace User',
+    })
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SystemPrompt, { persona: '' })
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(collabTools, { service })
+
+    expect(collabTools.name).toBe('aera-collab-agent-tools')
+    expect(ctx.tools.schemas().map(schema => schema.name).sort()).toEqual([
+      'aera_collab_find_evidence',
+      'aera_collab_governing_decisions',
+      'aera_collab_record',
+      'aera_collab_resolve_work_context',
+      'aera_collab_working_state',
+    ])
+  })
+})
+
 describe('§4 agent-callable access through the real runtime mechanics', () => {
   it('an agent session invokes all five collaboration tools and records attributed progress', async () => {
     const service = new CollabWorkspaceService({
