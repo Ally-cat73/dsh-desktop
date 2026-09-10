@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-desktop",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Aera Code: an AERA-branded desktop agent workspace with governed Gateway integration",
   "license": "MIT",
   "publishConfig": {
