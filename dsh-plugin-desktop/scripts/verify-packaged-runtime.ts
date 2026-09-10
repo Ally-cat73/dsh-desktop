@@ -1,6 +1,6 @@
 /** Fail-loud verification of the runtime entries sealed into Electron's app.asar. */
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
@@ -46,6 +46,8 @@ export const REQUIRED_PACKAGED_RUNTIME_ENTRIES = [
   'lib/desktop-cli.js',
   'lib/desktop-runtime-environment.js',
   'lib/desktop-terminal.js',
+  'lib/aera-collab.js',
+  'lib/aera-collab-tools.js',
   'lib/terminal.js',
   'lib/update-checker.js',
   'lib/update-download.js',
@@ -82,6 +84,8 @@ export const REQUIRED_UNPACKED_RUNTIME_ENTRIES = [
   'lib/profiles.js',
   'lib/diagnostics.js',
   'lib/diagnostic-export-worker.js',
+  'lib/aera-collab.js',
+  'lib/aera-collab-tools.js',
   'lib/terminal.js',
   'lib/update-download.js',
   'lib/updates.js',
@@ -125,6 +129,8 @@ export const REQUIRED_UNPACKED_PACKAGE_SPECIFIERS = [
   'dsh-plugin-desktop/diagnostics',
   'dsh-plugin-desktop/notifications',
   'dsh-plugin-desktop/updates',
+  'dsh-plugin-desktop/aera-collab',
+  'dsh-plugin-desktop/aera-collab-tools',
   'dsh-plugin-desktop/windows-pwsh-sandbox',
   'dsh-plugin-desktop/windows-subprocess',
   'dsh-plugin-desktop/package.json',
@@ -132,6 +138,65 @@ export const REQUIRED_UNPACKED_PACKAGE_SPECIFIERS = [
   '@deepseek-ai/schemastery/package.json',
   '@deepseek-ai/dsh-web-app/package.json',
 ] as const
+
+/**
+ * Composition rows the packaged manifest must carry.
+ *
+ * The 2.0.2 and 2.0.3 bundles shipped without the Agent Collaboration tools
+ * for one reason: `build.files` copies `cordis.patch.yml` verbatim, so the
+ * bundle carries whatever the source tree held at package time, and both
+ * were packaged before the row existed. Nothing filtered them and nothing
+ * rewrote the file — the seam was simply unguarded, and an afterPack list
+ * that never mentioned the rows could not notice. It mentions them now.
+ */
+export const REQUIRED_PACKAGED_COMPOSITION_ROWS = [
+  { id: 'aera-collab-workspace', name: 'dsh-plugin-desktop/aera-collab' },
+  { id: 'aera-collab-agent-tools', name: 'dsh-plugin-desktop/aera-collab-tools' },
+] as const
+
+/**
+ * Model aliases the AERA Router does not serve. Its alias catalogue rejects
+ * anything outside the `aera/*` set it declares with 400 `unknown_model`, so
+ * pinning one of these as the deployment default ships a route that cannot
+ * answer.
+ */
+export const FORBIDDEN_PACKAGED_MODEL_ALIASES = ['aera/active'] as const
+
+/** Injectable manifest reader used by focused tests. */
+export type ManifestReader = (filename: string) => string
+
+/**
+ * Reject a packaged composition manifest that has lost the AERA rows.
+ * @param unpackedRoot - absolute path to app.asar.unpacked.
+ * @param read - manifest reader.
+ * @returns Nothing; failure rejects the package before signing.
+ */
+export function verifyPackagedComposition(
+  unpackedRoot: string,
+  read: ManifestReader = filename => readFileSync(filename, 'utf8'),
+): void {
+  const manifestPath = join(unpackedRoot, 'cordis.patch.yml')
+  let manifest: string
+  try {
+    manifest = read(manifestPath)
+  } catch (cause) {
+    throw new Error(`dsh-plugin-desktop: cannot read the packaged composition manifest at ${manifestPath}`, { cause })
+  }
+  const missing = REQUIRED_PACKAGED_COMPOSITION_ROWS
+    .filter(row => !(new RegExp(`id:\\s*${row.id}\\s*\\n\\s*name:\\s*${row.name}\\s*(\\n|$)`).test(manifest)))
+    .map(row => row.id)
+  if (missing.length > 0) {
+    throw new Error(
+      `dsh-plugin-desktop: packaged composition at ${manifestPath} is missing required AERA rows: ${missing.join(', ')}`,
+    )
+  }
+  const unserved = FORBIDDEN_PACKAGED_MODEL_ALIASES.filter(alias => manifest.includes(alias))
+  if (unserved.length > 0) {
+    throw new Error(
+      `dsh-plugin-desktop: packaged composition at ${manifestPath} pins model aliases the Router does not serve: ${unserved.join(', ')}`,
+    )
+  }
+}
 
 /** Injectable archive listing seam used by focused tests. */
 export type ArchiveLister = (archivePath: string, options: { isPack: boolean }) => readonly string[]
@@ -369,6 +434,7 @@ export function verifyUnpackedPackageResolution(
  * @param list - ASAR listing implementation.
  * @param exists - physical-file probe for the unpacked CLI dependency tree.
  * @param resolvePackage - package resolver anchored at the physical root manifest.
+ * @param readManifest - reader for the packaged composition manifest.
  * @returns Nothing; failure rejects the package before signing.
  */
 export function verifyPackagedRuntime(
@@ -376,6 +442,7 @@ export function verifyPackagedRuntime(
   list: ArchiveLister = listPackage,
   exists: FileProbe = existsSync,
   resolvePackage?: PackageResolver,
+  readManifest: ManifestReader = filename => readFileSync(filename, 'utf8'),
 ): void {
   const archiveEntries = verifyPackagedAsar(resolvePackagedAsarPath(context), list)
   const unpackedRoot = resolvePackagedUnpackedRoot(context)
@@ -401,6 +468,7 @@ export function verifyPackagedRuntime(
   }
   verifyUnpackedArchiveMirror(archiveEntries, unpackedRoot, exists)
   verifyUnpackedPackageResolution(unpackedRoot, resolvePackage)
+  verifyPackagedComposition(unpackedRoot, readManifest)
 }
 
 /**

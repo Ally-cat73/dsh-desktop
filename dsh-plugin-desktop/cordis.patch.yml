@@ -16,6 +16,10 @@
       name: dsh-plugin-desktop/pnpm
     - id: desktop-profiles
       name: dsh-plugin-desktop/profiles
+    - id: aera-collab-workspace
+      name: dsh-plugin-desktop/aera-collab
+    - id: aera-collab-agent-tools
+      name: dsh-plugin-desktop/aera-collab-tools
     - id: desktop-updates
       name: dsh-plugin-desktop/updates
       # Aera Code releases are source-custodied. The inherited upstream update
@@ -31,11 +35,16 @@
     trustedHosts: []
 
 # Aera Code is an AERA Gateway client. Its deployment default must not fall
-# back to the upstream provider when shared user settings are absent.
+# back to the upstream provider when shared user settings are absent. The
+# route is the product-hosted governed profile registered by
+# `prepareDesktopProfile`, and the alias is one the Router actually serves:
+# its alias catalogue rejects anything outside the `aera/*` set it declares
+# with 400 `unknown_model`, and the alias this overlay used to pin is not in
+# that catalogue at all.
 - id: agent-default-model
   config:
-    provider: aera-gateway
-    model: aera/active
+    provider: aera-gateway-agc
+    model: aera/auto
 
 # Keep the upstream adapter in the dependency closure for provenance and
 # compatibility tests, but remove it from the Aera Code runtime catalogue.

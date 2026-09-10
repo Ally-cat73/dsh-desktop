@@ -5,6 +5,61 @@ __metadata:
   version: 10
   cacheKey: 10c0
 
+"@aera/cis-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/cis-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz::hash=f00bdf&locator=deepseek-harness-desktop%40workspace%3A."
+  checksum: 10c0/03f196e2bd455cf473359cf456ca6b24b18d854a9e23d7a2bfc4da08194ad2f36203adad2b8cf1bc5a7918ba9f614dfbbf8335c7b64d88d4fbf3fa1261a96122
+  languageName: node
+  linkType: hard
+
+"@aera/evidentiary-work-graph-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/evidentiary-work-graph-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz::hash=bd6789&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/cis-contracts": "npm:0.1.0"
+  checksum: 10c0/e0a737d70609a04f30978cf5dbfe889b4e1695853f8e36f1e306cdebdec002c8125f8b2895e8e9ef75558c9a5887beb345a9fec21f1dfb186cc5cd327ced7b08
+  languageName: node
+  linkType: hard
+
+"@aera/evidentiary-work-graph@file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/evidentiary-work-graph@file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz::hash=93c507&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
+  checksum: 10c0/4100e7d584497dab69e6b095ce7d3e4619e4631361bc978d2e4e3b36e2e771b80e26f3e80a0c4e7c35e1794f6645f4308c21f473225d7af1a222208b5d65cfb7
+  languageName: node
+  linkType: hard
+
+"@aera/harness@file:./dsh-plugin-desktop/vendor/aera/aera-harness-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/harness@file:./dsh-plugin-desktop/vendor/aera/aera-harness-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-harness-0.1.0.tgz::hash=df1053&locator=deepseek-harness-desktop%40workspace%3A."
+  checksum: 10c0/baad78530a8e0ae8c401e21b95053ed8ba4f5854ee549132302f40196bb6bc339fee490882428c9a576e87fd164ca206a5c9808535f31f385259c3138b7db62f
+  languageName: node
+  linkType: hard
+
+"@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::hash=9a519f&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/cis-contracts": "npm:0.1.0"
+    "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
+  checksum: 10c0/6ea9db4448d0f4916455d4536a6a350dfc9e4b77003a2578f0cf31eba64c9fec2a4a3b713187d76525b2da41205bbac2284ab13b4e928800de456d57dc6d8234
+  languageName: node
+  linkType: hard
+
+"@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=05eb87&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/cis-contracts": "npm:0.1.0"
+    "@aera/evidentiary-work-graph": "npm:0.1.0"
+    "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
+    "@aera/harness": "npm:0.1.0"
+    "@aera/participation-contracts": "npm:0.1.0"
+  checksum: 10c0/670a351ae16d38ffcc096c9fe6bc6d66a3478a37b244174a90327b2630a5a2bfc5a9359d69337fe431cbe6b1a987eed3d04687d6c4d434debbf5c198120ad043
+  languageName: node
+  linkType: hard
+
 "@anthropic-ai/sdk@npm:0.91.1":
   version: 0.91.1
   resolution: "@anthropic-ai/sdk@npm:0.91.1"
@@ -8489,6 +8544,11 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "dsh-plugin-desktop@workspace:dsh-plugin-desktop"
   dependencies:
+    "@aera/cis-contracts": "file:./vendor/aera/aera-cis-contracts-0.1.0.tgz"
+    "@aera/evidentiary-work-graph": "file:./vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz"
+    "@aera/evidentiary-work-graph-contracts": "file:./vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz"
+    "@aera/participation-contracts": "file:./vendor/aera/aera-participation-contracts-0.1.0.tgz"
+    "@aera/participation-runtime": "file:./vendor/aera/aera-participation-runtime-0.1.0.tgz"
     "@base-ui/react": "npm:^1.7.0"
     "@deepseek-ai/cordis": "npm:4.0.1"
     "@deepseek-ai/cordis-plugin-group": "npm:1.0.1"

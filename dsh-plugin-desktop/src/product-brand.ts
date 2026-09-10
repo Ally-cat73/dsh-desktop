@@ -27,6 +27,16 @@ export const AERA_CODE_PRODUCT = Object.freeze({
       keychainService: 'com.aera.gateway.dev.execution',
       keychainAccount: 'Alyshia Daley',
     }),
+    // WO-AGC-004 §21 — the governed dogfood execution credential. The
+    // Keychain account is the Router-side credential record name, so the
+    // stored item names the exact bounded key it carries. Only the NAME
+    // appears here; the value is imported into Keychain by the install
+    // custody step and never touches source, Git, the bundle, or evidence.
+    'aera-gateway-agc': Object.freeze({
+      credentialEnvironmentName: 'AERA_GATEWAY_AGC_EXECUTION_KEY',
+      keychainService: 'com.aera.gateway.agc.execution',
+      keychainAccount: 'agc-relay-dogfood-canonical-2026-09-10',
+    }),
   }),
 } as const)
 

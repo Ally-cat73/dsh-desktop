@@ -7,14 +7,17 @@ import {
   REQUIRED_PACKAGED_RUNTIME_ENTRIES,
   REQUIRED_MACOS_UNIVERSAL_ENTRIES,
   REQUIRED_UNPACKED_PACKAGE_SPECIFIERS,
+  REQUIRED_PACKAGED_COMPOSITION_ROWS,
   REQUIRED_UNPACKED_RUNTIME_ENTRIES,
   REQUIRED_WINDOWS_X64_NODE_PTY_ENTRIES,
   resolvePackagedAsarPath,
   resolvePackagedUnpackedRoot,
   smokePackagedDiagnosticWorker,
   verifyUnpackedArchiveMirror,
+  verifyPackagedComposition,
   verifyPackagedRuntime,
   type ArchiveLister,
+  type ManifestReader,
   type FileProbe,
   type PackageResolver,
   type PackagedRuntimeContext,
@@ -41,6 +44,17 @@ function completeArchiveEntries(separator = '/'): string[] {
 
 function completePackageResolver(unpackedRoot: string): PackageResolver {
   return specifier => join(unpackedRoot, 'resolved', `${specifier.replaceAll('/', '-')}.js`)
+}
+
+/** A packaged composition manifest carrying every required AERA row. */
+function completeManifest(): string {
+  return REQUIRED_PACKAGED_COMPOSITION_ROWS
+    .map(row => `    - id: ${row.id}\n      name: ${row.name}\n`)
+    .join('')
+}
+
+function completeManifestReader(): ManifestReader {
+  return () => completeManifest()
 }
 
 describe('packaged desktop runtime verification', () => {
@@ -129,7 +143,7 @@ describe('packaged desktop runtime verification', () => {
     const unpackedRoot = `${expectedPath}.unpacked`
     const resolvePackage = vi.fn<PackageResolver>(completePackageResolver(unpackedRoot))
 
-    verifyPackagedRuntime(context('/build', platform), list, exists, resolvePackage)
+    verifyPackagedRuntime(context('/build', platform), list, exists, resolvePackage, completeManifestReader())
 
     expect(resolvePackagedAsarPath(context('/build', platform))).toBe(expectedPath)
     expect(list).toHaveBeenCalledOnce()
@@ -142,6 +156,48 @@ describe('packaged desktop runtime verification', () => {
     )
     expect(resolvePackage.mock.calls.map(([specifier]) => specifier))
       .toEqual(REQUIRED_UNPACKED_PACKAGE_SPECIFIERS)
+  })
+
+  // WO-AGC-004 §18 — the packaging seam that let 2.0.2 and 2.0.3 ship
+  // without the Agent Collaboration tools. `build.files` copies the
+  // composition manifest verbatim, so a bundle carries whatever the source
+  // tree held at package time; nothing checked what that was.
+  it('requires the packaged composition to carry both AERA collaboration rows', () => {
+    expect(REQUIRED_PACKAGED_COMPOSITION_ROWS.map(row => row.id)).toEqual([
+      'aera-collab-workspace',
+      'aera-collab-agent-tools',
+    ])
+    expect(() => verifyPackagedComposition('/build', completeManifestReader())).not.toThrow()
+  })
+
+  it('rejects the 2.0.3 composition, which mounted the workspace and dropped the tools', () => {
+    const shipped = '    - id: aera-collab-workspace\n      name: dsh-plugin-desktop/aera-collab\n'
+
+    expect(() => verifyPackagedComposition('/build', () => shipped))
+      .toThrow('missing required AERA rows: aera-collab-agent-tools')
+  })
+
+  it('rejects a composition pinning a model alias the Router does not serve', () => {
+    expect(() => verifyPackagedComposition(
+      '/build',
+      () => `${completeManifest()}\n- id: agent-default-model\n  config:\n    model: aera/active\n`,
+    )).toThrow('pins model aliases the Router does not serve: aera/active')
+  })
+
+  it('requires the collaboration runtime and its package exports in the bundle', () => {
+    expect(REQUIRED_PACKAGED_RUNTIME_ENTRIES).toContain('lib/aera-collab-tools.js')
+    expect(REQUIRED_UNPACKED_RUNTIME_ENTRIES).toContain('lib/aera-collab-tools.js')
+    expect(REQUIRED_UNPACKED_PACKAGE_SPECIFIERS).toContain('dsh-plugin-desktop/aera-collab-tools')
+    expect(REQUIRED_UNPACKED_PACKAGE_SPECIFIERS).toContain('dsh-plugin-desktop/aera-collab')
+  })
+
+  // The shipped source manifest is the thing the bundle copies, so the same
+  // contract has to hold there or every future package starts wrong.
+  it('holds for the shipped source composition manifest', () => {
+    expect(() => verifyPackagedComposition(
+      process.cwd(),
+      () => readFileSync(join(process.cwd(), 'cordis.patch.yml'), 'utf8'),
+    )).not.toThrow()
   })
 
   it('rejects an unsupported platform instead of guessing an archive layout', () => {
@@ -168,6 +224,7 @@ describe('packaged desktop runtime verification', () => {
       () => completeArchiveEntries(),
       exists,
       completePackageResolver(unpackedRoot),
+      completeManifestReader(),
     )
     expect(exists).toHaveBeenCalledTimes(
       REQUIRED_UNPACKED_RUNTIME_ENTRIES.length

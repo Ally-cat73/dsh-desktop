@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-desktop",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Aera Code: an AERA-branded desktop agent workspace with governed Gateway integration",
   "license": "MIT",
   "publishConfig": {
@@ -22,6 +22,14 @@
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./aera-collab": {
+      "types": "./lib/types/aera-collab.d.ts",
+      "default": "./lib/aera-collab.js"
+    },
+    "./aera-collab-tools": {
+      "types": "./lib/types/aera-collab-tools.d.ts",
+      "default": "./lib/aera-collab-tools.js"
     },
     "./profile": {
       "types": "./lib/types/profile.d.ts",
@@ -138,6 +146,11 @@
     "prepack": "yarn run check"
   },
   "dependencies": {
+    "@aera/cis-contracts": "file:./vendor/aera/aera-cis-contracts-0.1.0.tgz",
+    "@aera/evidentiary-work-graph": "file:./vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz",
+    "@aera/evidentiary-work-graph-contracts": "file:./vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz",
+    "@aera/participation-contracts": "file:./vendor/aera/aera-participation-contracts-0.1.0.tgz",
+    "@aera/participation-runtime": "file:./vendor/aera/aera-participation-runtime-0.1.0.tgz",
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/cordis-plugin-group": "1.0.1",
     "@deepseek-ai/cordis-plugin-include": "1.0.6",

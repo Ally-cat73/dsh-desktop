@@ -6,6 +6,7 @@ import { migrateAeraCodeUserData } from '../src/aera-code-state-migration.ts'
 import { bootstrapAeraGatewayCredential } from '../src/aera-gateway-keychain.ts'
 import { aeraGatewayAuthFailureMessage } from '../src/aera-gateway-failure.ts'
 import { AERA_CODE_PRODUCT } from '../src/product-brand.ts'
+import { AGC_GATEWAY_CREDENTIAL_ENV } from '../src/aera-gateway-agc-binding.ts'
 
 describe('Aera Code native identity', () => {
   it('centralizes the owner-facing product profile', () => {
@@ -18,6 +19,51 @@ describe('Aera Code native identity', () => {
     })
   })
 
+  // WO-AGC-004 §21 — the governed dogfood credential resolves from Keychain
+  // on an ordinary Finder launch, by NAME. No value is present anywhere.
+  it('resolves the governed AGC Gateway credential profile from Keychain', () => {
+    const profile = AERA_CODE_PRODUCT.gatewayProfiles['aera-gateway-agc']
+
+    expect(profile).toEqual({
+      credentialEnvironmentName: 'AERA_GATEWAY_AGC_EXECUTION_KEY',
+      keychainService: 'com.aera.gateway.agc.execution',
+      keychainAccount: 'agc-relay-dogfood-canonical-2026-09-10',
+    })
+    expect(profile.credentialEnvironmentName).toBe(AGC_GATEWAY_CREDENTIAL_ENV)
+
+    const environment: NodeJS.ProcessEnv = {}
+    const readPassword = vi.fn((service: string, account: string) => {
+      expect(service).toBe(profile.keychainService)
+      expect(account).toBe(profile.keychainAccount)
+      return 'TEST-ONLY-NOT-A-CREDENTIAL'
+    })
+
+    expect(bootstrapAeraGatewayCredential({
+      platform: 'darwin',
+      environment,
+      activeProfile: 'aera-gateway-agc',
+      readPassword,
+    })).toBe('loaded-from-keychain')
+    expect(readPassword).toHaveBeenCalledOnce()
+    expect(environment['AERA_GATEWAY_AGC_EXECUTION_KEY']).toBe('TEST-ONLY-NOT-A-CREDENTIAL')
+  })
+
+  it('keeps the untouched real profiles resolving their own credentials', () => {
+    for (const [name, expected] of [
+      ['aera-gateway-eval', 'AERA_GATEWAY_DSH_EVAL_KEY'],
+      ['aera-gateway-dev-eval', 'AERA_GATEWAY_DEV_EXECUTION_KEY'],
+    ] as const) {
+      const environment: NodeJS.ProcessEnv = {}
+      bootstrapAeraGatewayCredential({
+        platform: 'darwin',
+        environment,
+        activeProfile: name,
+        readPassword: () => 'TEST-ONLY-NOT-A-CREDENTIAL',
+      })
+      expect(Object.keys(environment)).toEqual([expected])
+    }
+  })
+
   it('makes Gateway standard and removes upstream model branding from the projection', () => {
     const overlay = readFileSync(join(process.cwd(), 'cordis.patch.yml'), 'utf8')
     const conversationPatch = readFileSync(join(
@@ -28,8 +74,11 @@ describe('Aera Code native identity', () => {
       '@deepseek-ai-dsh-client-ui-conversation-npm-0.1.1-rc.2-941ef6a7f5.patch',
     ), 'utf8')
 
-    expect(overlay).toContain('provider: aera-gateway')
-    expect(overlay).toContain('model: aera/active')
+    // WO-AGC-004 §19: the pinned route is the product-hosted governed
+    // profile, on an alias the Router's catalogue actually serves.
+    expect(overlay).toContain('provider: aera-gateway-agc')
+    expect(overlay).toContain('model: aera/auto')
+    expect(overlay).not.toContain('aera/active')
     expect(overlay).toMatch(/id: llm-deepseek[\s\S]*disabled: true/)
     expect(conversationPatch).toContain('Aera Code system context')
   })

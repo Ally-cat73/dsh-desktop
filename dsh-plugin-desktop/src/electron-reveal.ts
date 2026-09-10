@@ -1,4 +1,9 @@
-import { app } from 'electron'
+// The Electron main-process module is CommonJS. `dsh-plugin-desktop/aera-collab`
+// is a loader-mounted Host plugin, so its module graph is also instantiated by
+// plain Node in the headless profile-boot smoke, where named ESM imports of a
+// CommonJS module cannot be linked. A namespace import links in both runtimes;
+// the Electron API itself is only ever touched at call time, under Electron.
+import * as electron from 'electron'
 import type { BrowserWindow } from 'electron'
 
 /**
@@ -16,7 +21,7 @@ export function applicationNeedsReveal(
 ): boolean {
   return window.isMinimized()
     || !window.isVisible()
-    || platform === 'darwin' && app.isHidden()
+    || platform === 'darwin' && electron.app.isHidden()
 }
 
 /** Reveal a native window, restoring the macOS application before the window. */
@@ -24,7 +29,7 @@ export function revealApplication(
   window: Pick<BrowserWindow, 'isMinimized' | 'show' | 'restore' | 'focus'>,
   platform: NodeJS.Platform = process.platform,
 ): void {
-  if (platform === 'darwin' && app.isHidden()) app.show()
+  if (platform === 'darwin' && electron.app.isHidden()) electron.app.show()
   if (window.isMinimized()) window.restore()
   window.show()
   window.focus()
