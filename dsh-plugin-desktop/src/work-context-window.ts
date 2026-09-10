@@ -12,7 +12,9 @@
  * `CollabWorkspaceService` → the established substrate owners.
  */
 
-import { BrowserWindow } from 'electron'
+// Namespace import: see the note in `electron-reveal.ts`.
+import * as electron from 'electron'
+import type { BrowserWindow } from 'electron'
 import { fileURLToPath } from 'node:url'
 import {
   auxiliaryWindowChromeOptions,
@@ -103,7 +105,7 @@ export class WorkContextWindow {
     }
     this.disposed = false
     this.busy = false
-    const window = new BrowserWindow({
+    const window = new electron.BrowserWindow({
       title: 'Aera Work Context',
       ...auxiliaryWindowChromeOptions(),
       width: 900,

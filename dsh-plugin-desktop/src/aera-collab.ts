@@ -14,7 +14,8 @@
  * gateway credentials.
  */
 
-import { dialog } from 'electron'
+// Namespace import: see the note in `electron-reveal.ts`.
+import * as electron from 'electron'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from './runtime.ts'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -35,7 +36,7 @@ export const inject = ['desktopRuntime', 'webServer']
  */
 export function apply(ctx: Context): void {
   const seam = createDesktopCollabHostSeam(process.env, (message) => {
-    void dialog.showMessageBox({ type: 'warning', message })
+    void electron.dialog.showMessageBox({ type: 'warning', message })
   })
   const service = new CollabWorkspaceService(
     resolveCollabConfig(process.env, seam.resolveWorkspaceRoot()),

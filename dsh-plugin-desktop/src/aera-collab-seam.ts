@@ -7,7 +7,8 @@
  * the graph stay in the substrate packages and are never part of the seam.
  */
 
-import { shell } from 'electron'
+// Namespace import: see the note in `electron-reveal.ts`.
+import * as electron from 'electron'
 
 export interface CollabHostSeam {
   /** Where the observed worktree is, if one is configured. */
@@ -35,7 +36,7 @@ export function createDesktopCollabHostSeam(
       return root === undefined || root.trim() === '' ? undefined : root
     },
     openLocalSource: async (absolutePath: string) => {
-      const failure = await shell.openPath(absolutePath)
+      const failure = await electron.shell.openPath(absolutePath)
       if (failure !== '') throw new Error(`Failed to open source: ${failure}`)
     },
     showMessage,
