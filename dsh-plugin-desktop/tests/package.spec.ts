@@ -147,8 +147,10 @@ describe('published package surface', () => {
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/diagnostics')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/notifications')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/updates')
-    expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('provider: aera-gateway')
-    expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('model: aera/active')
+    expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/aera-collab')
+    expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/aera-collab-tools')
+    expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('provider: aera-gateway-agc')
+    expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('model: aera/auto')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toMatch(/- id: llm-deepseek\n\s+disabled: true/u)
   })
 

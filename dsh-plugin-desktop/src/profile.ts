@@ -57,6 +57,7 @@ import {
   type DesktopMarketProvider,
   type DesktopMarketSnapshot,
 } from './desktop-market.ts'
+import { buildAgcGovernedGatewayProviderSection } from './aera-gateway-agc-binding.ts'
 
 /** Persistent profile managed by the desktop launcher and the ordinary dsh plugin command. */
 export const DESKTOP_PROFILE_NAME = 'desktop'
@@ -86,6 +87,7 @@ const UPSTREAM_SUBPROCESS_PACKAGE = '@deepseek-ai/dsh-subprocess-local'
 const DESKTOP_WINDOWS_SUBPROCESS_ROW_ID = 'desktop-windows-subprocess'
 const DESKTOP_WINDOWS_SUBPROCESS_PACKAGE = 'dsh-plugin-desktop/windows-subprocess'
 const AGENT_PRESETS_ROW_ID = 'agent-presets'
+const PI_AI_ROW_ID = 'llm-pi-ai'
 const DEFAULT_DESKTOP_SHELL_MODE: DesktopShellMode = 'compatibility'
 const DEFAULT_DESKTOP_PORT = DESKTOP_DEFAULT_WEB_PORT
 const DESKTOP_WEB_SERVER_ROW_ID = 'desktop-webserver'
@@ -895,6 +897,27 @@ export function prepareDesktopProfile(
       roots: [{ path: shippedPresetRoot(), trust: 'system' }],
     }
     patches.push({ id: AGENT_PRESETS_ROW_ID, config })
+  }
+  // WO-AGC-004 §19 — the product-hosted governed AERA Gateway route. The
+  // pi-ai adapter is composed dormant by the base bundle; supplying its
+  // profile here is what makes the governed loopback route exist in the
+  // running application instead of in a driver script. The row's own config
+  // is preserved and the user settings document still outranks both.
+  const piAi = rows.get(PI_AI_ROW_ID)
+  if (piAi !== undefined) {
+    const existing = rowConfig(piAi)
+    const declared = existing['providers']
+    patches.push({
+      id: PI_AI_ROW_ID,
+      config: {
+        ...existing,
+        ...buildAgcGovernedGatewayProviderSection(
+          declared !== null && typeof declared === 'object' && !Array.isArray(declared)
+            ? declared as Record<string, unknown>
+            : {},
+        ),
+      },
+    })
   }
   const webserver = rows.get('webserver')
   if (webserver === undefined) {

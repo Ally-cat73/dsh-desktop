@@ -13,6 +13,17 @@ import {
   AGC_GATEWAY_MODEL_ID,
   buildAgcIsolatedGatewayProviderProfile,
   buildAgcIsolatedGatewayProviderSection,
+  AGC_CONNECTION_HEADER,
+  AGC_GOVERNED_CONNECTION_ID,
+  AGC_GOVERNED_GATEWAY_ROUTE,
+  AGC_GOVERNED_MODEL_ID,
+  AGC_GOVERNED_ROUTER_ORIGIN,
+  AGC_GOVERNED_RUNTIME_INSTANCE_ID,
+  AGC_GOVERNED_SESSION_ID,
+  AGC_RUNTIME_INSTANCE_HEADER,
+  AGC_SESSION_HEADER,
+  buildAgcGovernedGatewayProviderProfile,
+  buildAgcGovernedGatewayProviderSection,
 } from '../src/aera-gateway-agc-binding.ts'
 
 const INPUT = {
@@ -90,6 +101,78 @@ describe('aera-gateway-agc-binding', () => {
     expect(serialized).not.toMatch(/Bearer /)
     expect(serialized).not.toMatch(/x-aera-gateway-key/)
     // The isolated profile must not name the real profile's Keychain-backed refs.
+    expect(serialized).not.toContain('AERA_GATEWAY_DSH_EVAL_KEY')
+    expect(serialized).not.toContain('AERA_GATEWAY_DEV_EXECUTION_KEY')
+  })
+})
+
+/**
+ * WO-AGC-004 §§19-20 — the PRODUCT-HOSTED governed route. Everything here is
+ * a frozen owner-ruling identifier or an environment reference; no secret,
+ * no host contact.
+ */
+describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
+  it('resolves the frozen route through the REAL llm-pi-ai schema', () => {
+    const section = buildAgcGovernedGatewayProviderSection()
+    const validated = (Config as unknown as (value: unknown) => {
+      providers: Record<string, {
+        apiKeyEnv?: string
+        api?: string
+        baseURL?: string
+        headers?: Record<string, string>
+        models?: Array<{ id: string }>
+      }>
+    })(section)
+    const profile = validated.providers[AGC_GOVERNED_GATEWAY_ROUTE]
+
+    expect(profile).toBeDefined()
+    expect(profile!.api).toBe('openai-responses')
+    expect(supportedProtocols()).toContain('openai-responses')
+    expect(profile!.baseURL).toBe('http://127.0.0.1:4646/v1')
+    expect(profile!.apiKeyEnv).toBe(AGC_GATEWAY_CREDENTIAL_ENV)
+    expect(profile!.headers).toMatchObject({
+      [AGC_SESSION_HEADER]: 'RELAY_MESSAGES_DOGFOOD_CANONICAL',
+      [AGC_CONNECTION_HEADER]: 'relay-messages-dogfood-canonical-connection',
+      [AGC_RUNTIME_INSTANCE_HEADER]: 'relay-messages-dogfood-canonical-runtime',
+    })
+    expect(profile!.models!.map(model => model.id)).toEqual([AGC_GOVERNED_MODEL_ID])
+  })
+
+  // The Router refuses any model outside its `aera/*` alias catalogue with
+  // 400 `unknown_model` before routing runs, and `aera/active` is not in it.
+  it('serves an alias the Router actually declares, never aera/active', () => {
+    expect(AGC_GOVERNED_MODEL_ID).toBe('aera/auto')
+    expect(JSON.stringify(buildAgcGovernedGatewayProviderSection())).not.toContain('aera/active')
+  })
+
+  it('keeps the frozen identifiers exactly as the owner ruling froze them', () => {
+    expect(AGC_GOVERNED_SESSION_ID).toBe('RELAY_MESSAGES_DOGFOOD_CANONICAL')
+    expect(AGC_GOVERNED_CONNECTION_ID).toBe('relay-messages-dogfood-canonical-connection')
+    expect(AGC_GOVERNED_RUNTIME_INSTANCE_ID).toBe('relay-messages-dogfood-canonical-runtime')
+  })
+
+  // §20: the loopback boundary is not weakened for the dogfood. The governed
+  // origin is exactly what the unmodified guard already accepts.
+  it('passes the unmodified loopback guard on the AERA_DEV forward', () => {
+    expect(AGC_GOVERNED_ROUTER_ORIGIN).toBe('http://127.0.0.1:4646')
+    expect(() => buildAgcGovernedGatewayProviderProfile()).not.toThrow()
+    expect(() => buildAgcIsolatedGatewayProviderProfile({
+      ...INPUT,
+      routerOrigin: AGC_GOVERNED_ROUTER_ORIGIN,
+    })).not.toThrow()
+  })
+
+  it('adds only its own route, preserving any provider already composed', () => {
+    const section = buildAgcGovernedGatewayProviderSection({ openai: { apiKeyEnv: 'OPENAI_API_KEY' } })
+
+    expect(Object.keys(section.providers).sort()).toEqual(['aera-gateway-agc', 'openai'])
+  })
+
+  it('carries no secret material and never names another profile credential', () => {
+    const serialized = JSON.stringify(buildAgcGovernedGatewayProviderSection())
+
+    expect(serialized).toContain(AGC_GATEWAY_CREDENTIAL_ENV)
+    expect(serialized).not.toMatch(/Bearer /)
     expect(serialized).not.toContain('AERA_GATEWAY_DSH_EVAL_KEY')
     expect(serialized).not.toContain('AERA_GATEWAY_DEV_EXECUTION_KEY')
   })

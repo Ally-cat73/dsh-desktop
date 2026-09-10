@@ -1017,4 +1017,36 @@ virtualStoreDirMaxLength: 60
     }))
     expect(rows.map(row => row.id)).not.toContain('desktop-windows-subprocess')
   })
+
+  // WO-AGC-004 §19 — the governed Gateway route must exist in the RUNNING
+  // application's composition, not in an untracked driver script.
+  it('registers the product-hosted governed AERA Gateway route', () => {
+    const home = temporaryHome()
+    ensureDesktopProfile(home)
+
+    const prepared = prepareDesktopProfile(undefined, home, 'darwin')
+
+    const piAi = prepared.patches.filter(patch => patch.id === 'llm-pi-ai').at(-1)
+    expect(piAi).toBeDefined()
+    const providers = (piAi!.config as { providers?: Record<string, Record<string, unknown>> }).providers
+    const governed = providers?.['aera-gateway-agc']
+    expect(governed).toBeDefined()
+    expect(governed!['baseURL']).toBe('http://127.0.0.1:4646/v1')
+    expect(governed!['apiKeyEnv']).toBe('AERA_GATEWAY_AGC_EXECUTION_KEY')
+    expect(governed!['headers']).toMatchObject({
+      'x-aera-session-id': 'RELAY_MESSAGES_DOGFOOD_CANONICAL',
+      'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+      'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+    })
+    expect((governed!['models'] as Array<{ id: string }>).map(model => model.id)).toEqual(['aera/auto'])
+
+    // The pinned deployment default names that route, on a served alias.
+    const defaultModel = prepared.patches.filter(patch => patch.id === 'agent-default-model').at(-1)
+    expect(defaultModel?.config).toMatchObject({ provider: 'aera-gateway-agc', model: 'aera/auto' })
+
+    // Both collaboration rows survive composition into the running profile.
+    const inserted = prepared.patches.flatMap(patch => Array.isArray(patch.insert) ? patch.insert : [])
+    expect(inserted.filter(row => row.id === 'aera-collab-workspace')).toHaveLength(1)
+    expect(inserted.filter(row => row.id === 'aera-collab-agent-tools')).toHaveLength(1)
+  })
 })

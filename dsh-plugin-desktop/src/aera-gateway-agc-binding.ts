@@ -39,11 +39,11 @@ export const AERA_GATEWAY_ROUTE = 'aera-gateway'
 export const AGC_GATEWAY_CREDENTIAL_ENV = 'AERA_GATEWAY_AGC_EXECUTION_KEY'
 
 /**
- * The governed router model alias this binding serves. NOTE (recorded
- * incompatibility detail): the overlay pins `aera/active` as the default
- * model id, but the router's `/v1/responses` alias catalogue does not serve
- * `aera/active`; `aera/auto` is the served alias. The binding therefore
- * declares the servable alias explicitly rather than inheriting the pin.
+ * The governed router model alias this binding serves. It is declared
+ * explicitly rather than inherited from the overlay pin, because the
+ * router's `/v1/responses` alias catalogue serves a fixed set and rejects
+ * everything else before routing runs. The overlay's original pin was
+ * outside that set; WO-AGC-004 corrected the overlay to this alias.
  */
 export const AGC_GATEWAY_MODEL_ID = 'aera/auto'
 
@@ -163,4 +163,108 @@ export function buildAgcIsolatedGatewayProviderSection(
   input: AgcIsolatedGatewayBindingInput,
 ): { providers: Record<string, AgcGatewayProviderProfile> } {
   return { providers: { [AERA_GATEWAY_ROUTE]: buildAgcIsolatedGatewayProviderProfile(input) } }
+}
+
+/* ------------------------------------------------------------------------ *
+ * WO-AGC-004 — the PRODUCT-HOSTED governed Gateway profile.
+ *
+ * The block above builds the WO-AGC-002 ISOLATED acceptance binding and is
+ * left exactly as adjudicated. What follows is the profile Aera Code itself
+ * hosts: one provider route, registered by the desktop's own composition
+ * (`prepareDesktopProfile`), so the governed route exists in the RUNNING
+ * application rather than in a driver script.
+ *
+ * Every value below is a frozen, non-secret routing identifier taken from
+ * the owner ruling; the credential is referenced by environment NAME only.
+ * ------------------------------------------------------------------------ */
+
+/** Product-hosted governed provider route. Distinct from the acceptance route. */
+export const AGC_GOVERNED_GATEWAY_ROUTE = 'aera-gateway-agc'
+
+/**
+ * The loopback AERA_DEV Gateway origin. The SSH LocalForward publishes the
+ * AERA_DEV Router here; `assertLoopbackOrigin` is what keeps the binding on
+ * it, and it is deliberately not relaxed.
+ */
+export const AGC_GOVERNED_ROUTER_ORIGIN = 'http://127.0.0.1:4646'
+
+/** Frozen canonical GatewaySession id (owner ruling §4). */
+export const AGC_GOVERNED_SESSION_ID = 'RELAY_MESSAGES_DOGFOOD_CANONICAL'
+
+/** Frozen canonical Connection id (owner ruling §4). */
+export const AGC_GOVERNED_CONNECTION_ID = 'relay-messages-dogfood-canonical-connection'
+
+/** Frozen canonical runtime instance id (owner ruling §4). */
+export const AGC_GOVERNED_RUNTIME_INSTANCE_ID = 'relay-messages-dogfood-canonical-runtime'
+
+/**
+ * The Router alias catalogue admits a fixed set of `aera/*` aliases and
+ * rejects everything else with 400 `unknown_model` before any routing runs.
+ * This alias is in that set; the one the overlay used to pin was not. With
+ * the frozen Session pinned, the alias is carried through onto the pinned
+ * assignment, so it resolves to the assigned channel rather than being
+ * re-selected by alias.
+ */
+export const AGC_GOVERNED_MODEL_ID = 'aera/auto'
+
+/** Routing header carrying the frozen GatewaySession id. */
+export const AGC_SESSION_HEADER = 'x-aera-session-id'
+
+/** Routing header carrying the frozen Connection id. */
+export const AGC_CONNECTION_HEADER = 'x-aera-connection-id'
+
+/**
+ * Routing header carrying the frozen runtime instance id. The Router treats
+ * it as a HINT that must agree with the runtime instance already bound to
+ * the execution credential; presenting the frozen value keeps the request
+ * self-describing without widening anything.
+ */
+export const AGC_RUNTIME_INSTANCE_HEADER = 'x-aera-runtime-instance-id'
+
+/**
+ * Build the product-hosted governed provider profile. No argument is taken:
+ * every field is frozen by the owner ruling, and a configurable origin is
+ * exactly the thing §20 refuses.
+ */
+export function buildAgcGovernedGatewayProviderProfile(): AgcGatewayProviderProfile {
+  assertLoopbackOrigin(AGC_GOVERNED_ROUTER_ORIGIN)
+  assertIdentifier('connectionId', AGC_GOVERNED_CONNECTION_ID)
+  assertIdentifier('gatewaySessionId', AGC_GOVERNED_SESSION_ID)
+  assertIdentifier('runtimeInstanceId', AGC_GOVERNED_RUNTIME_INSTANCE_ID)
+  return {
+    displayName: 'AERA Gateway (governed)',
+    api: 'openai-responses',
+    baseURL: `${new URL(AGC_GOVERNED_ROUTER_ORIGIN).origin}/v1`,
+    apiKeyEnv: AGC_GATEWAY_CREDENTIAL_ENV,
+    headers: {
+      [AGC_CONNECTION_HEADER]: AGC_GOVERNED_CONNECTION_ID,
+      [AGC_SESSION_HEADER]: AGC_GOVERNED_SESSION_ID,
+      [AGC_RUNTIME_INSTANCE_HEADER]: AGC_GOVERNED_RUNTIME_INSTANCE_ID,
+    },
+    transport: 'sse',
+    models: [
+      {
+        id: AGC_GOVERNED_MODEL_ID,
+        name: 'Aera governed route',
+        contextWindow: 262_144,
+        maxTokens: 32_768,
+      },
+    ],
+  }
+}
+
+/**
+ * The `llm-pi-ai` configuration section carrying the governed route, merged
+ * over whatever provider routes the composition already declares so this
+ * binding only ever ADDS its own key.
+ */
+export function buildAgcGovernedGatewayProviderSection(
+  existing: Readonly<Record<string, unknown>> = {},
+): { providers: Record<string, unknown> } {
+  return {
+    providers: {
+      ...existing,
+      [AGC_GOVERNED_GATEWAY_ROUTE]: buildAgcGovernedGatewayProviderProfile(),
+    },
+  }
 }
