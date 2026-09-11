@@ -64,6 +64,6 @@ describe('Aera privacy-denial classification', () => {
     expect(classify('SENTINEL_POLICY_UNAVAILABLE')).toBe('GOVERNANCE_UNAVAILABLE')
     expect(classify('PROVIDER_EXECUTION_FORBIDDEN')).toBe('AUTHORITY')
     expect(classify('PROVIDER_DISABLED')).toBe('PROVIDER_STATE')
-    expect(display({ code: 'GOVERNANCE_POLICY' })).toBe('Aera Gateway governance policy denied this request.')
+    expect(display({ code: 'GOVERNANCE_POLICY' })).toBe('Sentinel governance policy denied this request.')
   })
 })

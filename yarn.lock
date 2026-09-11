@@ -1550,7 +1550,7 @@ __metadata:
 
 "@deepseek-ai/dsh-client-runtime@patch:@deepseek-ai/dsh-client-runtime@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-runtime-npm-0.1.1-rc.2-0fbab1b7eb.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-client-runtime@patch:@deepseek-ai/dsh-client-runtime@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-runtime-npm-0.1.1-rc.2-0fbab1b7eb.patch::version=0.1.1-rc.2&hash=fe1277&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-client-runtime@patch:@deepseek-ai/dsh-client-runtime@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-runtime-npm-0.1.1-rc.2-0fbab1b7eb.patch::version=0.1.1-rc.2&hash=2730d0&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     immer: "npm:^10.1.1"
     zustand: "npm:~4.4.7"
@@ -1571,7 +1571,7 @@ __metadata:
     "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
     "@deepseek-ai/dsh-typert-protocol": ^0.1.1-rc.2
     "@deepseek-ai/dsh-typert-registry": ^0.1.1-rc.2
-  checksum: 10c0/770f9da3c1b1b2e3d2927545af07241198182fc8bd4ee064ca172ef934a6fa63e43badfc23251589030d64613811f77c338cdb60f5f5741f682c86f5988f3f9a
+  checksum: 10c0/df0fb94ee36c0ee247be334fb0ec9f63feb2e7b7665ef6a60622b2fffa69b2462ba5bc686d1463695f8cf6c0863beab50b837ce93dda7c1112210859e8c32483
   languageName: node
   linkType: hard
 
