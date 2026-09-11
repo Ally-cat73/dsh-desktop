@@ -173,7 +173,7 @@ describe('Aera Code native identity', () => {
     expect(patch).toContain('Aera Gateway execution is not authorised for this runtime Session.')
     expect(patch).toContain('Aera Gateway provider execution is disabled.')
     expect(patch).toContain('Aera Gateway governance is temporarily unavailable.')
-    expect(patch).toContain('Aera Gateway governance policy denied this request.')
+    expect(patch).toContain('Sentinel governance policy denied this request.')
     expect(patch).toContain('return "API key is invalid"')
     expect(patch).not.toContain('return record.message')
 
@@ -185,7 +185,7 @@ describe('Aera Code native identity', () => {
     )).toBe('Aera Gateway execution is not authorised for this runtime Session.')
     expect(aeraGatewayAuthFailureMessage(
       'OpenAI API error (403): 403 "SENTINEL_DENIED"',
-    )).toBe('Aera Gateway governance policy denied this request.')
+    )).toBe('Sentinel governance policy denied this request.')
     expect(aeraGatewayAuthFailureMessage('credential=must-not-render')).toBeNull()
   })
 
@@ -230,7 +230,7 @@ describe('Aera Code native identity', () => {
     )() as (failure: Record<string, unknown>) => string
 
     expect(display({ code: 'GOVERNANCE_POLICY', message: 'protected raw denial' }))
-      .toBe('Aera Gateway governance policy denied this request.')
+      .toBe('Sentinel governance policy denied this request.')
     expect(display({ code: 'GOVERNANCE_UNAVAILABLE', message: 'protected raw failure' }))
       .toBe('Aera Gateway governance is temporarily unavailable.')
     expect(display({ code: 'AUTHORITY', message: 'protected raw authority state' }))

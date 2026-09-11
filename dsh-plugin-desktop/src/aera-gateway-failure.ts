@@ -13,7 +13,7 @@ export function aeraGatewayAuthFailureMessage(message: string): string | null {
     return 'Aera Gateway governance is temporarily unavailable.'
   }
   if (message.includes('SENTINEL_DENIED')) {
-    return 'Aera Gateway governance policy denied this request.'
+    return 'Sentinel governance policy denied this request.'
   }
   return null
 }

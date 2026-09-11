@@ -16,7 +16,7 @@ index ba3cb21f72709cc91a733d4080266e452d6435d5..e02032eaf3a9e8011cc779a02dd260e8
  			if (failure === null || typeof failure !== "object") return String(failure);
  			const record = failure;
 -			if (record.code === "AUTH") return "API key is invalid";
-+			if (record.code === "GOVERNANCE_POLICY") return "Aera Gateway governance policy denied this request.";
++			if (record.code === "GOVERNANCE_POLICY") return "Sentinel governance policy denied this request.";
 +			if (record.code === "PRIVACY_POLICY") return "Request blocked by Aera privacy policy.";
 +			if (record.code === "GOVERNANCE_UNAVAILABLE") return "Aera Gateway governance is temporarily unavailable.";
 +			if (record.code === "AUTHORITY") return "Aera Gateway execution is not authorised for this runtime Session.";
