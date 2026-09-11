@@ -1550,7 +1550,7 @@ __metadata:
 
 "@deepseek-ai/dsh-client-runtime@patch:@deepseek-ai/dsh-client-runtime@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-runtime-npm-0.1.1-rc.2-0fbab1b7eb.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-client-runtime@patch:@deepseek-ai/dsh-client-runtime@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-runtime-npm-0.1.1-rc.2-0fbab1b7eb.patch::version=0.1.1-rc.2&hash=c44a16&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-client-runtime@patch:@deepseek-ai/dsh-client-runtime@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-runtime-npm-0.1.1-rc.2-0fbab1b7eb.patch::version=0.1.1-rc.2&hash=fe1277&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     immer: "npm:^10.1.1"
     zustand: "npm:~4.4.7"
@@ -1571,7 +1571,7 @@ __metadata:
     "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
     "@deepseek-ai/dsh-typert-protocol": ^0.1.1-rc.2
     "@deepseek-ai/dsh-typert-registry": ^0.1.1-rc.2
-  checksum: 10c0/29d45f3f17513de3d16a3aa471de3130ea4cb2d110af77c0cc25192a819dda8e4503f116be66d1237f12011b56c300bca95386d0eac3bcf350314e16802c11a5
+  checksum: 10c0/770f9da3c1b1b2e3d2927545af07241198182fc8bd4ee064ca172ef934a6fa63e43badfc23251589030d64613811f77c338cdb60f5f5741f682c86f5988f3f9a
   languageName: node
   linkType: hard
 
@@ -2946,7 +2946,7 @@ __metadata:
 
 "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=3e7e27&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=e86b19&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@deepseek-ai/schemastery": "npm:^3.18.1"
     "@earendil-works/pi-ai": "npm:^0.82.1"
@@ -2960,7 +2960,7 @@ __metadata:
     "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
     "@deepseek-ai/dsh-settings": ^0.1.1-rc.2
     "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
-  checksum: 10c0/43eb4ecf74861410a874b805188186de54f281bc320a702f03381993eef16433314daef2a62a5d160cbd736f5b4ab7d7c48e288cc6871f02400bfe695cb261de
+  checksum: 10c0/1d950b5ec47e3700d2704e7237a0729ff4cc017f2bd5e6a66c856cbe357364376ed668c8e4410395fb2f0e6ecc71c8cf2f3b6457c9462f83094b84f3ab6e5270
   languageName: node
   linkType: hard
 
@@ -3620,7 +3620,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-spill-policy@npm:^0.1.1-rc.2":
+"@deepseek-ai/dsh-spill-policy@npm:0.1.1-rc.2":
   version: 0.1.1-rc.2
   resolution: "@deepseek-ai/dsh-spill-policy@npm:0.1.1-rc.2"
   dependencies:
@@ -3634,6 +3634,23 @@ __metadata:
     "@deepseek-ai/dsh-spill": ^0.1.1-rc.2
     "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
   checksum: 10c0/b0d95a21fc80766968b7632788d053a35993ecbf55a44221bf807d8a16aab7cbbef01494b85d20a3e331c885b9c3de43e55a2c3a3b4cf356cefdb2a46b9d4960
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-spill-policy@patch:@deepseek-ai/dsh-spill-policy@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-spill-policy-npm-0.1.1-rc.2-aera-spill-metadata-boundary.patch::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.1-rc.2
+  resolution: "@deepseek-ai/dsh-spill-policy@patch:@deepseek-ai/dsh-spill-policy@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-spill-policy-npm-0.1.1-rc.2-aera-spill-metadata-boundary.patch::version=0.1.1-rc.2&hash=afb8a8&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@deepseek-ai/schemastery": "npm:^3.18.1"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.1
+    "@deepseek-ai/dsh-invariants": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-output-retention": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-spill": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
+  checksum: 10c0/e96074bac83ab38aeffec086350f83c6b6c6204cc711c199f2ce646b55190b94dfa7b32751ace41db4e3430da8c742cc1500bccd8781de299d172f52e60ddb07
   languageName: node
   linkType: hard
 
@@ -4015,7 +4032,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-tool-fs-search@npm:^0.1.1-rc.2":
+"@deepseek-ai/dsh-tool-fs-search@npm:0.1.1-rc.2":
   version: 0.1.1-rc.2
   resolution: "@deepseek-ai/dsh-tool-fs-search@npm:0.1.1-rc.2"
   dependencies:
@@ -4033,6 +4050,27 @@ __metadata:
     "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
     "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
   checksum: 10c0/0a6ecf36bae514b63ee879edcce49f2c650539d7844dfb96393dcf00cefcaeea9167b6048dfb0ea1e77e1b41f10a07c9d5a21a1c2de79a7f2ba10573a914fc24
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-tool-fs-search@patch:@deepseek-ai/dsh-tool-fs-search@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-tool-fs-search-npm-0.1.1-rc.2-aera-spill-metadata-boundary.patch::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.1-rc.2
+  resolution: "@deepseek-ai/dsh-tool-fs-search@patch:@deepseek-ai/dsh-tool-fs-search@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-tool-fs-search-npm-0.1.1-rc.2-aera-spill-metadata-boundary.patch::version=0.1.1-rc.2&hash=e550e1&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@deepseek-ai/schemastery": "npm:^3.18.1"
+    "@vscode/ripgrep": "npm:^1.18.0"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.1
+    "@deepseek-ai/dsh-invariants": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-output-retention": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-spill": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-subprocess": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-system-prompt": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
+  checksum: 10c0/17905f318118546759ca3df2feafc7074169a7f92ec224999be205b93cf975fcfffbe578115a031e16f66c90e40dd083b0963ebb6b22b93be1e22e9065e3f272
   languageName: node
   linkType: hard
 

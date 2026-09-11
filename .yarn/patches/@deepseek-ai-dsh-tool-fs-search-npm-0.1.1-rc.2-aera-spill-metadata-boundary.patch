@@ -1,0 +1,122 @@
+diff --git a/lib/index.js b/lib/index.js
+index c84ce59..3efb5ea 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -308,6 +308,77 @@ async function trySaveFormattedResult(ctx, exec, suggestedName, content) {
+ 		return;
+ 	}
+ }
++/**
++* AERA WO-AGC-004 remit AC2 (owner ruling §10-§12) — TOOL-SPILL METADATA BOUNDARY.
++*
++* Framework-generated spill bookkeeping is no longer flattened into the model-
++* facing SEMANTIC result text. The search tools own the spill they created, so
++* they retain its reference HERE, in a process-local registry outside the
++* semantic text, and the model-facing footer states only the bounded truth
++* (how many results were shown, and that the complete result was retained).
++*
++* Why: the local spill backend's locator is an absolute path whose four
++* randomised segments (the per-user temp directory, the `dsh-spill-` suffix,
++* the session-hash directory and the random filename prefix) form a single
++* ~130-character high-entropy span. Composed into UNTRUSTED_TOOL_OUTPUT, that
++* span is exactly the shape the provider-side secret/entropy detectors exist
++* to catch, and it refused a genuine, secret-free `glob` result. The detector
++* was right about the bytes it was shown; the COMPOSITION was wrong.
++*
++* TRUST BOUNDARY (owner §12): a reference exists only because this module
++* called `ctx.spillStore.saveText` and received a real `SpillRef`. Nothing a
++* model, a user or a tool payload can say reaches this registry, and no text
++* anywhere is treated as spill metadata — the semantic result stays governed
++* exactly as before, in full.
++*
++* NOT changed by this repair: which files are shown, the genuine result
++* content, any detector, any threshold, any policy.
++*/
++let spillReferenceSequence = 0;
++const spillReferencesByHandle = new Map();
++/**
++* Record one saved spill reference against the call that produced it and mint
++* its opaque, low-entropy runtime handle.
++*
++* @param exec - the tool-execution context that created the spill.
++* @param ref - the backend `SpillRef`, or `undefined` when nothing was saved.
++* @returns the retained reference record, or `undefined` when nothing was saved.
++*/
++function recordSpillReference(exec, ref) {
++	if (ref === void 0) return;
++	spillReferenceSequence += 1;
++	const record = Object.freeze({
++		handle: `spill-ref-${spillReferenceSequence}`,
++		tool: exec.name,
++		callId: exec.callId,
++		sessionId: exec.agent?.session.header.id,
++		locator: ref.locator,
++		bytes: ref.bytes,
++		retrievalHint: ref.retrievalHint
++	});
++	spillReferencesByHandle.set(record.handle, record);
++	return record;
++}
++/**
++* Resolve a runtime spill handle minted by {@link recordSpillReference}.
++*
++* @param handle - the opaque handle (`spill-ref-<n>`).
++* @returns the retained reference record, or `undefined` when unknown.
++*/
++function spillReferenceByHandle(handle) {
++	return spillReferencesByHandle.get(handle);
++}
++/**
++* Every spill reference this process retained for one model-issued call.
++*
++* @param callId - the model-issued call id.
++* @returns the retained reference records, in mint order.
++*/
++function spillReferencesForCall(callId) {
++	const found = [];
++	for (const record of spillReferencesByHandle.values()) if (record.callId === callId) found.push(record);
++	return found;
++}
+ //#endregion
+ //#region lib/types/presentation.js
+ /**
+@@ -692,7 +763,7 @@ function formatGlobOutput(sample, seen, spillRef) {
+ /** Format one bounded page and the recovery path for its complete sorted result. */
+ function formatGlobPage(items, seen, spillRef, basis) {
+ 	const body = items.join("\n");
+-	const recovery = spillRef !== void 0 ? `Full sorted result stored at: ${spillRef.locator}. ${spillRef.retrievalHint}` : "The complete result could not be saved; narrow pattern or path to see more.";
++	const recovery = spillRef !== void 0 ? "The complete sorted result was retained by the runtime; narrow pattern or path to see more." : "The complete result could not be saved; narrow pattern or path to see more.";
+ 	return `${body}\n\n(Showing ${items.length} of ${seen} paths${basis} ${recovery})`;
+ }
+ /** Bound and format one canonical path list for the Native surface relative to its search root. */
+@@ -849,6 +920,7 @@ function applyGlobTool(ctx, caps) {
+ 		const paths = value.paths;
+ 		if (paths.length <= caps.maxResults) return decision;
+ 		const spillRef = await trySaveFormattedResult(ctx, exec, "glob-results.txt", paths.join("\n"));
++		recordSpillReference(exec, spillRef);
+ 		return {
+ 			kind: "accept",
+ 			content: [{
+@@ -1029,7 +1101,7 @@ function formatGrepOutput(retained, spillRef) {
+ 	const header = retained.truncated ? `Found ${retained.kept} of ${retained.seen} matches` : `Found ${retained.seen} ${matchNoun(retained.seen)}`;
+ 	const body = formatGrepMatches(retained.items);
+ 	if (!retained.truncated) return `${header}\n\n${body}`;
+-	return `${header}\n\n${body}\n\n(${spillRef !== void 0 ? `Full grep result stored at: ${spillRef.locator}. ${spillRef.retrievalHint}` : "The complete result could not be saved; narrow pattern, path, or include to see more."})`;
++	return `${header}\n\n${body}\n\n(${spillRef !== void 0 ? "The complete grep result was retained by the runtime; narrow pattern, path, or include to see more." : "The complete result could not be saved; narrow pattern, path, or include to see more."})`;
+ }
+ /** Format one already-retained match list for the Native surface. */
+ function formatRetainedGrep(retained, spillRef) {
+@@ -1164,6 +1236,7 @@ function applyGrepTool(ctx, caps) {
+ 			line: previewLine(match.line, caps.maxLineBytes)
+ 		}));
+ 		const spillRef = await trySaveFormattedResult(ctx, exec, "grep-results.txt", `Found ${matches.length} ${matchNoun(matches.length)}\n\n${formatGrepMatches(previewedAll)}`);
++		recordSpillReference(exec, spillRef);
+ 		return {
+ 			kind: "accept",
+ 			content: [{
+@@ -1265,4 +1338,5 @@ async function apply(ctx, config) {
+ 	});
+ }
+ //#endregion
++export { spillReferenceByHandle, spillReferencesForCall };
+ export { Config, GLOB_MAX_RESULTS, GLOB_VCS_EXCLUDES, GREP_MAX_LINE_BYTES, GREP_MAX_MATCHES, RAW_OUTPUT_MAX_BYTES, SEARCH_GRACE_MS, SEARCH_META_MAX_BYTES, SEARCH_STDERR_MAX_BYTES, SEARCH_TIMEOUT_MS, SearchError, apply, applyGlobTool, applyGrepTool, buildGlobCommand, buildGrepCommand, formatGlobOutput, formatGrepMatches, formatGrepOutput, inject, name, parseGlobArgs, parseGrepArgs, parseGrepMatches, presentGlobCall, presentGlobResult, presentGrepCall, presentGrepResult, previewLine, resolveRgPath, runRipgrep, sampleAcrossTopLevel, toWorkdirRelative, trySaveFormattedResult };

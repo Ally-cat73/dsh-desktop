@@ -1,0 +1,106 @@
+diff --git a/lib/index.js b/lib/index.js
+index d1b1917..4f15beb 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -77,9 +77,76 @@ function preview(text, budget) {
+ 		omitted: kept.omittedBytes
+ 	};
+ }
+-/** The spill-notice line for a given omission + saved reference (no preview, no leading blank line). */
+-function spillNotice(omitted, ref) {
+-	return `(${describeOmitted(omitted, "bytes")} Full formatted result stored at: ${ref.locator}. ${ref.retrievalHint})`;
++/**
++* AERA WO-AGC-004 remit AC2 (owner ruling §10-§12) — TOOL-SPILL METADATA BOUNDARY.
++*
++* The runtime's own spill bookkeeping is no longer flattened into the model-
++* facing SEMANTIC result text. The policy that created the spill retains its
++* reference in the process-local registry below — outside the semantic text —
++* and the notice states only the bounded truth (how much was omitted, and that
++* the complete result was retained). The spilled tool result itself is
++* unchanged and remains fully governed.
++*
++* Why: the local spill backend's locator is an absolute path built from four
++* randomised segments, i.e. one long high-entropy span. Composed into
++* UNTRUSTED_TOOL_OUTPUT it is precisely what the provider-side secret/entropy
++* detectors exist to catch, and it refused a genuine, secret-free tool result.
++* The detector was right about the bytes it was shown; the COMPOSITION was
++* wrong. No detector, threshold or policy is changed here.
++*
++* TRUST BOUNDARY (owner §12): a record exists only because THIS module called
++* `ctx.spillStore.saveText` and received a real `SpillRef`. No model, user or
++* tool payload text can reach this registry or be treated as spill metadata.
++*/
++let spillReferenceSequence = 0;
++const spillReferencesByHandle = new Map();
++/**
++* Record one saved spill reference against the call that produced it and mint
++* its opaque, low-entropy runtime handle.
++*
++* @param toolName - the tool whose result was spilled.
++* @param callId - the model-issued call id (or sub-call id for a dispatch log).
++* @param label - `result` or `dispatch`.
++* @param ref - the backend `SpillRef`.
++* @returns the retained reference record.
++*/
++function recordSpillReference(toolName, callId, label, ref) {
++	spillReferenceSequence += 1;
++	const record = Object.freeze({
++		handle: `spill-ref-policy-${spillReferenceSequence}`,
++		tool: toolName,
++		callId,
++		label,
++		locator: ref.locator,
++		bytes: ref.bytes,
++		retrievalHint: ref.retrievalHint
++	});
++	spillReferencesByHandle.set(record.handle, record);
++	return record;
++}
++/**
++* Resolve a runtime spill handle minted by {@link recordSpillReference}.
++*
++* @param handle - the opaque handle.
++* @returns the retained reference record, or `undefined` when unknown.
++*/
++function spillReferenceByHandle(handle) {
++	return spillReferencesByHandle.get(handle);
++}
++/**
++* Every spill reference this process retained for one call id.
++*
++* @param callId - the model-issued call id.
++* @returns the retained reference records, in mint order.
++*/
++function spillReferencesForCall(callId) {
++	const found = [];
++	for (const record of spillReferencesByHandle.values()) if (record.callId === callId) found.push(record);
++	return found;
++}
++/** The spill-notice line for a given omission (no preview, no leading blank line, no locator). */
++function spillNotice(omitted) {
++	return `(${describeOmitted(omitted, "bytes")} The complete formatted result was retained by the runtime.)`;
+ }
+ function apply(ctx, config) {
+ 	const maxInlineBytes = config.maxInlineBytes;
+@@ -120,12 +187,13 @@ function apply(ctx, config) {
+ 			ctx.logger.warn(`spill-policy: saveText failed for ${toolName}: ${String(error)}; keeping the inline content`);
+ 			return;
+ 		}
++		recordSpillReference(toolName, callId, label, ref);
+ 		const reserve = Buffer.byteLength(spillNotice({
+ 			kind: "exact",
+ 			count: totalBytes
+-		}, ref), "utf8") + 2;
++		}), "utf8") + 2;
+ 		const { text: previewText, omitted } = preview(text, Math.max(0, cap - reserve));
+-		const notice = spillNotice(omitted, ref);
++		const notice = spillNotice(omitted);
+ 		const replacedText = previewText.length > 0 ? `${previewText}\n\n${notice}` : notice;
+ 		if (Buffer.byteLength(replacedText, "utf8") > cap) {
+ 			ctx.logger.warn(`spill-policy: spill notice for ${toolName} exceeds maxInlineBytes; keeping the inline content`);
+@@ -166,4 +234,5 @@ function apply(ctx, config) {
+ 	}, { prepend: true });
+ }
+ //#endregion
++export { spillReferenceByHandle, spillReferencesForCall };
+ export { Config, apply, inject, name };
