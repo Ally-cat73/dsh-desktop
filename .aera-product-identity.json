@@ -1,0 +1,22 @@
+{
+  "schema": "aera.product-identity.v1",
+  "productFamily": "AERA_CODE_DSH",
+  "status": "CANONICAL_ACTIVE",
+  "currentUse": "AERA_CODE",
+  "dogfoodEligible": true,
+  "displayName": "Aera Code",
+  "displayNameIsNotIdentity": true,
+  "sourceRepository": "https://github.com/Ally-cat73/dsh-desktop.git",
+  "upstreamRepository": "https://github.com/anywhere-labs/deepseek-harness-desktop",
+  "buildTarget": "dsh-plugin-desktop",
+  "bundleId": "dev.aerastudios.code",
+  "canonicalInstallPath": "/Users/Allyd/Applications/Aera Code.app",
+  "structuralMarkers": [
+    "node_modules/@deepseek-ai/*",
+    "lib/aera-collab-tools.js",
+    "lib/aera-gateway-agc-binding.js"
+  ],
+  "registry": "Aera_Studios_Docs/central-authority/wo-aera-code-product-identity-hygiene-001/AERA_CODE_PRODUCT_VARIANTS_REGISTRY.json",
+  "labelledOn": "2026-09-11",
+  "labelledUnder": "OWNER_EXECUTION_ORDER_AERA_CODE_PRODUCT_IDENTITY_HYGIENE"
+}
