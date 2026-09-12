@@ -1,0 +1,234 @@
+diff --git a/lib/index.js b/lib/index.js
+index df6eecc014f10a7c9ac97b77447b749cb29325e4..f1c94e57ac4cabcb431609d68a48c71b32623aab 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -1888,11 +1888,11 @@ async function writeClipboard(text) {
+ * @param props.disabled - suppress opening; turning true closes an open card.
+ * @param props.copyText - optional primary value copied by activation and
+ * included in the card's accessible name.
+-* @param props.copyLabel - accessible activation-label prefix (default "复制").
+-* @param props.copiedLabel - visible success label (default "复制成功").
++* @param props.copyLabel - accessible activation-label prefix (default "Copy").
++* @param props.copiedLabel - visible success label (default "Copied").
+ * @returns anchor wrapper with the conditional portaled card.
+ */
+-function HoverCard({ anchor, content, openDelayMs = 500, disabled = false, copyText, copyLabel = "复制", copiedLabel = "复制成功" }) {
++function HoverCard({ anchor, content, openDelayMs = 500, disabled = false, copyText, copyLabel = "Copy", copiedLabel = "Copied" }) {
+ 	const rootRef = useRef(null);
+ 	const cardRef = useRef(null);
+ 	const timerRef = useRef(null);
+@@ -2217,7 +2217,7 @@ function RiskConfirmation({ open, title, description, acknowledgeLabel, cancelLa
+ * package is cordis-free, so copy arrives via props).
+ * @returns the banner, or null when connected.
+ */
+-function ConnectionBanner({ reconnecting, label = "连接已断开，正在重连…" }) {
++function ConnectionBanner({ reconnecting, label = "Connection lost. Reconnecting…" }) {
+ 	if (!reconnecting) return null;
+ 	return jsx("div", {
+ 		className: css$10.banner,
+@@ -3579,18 +3579,18 @@ function useCopyFeedback(text) {
+ */
+ const DEFAULT_TERMINAL_MAX_LINES = 16;
+ const DEFAULT_LABELS = {
+-	signal: (signal) => `信号 ${signal}`,
+-	exitCode: (exitCode) => `退出码 ${exitCode}`,
+-	running: "运行中",
+-	failed: "失败",
+-	done: "已完成",
+-	copy: "复制",
+-	copied: "复制成功",
+-	noOutput: "无输出",
+-	collapseAria: "收起输出",
+-	collapse: "收起",
+-	expandAria: (hidden) => `展开其余 ${hidden} 行输出`,
+-	expand: (hidden) => `… 其余 ${hidden} 行`
++	signal: (signal) => `Signal ${signal}`,
++	exitCode: (exitCode) => `Exit code ${exitCode}`,
++	running: "Running",
++	failed: "Failed",
++	done: "Completed",
++	copy: "Copy",
++	copied: "Copied",
++	noOutput: "No output",
++	collapseAria: "Collapse output",
++	collapse: "Collapse",
++	expandAria: (hidden) => `Expand ${hidden} more output lines`,
++	expand: (hidden) => `… ${hidden} more lines`
+ };
+ /**
+ * Prompt label for a working directory: `~` for the home directory itself,
+@@ -4121,7 +4121,7 @@ function ReadBlock({ label, lines, totalLines, lang, maxLines = 16, className })
+ 				children: [
+ 					windowed && jsx("span", {
+ 						className: css$15.count,
+-						children: `显示 ${lines.length} / ${totalLines} 行`
++						children: `Showing ${lines.length} of ${totalLines} lines`
+ 					}),
+ 					jsx("span", {
+ 						className: css$15.lang,
+@@ -4131,7 +4131,7 @@ function ReadBlock({ label, lines, totalLines, lang, maxLines = 16, className })
+ 						type: "button",
+ 						className: css$15.copyButton,
+ 						onClick: onCopy,
+-						children: copied ? "复制成功" : "复制"
++						children: copied ? "Copied" : "Copy"
+ 					})
+ 				]
+ 			})]
+@@ -4143,9 +4143,9 @@ function ReadBlock({ label, lines, totalLines, lang, maxLines = 16, className })
+ 					type: "button",
+ 					className: css$15.expand,
+ 					"aria-expanded": expanded,
+-					"aria-label": expanded ? "收起内容" : `展开其余 ${hidden} 行`,
++					"aria-label": expanded ? "Collapse content" : `Expand ${hidden} more lines`,
+ 					onClick: onToggle,
+-					children: expanded ? "收起" : `… 其余 ${hidden} 行`
++					children: expanded ? "Collapse" : `… ${hidden} more lines`
+ 				}),
+ 				capped && rows(paired.slice(paired.length - tailLines))
+ 			]
+@@ -4290,7 +4290,7 @@ function DiffBlock({ diffs, maxLines = 16, className }) {
+ 				type: "button",
+ 				className: css$16.copyButton,
+ 				onClick: onCopy,
+-				children: copied ? "复制成功" : "复制"
++				children: copied ? "Copied" : "Copy"
+ 			}),
+ 			jsxs("div", {
+ 				className: css$16.body,
+@@ -4303,9 +4303,9 @@ function DiffBlock({ diffs, maxLines = 16, className }) {
+ 						type: "button",
+ 						className: css$16.expand,
+ 						"aria-expanded": expanded,
+-						"aria-label": expanded ? "收起差异" : `展开其余 ${hidden} 行差异`,
++						"aria-label": expanded ? "Collapse diff" : `Expand ${hidden} more diff lines`,
+ 						onClick: onToggle,
+-						children: expanded ? "收起" : `… 其余 ${hidden} 行`
++						children: expanded ? "Collapse" : `… ${hidden} more lines`
+ 					}),
+ 					tail.map((row, index) => jsx("div", {
+ 						className: clsx(css$16.line, ROW_CLASS[row.kind]),
+@@ -4359,10 +4359,10 @@ function shownCount(props) {
+ 	return props.kind === "paths" ? props.paths.length : props.files.reduce((sum, file) => sum + file.matches.length, 0);
+ }
+ /**
+-* The banner summary. When the search was capped it reads `显示 X / 共 N …` so
++* The banner summary. When the search was capped it reads `Showing X of N …` so
+ * the retained count and the pre-cap total sit in one clause (mirroring the read
+-* card's `显示 X / Y 行`); when it was not capped it is a plain count of what the
+-* card holds. The unit — `处匹配 · K 个文件` for grep, `个路径` for glob — trails
++* card's `Showing X of Y lines`); when it was not capped it is a plain count of what the
++* card holds. The unit — `matches in K files` for grep, `paths` for glob — trails
+ * the count either way.
+ * @param props - the card's props.
+ * @param shown - the retained result count from {@link shownCount}.
+@@ -4371,8 +4371,8 @@ function shownCount(props) {
+ * @returns the summary text.
+ */
+ function summaryText(props, shown, truncated, total) {
+-	const count = truncated ? `显示 ${shown} / 共 ${total}` : `${shown}`;
+-	return props.kind === "paths" ? `${count} 个路径` : `${count} 处匹配 · ${props.files.length} 个文件`;
++	const count = truncated ? `Showing ${shown} of ${total}` : `${shown}`;
++	return props.kind === "paths" ? `${count} paths` : `${count} matches · ${props.files.length} files`;
+ }
+ /**
+ * Flatten a card's shape into its render rows, dropping a collapsed file
+@@ -4491,11 +4491,11 @@ function SearchBlock(props) {
+ 				type: "button",
+ 				className: css$17.copyButton,
+ 				onClick: onCopy,
+-				children: copied ? "复制成功" : "复制"
++				children: copied ? "Copied" : "Copy"
+ 			})]
+ 		}), empty ? jsx("div", {
+ 			className: css$17.empty,
+-			children: "无结果"
++			children: "No results"
+ 		}) : jsxs("div", {
+ 			className: css$17.body,
+ 			children: [
+@@ -4504,9 +4504,9 @@ function SearchBlock(props) {
+ 					type: "button",
+ 					className: css$17.expand,
+ 					"aria-expanded": expanded,
+-					"aria-label": expanded ? "收起结果" : `展开其余 ${hidden} 行结果`,
++					"aria-label": expanded ? "Collapse results" : `Expand ${hidden} more result lines`,
+ 					onClick: onToggle,
+-					children: expanded ? "收起" : `… 其余 ${hidden} 行`
++					children: expanded ? "Collapse" : `… ${hidden} more lines`
+ 				}),
+ 				tailHeader !== void 0 && jsx("div", { children: renderRow(tailHeader) }, `tailHeader:${rowKey(tailHeader)}`),
+ 				tail.map((row) => jsx("div", { children: renderRow(row) }, rowKey(row)))
+@@ -4987,7 +4987,7 @@ function parseGfmWithMath(text) {
+ }
+ //#endregion
+ //#region lib/types/markdown/CodeBlock.js
+-function CodeBlock({ code, lang, className, copyLabel = "复制", copiedLabel = "复制成功" }) {
++function CodeBlock({ code, lang, className, copyLabel = "Copy", copiedLabel = "Copied" }) {
+ 	const trimmed = code.endsWith("\n") ? code.slice(0, -1) : code;
+ 	const html = useMemo(() => highlightToHtml(trimmed, lang), [
+ 		trimmed,
+@@ -5738,7 +5738,7 @@ function WebSearchBlock({ answer, sources, truncated, className }) {
+ 			}),
+ 			empty ? jsx("div", {
+ 				className: css$20.empty,
+-				children: "未找到结果"
++				children: "No results found"
+ 			}) : jsx("ol", {
+ 				className: css$20.sources,
+ 				children: sources.map((source, index) => jsx(SourceItem, {
+@@ -5748,7 +5748,7 @@ function WebSearchBlock({ answer, sources, truncated, className }) {
+ 			}),
+ 			truncated && jsx("div", {
+ 				className: css$20.truncated,
+-				children: "来源列表已截断"
++				children: "Source list truncated"
+ 			})
+ 		]
+ 	});
+@@ -5773,7 +5773,7 @@ function WebFetchBlock({ url, statusCode, truncated, className }) {
+ 				children: ["HTTP ", statusCode]
+ 			}), truncated && jsx("span", {
+ 				className: css$20.truncated,
+-				children: "内容已截断"
++				children: "Content truncated"
+ 			})]
+ 		})]
+ 	});
+@@ -5791,7 +5791,7 @@ function WebBlock(props) {
+ const MAX_CHARS = 2e4;
+ /** Default truncation footer; the owner passes a localized formatter. */
+ function defaultTruncatedLabel(total) {
+-	return `… 已截断，共 ${total} 字符`;
++	return `… truncated, ${total} characters total`;
+ }
+ function JsonBlock({ label, payload, defaultOpen = false, truncatedLabel = defaultTruncatedLabel }) {
+ 	const [open, setOpen] = useState(defaultOpen);
+diff --git a/lib/types/HoverCard.d.ts b/lib/types/HoverCard.d.ts
+index 770f1cbdc15673a4f786addb891c0cbefdbcd503..7c4b7d7125d804675ae6961a5c32d0f85cadf969 100644
+--- a/lib/types/HoverCard.d.ts
++++ b/lib/types/HoverCard.d.ts
+@@ -8,8 +8,8 @@ import type { ReactNode } from 'react';
+  * @param props.disabled - suppress opening; turning true closes an open card.
+  * @param props.copyText - optional primary value copied by activation and
+  * included in the card's accessible name.
+- * @param props.copyLabel - accessible activation-label prefix (default "复制").
+- * @param props.copiedLabel - visible success label (default "复制成功").
++ * @param props.copyLabel - accessible activation-label prefix (default "Copy").
++ * @param props.copiedLabel - visible success label (default "Copied").
+  * @returns anchor wrapper with the conditional portaled card.
+  */
+ export declare function HoverCard({ anchor, content, openDelayMs, disabled, copyText, copyLabel, copiedLabel, }: {
+diff --git a/lib/types/SearchBlock.d.ts b/lib/types/SearchBlock.d.ts
+index 2469f33be2fbb5f490c1c987f36ec2748969841c..1ef456ac217e822e5f6eae01184b18583abaf7ee 100644
+--- a/lib/types/SearchBlock.d.ts
++++ b/lib/types/SearchBlock.d.ts
+@@ -23,7 +23,7 @@ interface SearchBlockCommon {
+     /**
+      * Whether the tool capped the inline result: the shape carries only the
+      * retained results, not every result the search found. The banner summary
+-     * folds the pre-cap `total` in (`显示 X / 共 N …`) so the card never presents a
++     * folds the pre-cap `total` in (`Showing X of N …`) so the card never presents a
+      * capped result as complete.
+      */
+     truncated: boolean;

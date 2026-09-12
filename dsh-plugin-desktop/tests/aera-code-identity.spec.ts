@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { processResponsesStream } from '../node_modules/@earendil-works/pi-ai/dist/api/openai-responses-shared.js'
 import { migrateAeraCodeUserData } from '../src/aera-code-state-migration.ts'
 import { bootstrapAeraGatewayCredential } from '../src/aera-gateway-keychain.ts'
 import { aeraGatewayAuthFailureMessage } from '../src/aera-gateway-failure.ts'
@@ -186,6 +187,9 @@ describe('Aera Code native identity', () => {
     expect(aeraGatewayAuthFailureMessage(
       'OpenAI API error (403): 403 "SENTINEL_DENIED"',
     )).toBe('Aera Gateway governance policy denied this request.')
+    expect(aeraGatewayAuthFailureMessage(
+      'OpenAI API error: SENTINEL_OUTPUT_DENIED',
+    )).toBe('Aera Gateway governance policy denied this request.')
     expect(aeraGatewayAuthFailureMessage('credential=must-not-render')).toBeNull()
   })
 
@@ -208,10 +212,63 @@ describe('Aera Code native identity', () => {
     )(() => false) as (message: string) => string
 
     expect(classify('OpenAI API error (403): 403 "SENTINEL_DENIED"')).toBe('GOVERNANCE_POLICY')
+    expect(classify('OpenAI API error: SENTINEL_OUTPUT_DENIED')).toBe('GOVERNANCE_POLICY')
     expect(classify('OpenAI API error (503): 503 "SENTINEL_POLICY_UNAVAILABLE"')).toBe('GOVERNANCE_UNAVAILABLE')
     expect(classify('OpenAI API error (403): 403 "CURRENT_AUTHORITY_UNAVAILABLE"')).toBe('AUTHORITY')
     expect(classify('OpenAI API error (423): 423 "PROVIDER_LOCKED"')).toBe('PROVIDER_STATE')
     expect(classify('OpenAI API error (401): 401 "provider_execution_unauthorized"')).toBe('AUTH')
+  })
+
+  it('carries the Router policy terminal through the installed parser without a retryable transport code', async () => {
+    const wire = {
+      async *[Symbol.asyncIterator]() {
+        yield {
+          type: 'response.failed',
+          response: {
+            status: 'failed',
+            error: {
+              type: 'policy_error',
+              code: 'SENTINEL_OUTPUT_DENIED',
+              message: 'Sentinel blocked the provider output.',
+            },
+          },
+        }
+      },
+    }
+
+    let parsedMessage = ''
+    try {
+      await processResponsesStream(
+        wire as never,
+        {} as never,
+        { push: vi.fn() } as never,
+        {} as never,
+      )
+    } catch (error) {
+      parsedMessage = error instanceof Error ? error.message : String(error)
+    }
+    expect(parsedMessage).toBe('SENTINEL_OUTPUT_DENIED: Sentinel blocked the provider output.')
+
+    const adapterSource = readFileSync(join(
+      process.cwd(),
+      'node_modules',
+      '@deepseek-ai',
+      'dsh-llm-pi-ai',
+      'lib',
+      'index.js',
+    ), 'utf8')
+    const start = adapterSource.indexOf('function classifyPiAiError(message)')
+    const end = adapterSource.indexOf('/**\n* Map a terminal pi-ai event', start)
+    const classify = new Function(
+      'isQuotaExceededError',
+      `${adapterSource.slice(start, end)}; return classifyPiAiError`,
+    )(() => false) as (message: string) => string
+    const code = classify(parsedMessage)
+
+    expect(code).toBe('GOVERNANCE_POLICY')
+    expect(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT']).not.toContain(code)
+    expect(aeraGatewayAuthFailureMessage(parsedMessage))
+      .toBe('Aera Gateway governance policy denied this request.')
   })
 
   it('renders finite owner-safe copy for the distinct Gateway failure taxonomy', () => {
@@ -239,5 +296,24 @@ describe('Aera Code native identity', () => {
       .toBe('Aera Gateway provider execution is disabled.')
     expect(display({ code: 'AUTH', message: 'protected raw credential failure' }))
       .toBe('API key is invalid')
+  })
+
+  it('ships English-only system labels in the reachable primitive renderer bundle', () => {
+    const primitiveSource = readFileSync(join(
+      process.cwd(),
+      'node_modules',
+      '@deepseek-ai',
+      'dsh-client-ui-primitives',
+      'lib',
+      'index.js',
+    ), 'utf8')
+
+    expect(primitiveSource).not.toMatch(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u)
+    expect(primitiveSource).toContain('Connection lost. Reconnecting…')
+    expect(primitiveSource).toContain('Showing ${lines.length} of ${totalLines} lines')
+    expect(primitiveSource).toContain('children: copied ? "Copied" : "Copy"')
+    expect(primitiveSource).toContain('children: "No results"')
+    expect(primitiveSource).toContain('children: "Source list truncated"')
+    expect(primitiveSource).toContain('children: "Content truncated"')
   })
 })
