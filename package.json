@@ -61,7 +61,8 @@
     "@aera/evidentiary-work-graph": "file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz",
     "@aera/evidentiary-work-graph-contracts": "file:./dsh-plugin-desktop/vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz",
     "@aera/participation-contracts": "file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz",
-    "@aera/participation-runtime": "file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz"
+    "@aera/participation-runtime": "file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz",
+    "@deepseek-ai/dsh-web-frontend@npm:^0.1.1-rc.2": "patch:@deepseek-ai/dsh-web-frontend@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-web-frontend-npm-0.1.1-rc.2-819bc7dd83.patch"
   },
   "dependenciesMeta": {
     "@deepseek-ai/dsh-subprocess-local": {
