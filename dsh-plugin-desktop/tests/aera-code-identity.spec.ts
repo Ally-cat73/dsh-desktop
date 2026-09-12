@@ -214,6 +214,8 @@ describe('Aera Code native identity', () => {
     expect(classify('OpenAI API error (403): 403 "SENTINEL_DENIED"')).toBe('GOVERNANCE_POLICY')
     expect(classify('OpenAI API error: SENTINEL_OUTPUT_DENIED')).toBe('GOVERNANCE_POLICY')
     expect(classify('OpenAI API error (503): 503 "SENTINEL_POLICY_UNAVAILABLE"')).toBe('GOVERNANCE_UNAVAILABLE')
+    expect(classify('OpenAI API error (503): 503 "GOVERNANCE_EVALUATION_UNAVAILABLE"')).toBe('GOVERNANCE_UNAVAILABLE')
+    expect(classify('OpenAI API error: EXECUTION_LINEAGE_RECONCILIATION_REQUIRED')).toBe('GOVERNANCE_UNAVAILABLE')
     expect(classify('OpenAI API error (403): 403 "CURRENT_AUTHORITY_UNAVAILABLE"')).toBe('AUTHORITY')
     expect(classify('OpenAI API error (423): 423 "PROVIDER_LOCKED"')).toBe('PROVIDER_STATE')
     expect(classify('OpenAI API error (401): 401 "provider_execution_unauthorized"')).toBe('AUTH')
