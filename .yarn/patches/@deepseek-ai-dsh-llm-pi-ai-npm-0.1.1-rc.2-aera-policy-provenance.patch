@@ -89,7 +89,7 @@ index 6e7a97d..aera002 100644
  * Durable pi-ai replay metadata and assistant-history reconstruction.
 @@ -1266,3 +1267,7 @@ function classifyPiAiError(message) {
 +	if (message.includes("SENTINEL_DENIED") || message.includes("SENTINEL_OUTPUT_DENIED")) return "GOVERNANCE_POLICY";
-+	if (message.includes("SENTINEL_POLICY_UNAVAILABLE")) return "GOVERNANCE_UNAVAILABLE";
++	if (message.includes("SENTINEL_POLICY_UNAVAILABLE") || message.includes("GOVERNANCE_EVALUATION_UNAVAILABLE") || message.includes("EXECUTION_LINEAGE_RECONCILIATION_REQUIRED")) return "GOVERNANCE_UNAVAILABLE";
 +	if (message.includes("CURRENT_AUTHORITY_UNAVAILABLE") || message.includes("PROVIDER_EXECUTION_FORBIDDEN")) return "AUTHORITY";
 +	if (message.includes("PROVIDER_DISABLED") || message.includes("PROVIDER_LOCKED") || message.includes("PROVIDER_DRAINING")) return "PROVIDER_STATE";
  	if (/\b(?:401|403)\b/.test(message)) return "AUTH";
