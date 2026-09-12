@@ -4566,10 +4566,17 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-web-frontend@npm:^0.1.1-rc.2":
+"@deepseek-ai/dsh-web-frontend@npm:0.1.1-rc.2":
   version: 0.1.1-rc.2
   resolution: "@deepseek-ai/dsh-web-frontend@npm:0.1.1-rc.2"
   checksum: 10c0/6133fd245da1d9b5c580eb60827112c33010f9d73b35162ebab3e0c419dc2912cc6314380622914ae9b09c7006dbbd1d5901e3352ae0c53b97ec1df55e2acad0
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-web-frontend@patch:@deepseek-ai/dsh-web-frontend@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-web-frontend-npm-0.1.1-rc.2-819bc7dd83.patch::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.1-rc.2
+  resolution: "@deepseek-ai/dsh-web-frontend@patch:@deepseek-ai/dsh-web-frontend@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-web-frontend-npm-0.1.1-rc.2-819bc7dd83.patch::version=0.1.1-rc.2&hash=cbfc3f&locator=deepseek-harness-desktop%40workspace%3A."
+  checksum: 10c0/71fc6e6fcbfb1418b18716e36ade767c9ab1e7ecdfaee3b35a54821822fc77e9e7f82e4a1d10daf6426ee31beed422b6466f9ac0f68059bacb8f86a18237988d
   languageName: node
   linkType: hard
 
