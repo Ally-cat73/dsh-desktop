@@ -127,6 +127,7 @@ import { desktopLocaleFromLanguageTag } from './tray-locale.ts'
 import { AERA_CODE_PRODUCT } from './product-brand.ts'
 import { migrateAeraCodeUserData } from './aera-code-state-migration.ts'
 import { bootstrapAeraGatewayCredential } from './aera-gateway-keychain.ts'
+import { applyAeraCollaborationProfileConfig } from './aera-collab-runtime-config.ts'
 import { desktopNativeCopy } from './native-dialog-copy.ts'
 import {
   desktopDefaultRelaunchArguments,
@@ -1046,6 +1047,10 @@ async function run(): Promise<void> {
     )
   }
   const selection = readDesktopProfileState(join(userDataDir, 'profile-selection', 'state.json'))
+  applyAeraCollaborationProfileConfig({
+    profileDir: resolveProfileDir(selection.active, resolveDshHome()),
+    environment: process.env,
+  })
   bootstrapAeraGatewayCredential({ activeProfile: selection.active })
   if (process.argv.includes('--export-diagnostics')) {
     try {
