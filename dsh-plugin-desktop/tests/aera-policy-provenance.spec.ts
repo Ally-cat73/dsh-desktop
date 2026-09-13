@@ -61,6 +61,32 @@ describe('Aera Code policy provenance', () => {
     ])
   })
 
+  it('marks the source-bound title request as auxiliary work in the same native Turn', () => {
+    const raw = aeraPolicyProvenanceHeader([{
+      id: 'owner-turn-1', role: 'user',
+      source: { kind: 'plugin', plugin: 'dsh-session-title-llm' },
+      content: [{ type: 'text', text: 'Generate a title from the governed source message.' }],
+    }])
+    expect(JSON.parse(raw).segments).toEqual([
+      expect.objectContaining({
+        correlation_id: 'owner-turn-1',
+        source_type: 'RUNTIME_PLUGIN_CONTEXT',
+        temporal_role: 'RUNTIME_CONTEXT',
+        native_turn_correlation: true,
+      }),
+    ])
+  })
+
+  it('patches title generation to reuse the exact source user message identity', () => {
+    const source = readFileSync(
+      new URL('../node_modules/@deepseek-ai/dsh-session-title-llm/lib/index.js', import.meta.url),
+      'utf8',
+    )
+    expect(source).toContain('source user message identity is unavailable')
+    expect(source).toContain('id: sourceMessageId')
+    expect(source).toContain('plugin: "dsh-session-title-llm"')
+  })
+
   it('wires the patch helper into the exact provider request header path', () => {
     const source = readFileSync(
       new URL('../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js', import.meta.url),

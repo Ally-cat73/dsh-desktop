@@ -1,0 +1,34 @@
+diff --git a/lib/index.js b/lib/index.js
+index 866a1bf..aera001 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -1,5 +1,5 @@
+ import z from "@deepseek-ai/schemastery";
+-import { BlockAssembler, createUserMessage, deepFreeze } from "@deepseek-ai/dsh-llm";
++import { BlockAssembler, deepFreeze } from "@deepseek-ai/dsh-llm";
+ import { MAX_TIMER_DELAY_MS, deadline } from "@deepseek-ai/dsh-timeout";
+ import { SessionTitleProviderId, normalizeSessionTitle } from "@deepseek-ai/dsh-session-title";
+ //#region lib/types/index.js
+@@ -179,13 +179,21 @@ async function generateSessionTitleWithLlm(ctx, config, request, selectedMessage
+ 		const inputBytes = Buffer.byteLength(framedInput, "utf8");
+ 		if (inputBytes > config.maxInputBytes) throw new Error(`session-title-llm: input is ${inputBytes} bytes, exceeding maxInputBytes ${config.maxInputBytes}`);
+ 		const route = resolveRoute(config, request);
+-		const messages = [createUserMessage({
++		const source = selectedMessages.at(-1);
++		const sourceEvent = request.session.events.find((event) => event.type === "user/message" && event.seq === source?.seq);
++		const sourceMessageId = sourceEvent?.data?.id;
++		if (typeof sourceMessageId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(sourceMessageId)) {
++			throw new Error("session-title-llm: source user message identity is unavailable");
++		}
++		const messages = [deepFreeze({
++			id: sourceMessageId,
++			role: "user",
+ 			content: [{
+ 				type: "text",
+ 				text: framedInput
+ 			}],
+ 			source: {
+ 				kind: "plugin",
+ 				plugin: "dsh-session-title-llm"
+ 			}
+ 		})];

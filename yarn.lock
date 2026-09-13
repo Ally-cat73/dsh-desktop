@@ -2977,7 +2977,7 @@ __metadata:
 
 "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=60e126&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=117336&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@deepseek-ai/schemastery": "npm:^3.18.1"
     "@earendil-works/pi-ai": "npm:^0.82.1"
@@ -2991,7 +2991,7 @@ __metadata:
     "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
     "@deepseek-ai/dsh-settings": ^0.1.1-rc.2
     "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
-  checksum: 10c0/49587454eed67bd423bf9246a601cf074fff5a61c4534be74b2dcc70348407bdf4d7e46a69bec06959f3ba5712219e9b1875c7e66e62ea7f1b1cd0f7b138bbb8
+  checksum: 10c0/ff8c25c25d0db1d99db84ae0c7e011a7d2cd963d038afa31d61651c10c643b9d586477d07d64080be2daded410b4fe84bcc81d814014889e476455ca86eb43a9
   languageName: node
   linkType: hard
 
@@ -3504,6 +3504,22 @@ __metadata:
     "@deepseek-ai/dsh-session-title": ^0.1.1-rc.2
     "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
   checksum: 10c0/f8928091ddb010da6e4850741afcc5eb096968b873bed3e694f71f89e0c35087e2f0bea6edb38fcd59d3d5539b07ab09cd05894cbf611757bf4ae3ba15bbaa56
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-session-title-llm@patch:@deepseek-ai/dsh-session-title-llm@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-session-title-llm-npm-0.1.1-rc.2-aera-turn-correlation.patch::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.1-rc.2
+  resolution: "@deepseek-ai/dsh-session-title-llm@patch:@deepseek-ai/dsh-session-title-llm@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-session-title-llm-npm-0.1.1-rc.2-aera-turn-correlation.patch::version=0.1.1-rc.2&hash=a4ea28&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@deepseek-ai/schemastery": "npm:^3.18.1"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.1
+    "@deepseek-ai/dsh-invariants": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session-title": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
+  checksum: 10c0/48225757fad72ffd0377ae8f657c231a53443754849bf9d933e9e3d6acd91f4361d79a8d76abd9c03568e94c41af18dd9d8d0eaaea6a36a46cc5d0af6339a1df
   languageName: node
   linkType: hard
 
