@@ -48,6 +48,7 @@ export const REQUIRED_PACKAGED_RUNTIME_ENTRIES = [
   'lib/desktop-terminal.js',
   'lib/aera-collab.js',
   'lib/aera-collab-tools.js',
+  'lib/aera-gateway-readiness.js',
   'lib/terminal.js',
   'lib/update-checker.js',
   'lib/update-download.js',
@@ -86,6 +87,7 @@ export const REQUIRED_UNPACKED_RUNTIME_ENTRIES = [
   'lib/diagnostic-export-worker.js',
   'lib/aera-collab.js',
   'lib/aera-collab-tools.js',
+  'lib/aera-gateway-readiness.js',
   'lib/terminal.js',
   'lib/update-download.js',
   'lib/updates.js',
@@ -131,6 +133,7 @@ export const REQUIRED_UNPACKED_PACKAGE_SPECIFIERS = [
   'dsh-plugin-desktop/updates',
   'dsh-plugin-desktop/aera-collab',
   'dsh-plugin-desktop/aera-collab-tools',
+  'dsh-plugin-desktop/aera-gateway-readiness',
   'dsh-plugin-desktop/windows-pwsh-sandbox',
   'dsh-plugin-desktop/windows-subprocess',
   'dsh-plugin-desktop/package.json',
@@ -152,6 +155,7 @@ export const REQUIRED_UNPACKED_PACKAGE_SPECIFIERS = [
 export const REQUIRED_PACKAGED_COMPOSITION_ROWS = [
   { id: 'aera-collab-workspace', name: 'dsh-plugin-desktop/aera-collab' },
   { id: 'aera-collab-agent-tools', name: 'dsh-plugin-desktop/aera-collab-tools' },
+  { id: 'aera-gateway-readiness', name: 'dsh-plugin-desktop/aera-gateway-readiness' },
 ] as const
 
 /**

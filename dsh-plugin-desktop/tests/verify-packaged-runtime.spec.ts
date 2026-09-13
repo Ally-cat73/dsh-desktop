@@ -166,6 +166,7 @@ describe('packaged desktop runtime verification', () => {
     expect(REQUIRED_PACKAGED_COMPOSITION_ROWS.map(row => row.id)).toEqual([
       'aera-collab-workspace',
       'aera-collab-agent-tools',
+      'aera-gateway-readiness',
     ])
     expect(() => verifyPackagedComposition('/build', completeManifestReader())).not.toThrow()
   })
@@ -189,6 +190,9 @@ describe('packaged desktop runtime verification', () => {
     expect(REQUIRED_UNPACKED_RUNTIME_ENTRIES).toContain('lib/aera-collab-tools.js')
     expect(REQUIRED_UNPACKED_PACKAGE_SPECIFIERS).toContain('dsh-plugin-desktop/aera-collab-tools')
     expect(REQUIRED_UNPACKED_PACKAGE_SPECIFIERS).toContain('dsh-plugin-desktop/aera-collab')
+    expect(REQUIRED_PACKAGED_RUNTIME_ENTRIES).toContain('lib/aera-gateway-readiness.js')
+    expect(REQUIRED_UNPACKED_RUNTIME_ENTRIES).toContain('lib/aera-gateway-readiness.js')
+    expect(REQUIRED_UNPACKED_PACKAGE_SPECIFIERS).toContain('dsh-plugin-desktop/aera-gateway-readiness')
   })
 
   // The shipped source manifest is the thing the bundle copies, so the same
