@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..aera001
 --- /dev/null
 +++ b/lib/aera-policy-provenance.js
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,97 @@
 +import { createHash } from "node:crypto";
 +
 +const HEADER = "x-aera-policy-provenance-v1";
@@ -37,7 +37,10 @@ index 0000000..aera001
 +		source_type: "RUNTIME_PLUGIN_CONTEXT",
 +		trust_class: "RUNTIME_SUPPLIED",
 +		semantic_role: "CONTEXT_INTEGRITY",
-+		temporal_role: "RUNTIME_CONTEXT"
++		temporal_role: "RUNTIME_CONTEXT",
++		...(kind === "plugin" && message?.source?.plugin === "dsh-session-title-llm"
++			? { native_turn_correlation: true }
++			: {})
 +	};
 +	return null;
 +}
