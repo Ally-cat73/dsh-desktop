@@ -19,7 +19,6 @@ import {
   AGC_GOVERNED_MODEL_ID,
   AGC_GOVERNED_ROUTER_ORIGIN,
   AGC_GOVERNED_RUNTIME_INSTANCE_ID,
-  AGC_GOVERNED_SESSION_ID,
   AGC_RUNTIME_INSTANCE_HEADER,
   AGC_SESSION_HEADER,
   buildAgcGovernedGatewayProviderProfile,
@@ -131,10 +130,10 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     expect(profile!.baseURL).toBe('http://127.0.0.1:4646/v1')
     expect(profile!.apiKeyEnv).toBe(AGC_GATEWAY_CREDENTIAL_ENV)
     expect(profile!.headers).toMatchObject({
-      [AGC_SESSION_HEADER]: 'RELAY_MESSAGES_DOGFOOD_CANONICAL',
       [AGC_CONNECTION_HEADER]: 'relay-messages-dogfood-canonical-connection',
       [AGC_RUNTIME_INSTANCE_HEADER]: 'relay-messages-dogfood-canonical-runtime',
     })
+    expect(profile!.headers).not.toHaveProperty(AGC_SESSION_HEADER)
     expect(profile!.models!.map(model => model.id)).toEqual([AGC_GOVERNED_MODEL_ID])
   })
 
@@ -145,8 +144,7 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     expect(JSON.stringify(buildAgcGovernedGatewayProviderSection())).not.toContain('aera/active')
   })
 
-  it('keeps the frozen identifiers exactly as the owner ruling froze them', () => {
-    expect(AGC_GOVERNED_SESSION_ID).toBe('RELAY_MESSAGES_DOGFOOD_CANONICAL')
+  it('keeps the frozen Connection/runtime identifiers exactly as the owner ruling froze them', () => {
     expect(AGC_GOVERNED_CONNECTION_ID).toBe('relay-messages-dogfood-canonical-connection')
     expect(AGC_GOVERNED_RUNTIME_INSTANCE_ID).toBe('relay-messages-dogfood-canonical-runtime')
   })

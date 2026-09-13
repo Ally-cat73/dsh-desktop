@@ -3,10 +3,13 @@ new file mode 100644
 index 0000000..aera001
 --- /dev/null
 +++ b/lib/aera-policy-provenance.js
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,94 @@
 +import { createHash } from "node:crypto";
 +
 +const HEADER = "x-aera-policy-provenance-v1";
++const SESSION_HEADER = "session_id";
++const CLIENT_REQUEST_HEADER = "x-client-request-id";
++const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 +
 +function textOf(message) {
 +	if (!Array.isArray(message?.content)) return "";
@@ -76,6 +79,25 @@ index 0000000..aera001
 +	));
 +	return provenance === void 0 ? retained : { ...retained, [HEADER]: provenance };
 +}
++
++/**
++ * Carry the live Aera Code Session on every request. Deployment/profile
++ * headers are deliberately unable to replace this runtime-owned identity.
++ */
++export function withAeraExecutionSession(headers, sessionId) {
++	const reserved = new Set([SESSION_HEADER, CLIENT_REQUEST_HEADER]);
++	const retained = Object.fromEntries(Object.entries(headers ?? {}).filter(
++		([name]) => !reserved.has(name.toLowerCase())
++	));
++	if (sessionId === void 0 || sessionId === null) return retained;
++	const normalized = String(sessionId).trim();
++	if (!SESSION_ID_PATTERN.test(normalized)) throw new Error("AERA_CODE_SESSION_ID_INVALID");
++	return {
++		...retained,
++		[SESSION_HEADER]: normalized,
++		[CLIENT_REQUEST_HEADER]: normalized
++	};
++}
 diff --git a/lib/index.js b/lib/index.js
 index 6e7a97d..aera002 100644
 --- a/lib/index.js
@@ -83,7 +105,7 @@ index 6e7a97d..aera002 100644
 @@ -13,5 +13,6 @@ import { homedir } from "node:os";
  import { access } from "node:fs/promises";
  import { resolve } from "node:path";
-+import { withAeraPolicyProvenance } from "./aera-policy-provenance.js";
++import { withAeraExecutionSession, withAeraPolicyProvenance } from "./aera-policy-provenance.js";
  //#region lib/types/replay.js
  /**
  * Durable pi-ai replay metadata and assistant-history reconstruction.
@@ -100,7 +122,7 @@ index 6e7a97d..aera002 100644
  					...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) },
  					signal: watchdog.signal,
 -					headers: requestHeaders(profile.headers)
-+					headers: requestHeaders(withAeraPolicyProvenance(profile.headers, options.messages))
++					headers: requestHeaders(withAeraExecutionSession(withAeraPolicyProvenance(profile.headers, options.messages), options.sessionId))
  				}), model.contextWindow)[Symbol.asyncIterator]();
  				let exhausted = false;
  				try {
