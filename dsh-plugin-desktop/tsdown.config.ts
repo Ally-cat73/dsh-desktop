@@ -32,6 +32,7 @@ export default defineConfig([
       'windows-acl-runner': 'src/windows-acl-runner.ts',
       'aera-collab': 'src/aera-collab.ts',
       'aera-collab-tools': 'src/aera-collab-tools.ts',
+      'aera-gateway-readiness': 'src/aera-gateway-readiness.ts',
       'aera-gateway-agc-binding': 'src/aera-gateway-agc-binding.ts',
       main: 'src/main.ts',
     },

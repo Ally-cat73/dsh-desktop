@@ -31,6 +31,10 @@
       "types": "./lib/types/aera-collab-tools.d.ts",
       "default": "./lib/aera-collab-tools.js"
     },
+    "./aera-gateway-readiness": {
+      "types": "./lib/types/aera-gateway-readiness.d.ts",
+      "default": "./lib/aera-gateway-readiness.js"
+    },
     "./profile": {
       "types": "./lib/types/profile.d.ts",
       "default": "./lib/profile.js"
@@ -109,6 +113,7 @@
       "inject": [
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-renderer",

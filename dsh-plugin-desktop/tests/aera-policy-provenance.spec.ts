@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 // This is an AERA-owned patch module inside the pinned provider package. Its
 // explicit path makes the source-custody seam visible and directly testable.
 // @ts-expect-error the patch-private module intentionally does not widen the upstream public API
-import { aeraPolicyProvenanceHeader, withAeraExecutionSession } from '../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/aera-policy-provenance.js'
+import { aeraPolicyProvenanceHeader, ensureAeraGatewaySessionReady, withAeraExecutionSession } from '../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/aera-policy-provenance.js'
 
 describe('Aera Code policy provenance', () => {
   it('projects immutable message source into a content-free correlation header', () => {
@@ -93,6 +93,8 @@ describe('Aera Code policy provenance', () => {
       'utf8',
     )
     expect(source).toContain('withAeraExecutionSession(withAeraPolicyProvenance(profile.headers, options.messages), options.sessionId)')
+    expect(source.indexOf('await ensureAeraGatewaySessionReady(profile, options.sessionId, apiKey)'))
+      .toBeLessThan(source.indexOf('snapshot.models.streamSimple(model, context'))
   })
 
   it('uses the live Aera Code Session and rejects profile-level identity collisions', () => {
@@ -112,5 +114,44 @@ describe('Aera Code policy provenance', () => {
     })
     expect(() => withAeraExecutionSession({}, `s${'a'.repeat(128)}`))
       .toThrow('AERA_CODE_SESSION_ID_INVALID')
+  })
+
+  it('preflights the governed native Session before the provider request', async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = []
+    await ensureAeraGatewaySessionReady({
+      baseURL: 'http://127.0.0.1:4646/v1',
+      headers: {
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }, 'session-real-provider-1', 'synthetic-test-key', async (url: string, init?: RequestInit) => {
+      requests.push({ url, init: init ?? {} })
+      return new Response(JSON.stringify({
+        status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
+        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+      }), { status: 200 })
+    })
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe('http://127.0.0.1:4646/v1/provider-execution/preflight')
+    expect(requests[0]?.init.headers).toMatchObject({
+      authorization: 'Bearer synthetic-test-key',
+      session_id: 'session-real-provider-1',
+      'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+    })
+  })
+
+  it('stops before Provider dispatch when current authority is denied', async () => {
+    await expect(ensureAeraGatewaySessionReady({
+      baseURL: 'http://127.0.0.1:4646/v1',
+      headers: {
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }, 'session-real-provider-denied', 'synthetic-test-key', async () => new Response(JSON.stringify({
+      status: 'denied', error: { code: 'PROVIDER_EXECUTION_FORBIDDEN' },
+    }), { status: 403 }))).rejects.toThrow(
+      'AERA_GATEWAY_PREFLIGHT_DENIED:PROVIDER_EXECUTION_FORBIDDEN',
+    )
   })
 })

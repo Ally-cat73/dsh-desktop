@@ -119,6 +119,10 @@ describe('published package surface', () => {
       types: './lib/types/notifications.d.ts',
       default: './lib/notifications.js',
     })
+    expect(manifest.exports).toHaveProperty('./aera-gateway-readiness', {
+      types: './lib/types/aera-gateway-readiness.d.ts',
+      default: './lib/aera-gateway-readiness.js',
+    })
     expect(manifest.exports).not.toHaveProperty('./windows-acl-runner')
     expect(manifest.exports).not.toHaveProperty('./desktop-cli')
     expect(manifest.exports).not.toHaveProperty('./desktop-runtime-environment')
@@ -132,6 +136,7 @@ describe('published package surface', () => {
       inject: [
         '@deepseek-ai/dsh-api-remotes',
         '@deepseek-ai/dsh-client-connection',
+        '@deepseek-ai/dsh-client-ui-conversation',
         '@deepseek-ai/dsh-client-locale',
         '@deepseek-ai/dsh-client-runtime',
         '@deepseek-ai/dsh-client-ui-renderer',
@@ -149,6 +154,7 @@ describe('published package surface', () => {
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/updates')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/aera-collab')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/aera-collab-tools')
+    expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('name: dsh-plugin-desktop/aera-gateway-readiness')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('provider: aera-gateway-agc')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toContain('model: aera/auto')
     expect(readFileSync(new URL('cordis.patch.yml', packageRoot), 'utf8')).toMatch(/- id: llm-deepseek\n\s+disabled: true/u)
@@ -535,6 +541,7 @@ describe('published package surface', () => {
     expect(config).toContain("profiles: 'src/profiles.ts'")
     expect(config).toContain("diagnostics: 'src/diagnostics.ts'")
     expect(config).toContain("notifications: 'src/notifications.ts'")
+    expect(config).toContain("'aera-gateway-readiness': 'src/aera-gateway-readiness.ts'")
     expect(config).toContain("'diagnostic-export-worker': 'src/diagnostic-export-worker.ts'")
     expect(config).toContain("entry: { preload: 'src/preload.ts' }")
     expect(config).toContain("entryFileNames: 'preload.cjs'")

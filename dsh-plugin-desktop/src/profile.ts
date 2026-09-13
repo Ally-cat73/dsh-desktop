@@ -780,7 +780,6 @@ export function prepareDesktopProfile(
   if (!desktopLayerInserted) {
     throw new Error(`${BIN_NAME}: desktop profile is missing @deepseek-ai/dsh-web-app`)
   }
-
   const loadedHomePatches = loadOptionalPatches(BIN_NAME, join(home, PROFILE_PATCH_FILENAME)) ?? []
   const { patches: homePatches, skipped: skippedOptionalEntries } = omitUnresolvedOptionalEntries(
     loadedHomePatches,
@@ -832,6 +831,10 @@ export function prepareDesktopProfile(
     ...filteredProfile.patches,
     ...filteredHome.patches,
   ]
+  patches.push({
+    id: 'aera-gateway-readiness',
+    disabled: profileName !== 'aera-gateway-agc',
+  })
   const composedRows = composeEntries([patches])
   assertUniqueEntryIds(composedRows)
   assertEffectiveMarketRows(composedRows, effectiveMarket)

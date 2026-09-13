@@ -13,6 +13,7 @@ import { parseDesktopClientEnvironment } from './environment.ts'
 import { applyExtendedShell, applyFramedShell } from './extended-shell.ts'
 import { installWorkspaceFolderDrop } from './workspace-folder-drop.ts'
 import { desktopWindowService, provideDesktopWindow } from './window-service.ts'
+import { installAeraGatewayReadinessClient } from './gateway-readiness.ts'
 
 export { applyAdvancedShell } from './advanced-shell.ts'
 export { applyDesktopSettings } from './desktop-settings.ts'
@@ -70,6 +71,7 @@ export const inject = [
   'slots',
   'locale',
   'connection',
+  'conversation',
   'remote',
   'settingsScope',
   'sessions',
@@ -90,6 +92,13 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(
     () => startRendererBootReporter(ctx.loader),
     'dsh-plugin-desktop: renderer boot health report',
+  )
+  ctx.effect(
+    () => installAeraGatewayReadinessClient({
+      current: ctx.sessions.currentProvideInfo,
+      blocks: ctx.conversation.blocks,
+    }),
+    'dsh-plugin-desktop: Aera Gateway Session readiness',
   )
   ctx.effect(
     () => installWorkspaceFolderDrop({

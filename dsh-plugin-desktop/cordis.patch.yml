@@ -20,6 +20,8 @@
       name: dsh-plugin-desktop/aera-collab
     - id: aera-collab-agent-tools
       name: dsh-plugin-desktop/aera-collab-tools
+    - id: aera-gateway-readiness
+      name: dsh-plugin-desktop/aera-gateway-readiness
     - id: desktop-updates
       name: dsh-plugin-desktop/updates
       # Aera Code releases are source-custodied. The inherited upstream update

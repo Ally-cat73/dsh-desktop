@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..aera001
 --- /dev/null
 +++ b/lib/aera-policy-provenance.js
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,154 @@
 +import { createHash } from "node:crypto";
 +
 +const HEADER = "x-aera-policy-provenance-v1";
@@ -101,6 +101,63 @@ index 0000000..aera001
 +		[CLIENT_REQUEST_HEADER]: normalized
 +	};
 +}
++
++const AERA_GATEWAY_CONNECTION = "relay-messages-dogfood-canonical-connection";
++const AERA_GATEWAY_RUNTIME = "relay-messages-dogfood-canonical-runtime";
++const readySessions = new Map();
++
++function governedAeraGatewayProfile(profile) {
++	try {
++		const base = new URL(profile?.baseURL);
++		return (base.hostname === "127.0.0.1" || base.hostname === "localhost")
++			&& base.pathname.replace(/\/$/, "") === "/v1"
++			&& profile?.headers?.["x-aera-connection-id"] === AERA_GATEWAY_CONNECTION
++			&& profile?.headers?.["x-aera-runtime-instance-id"] === AERA_GATEWAY_RUNTIME;
++	} catch {
++		return false;
++	}
++}
++
++/** Prove current authority and bootstrap the native Session before Provider dispatch. */
++export function ensureAeraGatewaySessionReady(profile, sessionId, apiKey, fetchImpl = fetch) {
++	if (!governedAeraGatewayProfile(profile)) return Promise.resolve();
++	if (sessionId === void 0 || sessionId === null) {
++		return Promise.reject(new Error("AERA_GATEWAY_PREFLIGHT_SESSION_REQUIRED"));
++	}
++	const normalized = String(sessionId).trim();
++	if (!SESSION_ID_PATTERN.test(normalized)) {
++		return Promise.reject(new Error("AERA_CODE_SESSION_ID_INVALID"));
++	}
++	const current = readySessions.get(normalized);
++	if (current) return current;
++	const origin = new URL(profile.baseURL).origin;
++	const operation = fetchImpl(`${origin}/v1/provider-execution/preflight`, {
++		method: "POST",
++		headers: {
++			authorization: `Bearer ${apiKey}`,
++			"content-type": "application/json",
++			session_id: normalized,
++			"x-client-request-id": normalized,
++			"x-aera-connection-id": AERA_GATEWAY_CONNECTION,
++			"x-aera-runtime-instance-id": AERA_GATEWAY_RUNTIME
++		},
++		body: "{}"
++	}).then(async (response) => {
++		const payload = await response.json().catch(() => null);
++		if (!response.ok) {
++			const code = typeof payload?.error?.code === "string" ? payload.error.code : `HTTP_${response.status}`;
++			throw new Error(`AERA_GATEWAY_PREFLIGHT_DENIED:${code}`);
++		}
++		if (payload?.status !== "ok" || payload.provider_effect !== "NONE"
++			|| payload.current_authority !== "PASS" || payload.route_assignment !== "VALID"
++			|| payload.policy_enforcement_mode !== "OBSERVATION") {
++			throw new Error("AERA_GATEWAY_PREFLIGHT_RESPONSE_INVALID");
++		}
++	});
++	readySessions.set(normalized, operation);
++	operation.catch(() => { readySessions.delete(normalized); });
++	return operation;
++}
 diff --git a/lib/index.js b/lib/index.js
 index 6e7a97d..aera002 100644
 --- a/lib/index.js
@@ -108,7 +165,7 @@ index 6e7a97d..aera002 100644
 @@ -13,5 +13,6 @@ import { homedir } from "node:os";
  import { access } from "node:fs/promises";
  import { resolve } from "node:path";
-+import { withAeraExecutionSession, withAeraPolicyProvenance } from "./aera-policy-provenance.js";
++import { ensureAeraGatewaySessionReady, withAeraExecutionSession, withAeraPolicyProvenance } from "./aera-policy-provenance.js";
  //#region lib/types/replay.js
  /**
  * Durable pi-ai replay metadata and assistant-history reconstruction.
@@ -120,7 +177,15 @@ index 6e7a97d..aera002 100644
  	if (/\b(?:401|403)\b/.test(message)) return "AUTH";
  	if (isQuotaExceededError(message)) return QUOTA_EXCEEDED_CODE;
  	if (/\b429\b|rate.?limit/i.test(message)) return "RATE_LIMIT";
-@@ -1741,7 +1747,7 @@ var PiAiAdapter = class extends LlmAdapter {
+@@ -1739,14 +1745,15 @@ var PiAiAdapter = class extends LlmAdapter {
+ 				}, attachments, onReplayDegrade, profile.maxRequestImageBytes, {
+ 					maxPixels: profile.requestImagePixelBudget,
+ 					maxBytes: profile.requestImageMaxBytes
+ 				});
++				await ensureAeraGatewaySessionReady(profile, options.sessionId, apiKey);
+ 				const iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {
+ 					...profileOptions(profile, reasoning, apiKey),
+ 					...options.temperature === void 0 ? {} : { temperature: options.temperature },
  					...options.maxTokens === void 0 ? {} : { maxTokens: options.maxTokens },
  					...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) },
  					signal: watchdog.signal,

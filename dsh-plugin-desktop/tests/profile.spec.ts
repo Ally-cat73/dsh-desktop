@@ -1049,4 +1049,29 @@ virtualStoreDirMaxLength: 60
     expect(inserted.filter(row => row.id === 'aera-collab-workspace')).toHaveLength(1)
     expect(inserted.filter(row => row.id === 'aera-collab-agent-tools')).toHaveLength(1)
   })
+
+  it('enables real-Session readiness only for the governed Aera Gateway profile', () => {
+    const home = temporaryHome()
+    ensureDesktopProfile(home)
+    const governedDir = join(home, 'profiles', 'aera-gateway-agc')
+    const bundles = PROFILE_TEMPLATES.web
+    if (!bundles) throw new Error('test requires the shipped Web template')
+    initProfile(governedDir, bundles)
+
+    const desktopRows = composeEntries([
+      prepareDesktopProfile(undefined, home, 'darwin').patches,
+    ])
+    const governedRows = composeEntries([
+      prepareDesktopProfile(undefined, home, 'darwin', 'aera-gateway-agc').patches,
+    ])
+
+    expect(desktopRows.find(row => row.id === 'aera-gateway-readiness')).toMatchObject({
+      name: 'dsh-plugin-desktop/aera-gateway-readiness',
+      disabled: true,
+    })
+    expect(governedRows.find(row => row.id === 'aera-gateway-readiness')).toMatchObject({
+      name: 'dsh-plugin-desktop/aera-gateway-readiness',
+      disabled: false,
+    })
+  })
 })
