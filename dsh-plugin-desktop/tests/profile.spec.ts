@@ -1034,10 +1034,10 @@ virtualStoreDirMaxLength: 60
     expect(governed!['baseURL']).toBe('http://127.0.0.1:4646/v1')
     expect(governed!['apiKeyEnv']).toBe('AERA_GATEWAY_AGC_EXECUTION_KEY')
     expect(governed!['headers']).toMatchObject({
-      'x-aera-session-id': 'RELAY_MESSAGES_DOGFOOD_CANONICAL',
       'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
       'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
     })
+    expect(governed!['headers']).not.toHaveProperty('x-aera-session-id')
     expect((governed!['models'] as Array<{ id: string }>).map(model => model.id)).toEqual(['aera/auto'])
 
     // The pinned deployment default names that route, on a served alias.

@@ -188,9 +188,6 @@ export const AGC_GOVERNED_GATEWAY_ROUTE = 'aera-gateway-agc'
  */
 export const AGC_GOVERNED_ROUTER_ORIGIN = 'http://127.0.0.1:4646'
 
-/** Frozen canonical GatewaySession id (owner ruling §4). */
-export const AGC_GOVERNED_SESSION_ID = 'RELAY_MESSAGES_DOGFOOD_CANONICAL'
-
 /** Frozen canonical Connection id (owner ruling §4). */
 export const AGC_GOVERNED_CONNECTION_ID = 'relay-messages-dogfood-canonical-connection'
 
@@ -200,14 +197,14 @@ export const AGC_GOVERNED_RUNTIME_INSTANCE_ID = 'relay-messages-dogfood-canonica
 /**
  * The Router alias catalogue admits a fixed set of `aera/*` aliases and
  * rejects everything else with 400 `unknown_model` before any routing runs.
- * This alias is in that set; the one the overlay used to pin was not. With
- * the frozen Session pinned, the alias is carried through onto the pinned
- * assignment, so it resolves to the assigned channel rather than being
- * re-selected by alias.
+ * This alias is in that set; the one the overlay used to pin was not. The
+ * live Aera Code Session is resolved through the frozen Connection's
+ * bootstrap policy, so each conversation receives its own immutable pinned
+ * assignment rather than being collapsed into one static GatewaySession.
  */
 export const AGC_GOVERNED_MODEL_ID = 'aera/auto'
 
-/** Routing header carrying the frozen GatewaySession id. */
+/** Routing header used by the isolated acceptance profile's fixed Session. */
 export const AGC_SESSION_HEADER = 'x-aera-session-id'
 
 /** Routing header carrying the frozen Connection id. */
@@ -229,7 +226,6 @@ export const AGC_RUNTIME_INSTANCE_HEADER = 'x-aera-runtime-instance-id'
 export function buildAgcGovernedGatewayProviderProfile(): AgcGatewayProviderProfile {
   assertLoopbackOrigin(AGC_GOVERNED_ROUTER_ORIGIN)
   assertIdentifier('connectionId', AGC_GOVERNED_CONNECTION_ID)
-  assertIdentifier('gatewaySessionId', AGC_GOVERNED_SESSION_ID)
   assertIdentifier('runtimeInstanceId', AGC_GOVERNED_RUNTIME_INSTANCE_ID)
   return {
     displayName: 'AERA Gateway (governed)',
@@ -238,7 +234,6 @@ export function buildAgcGovernedGatewayProviderProfile(): AgcGatewayProviderProf
     apiKeyEnv: AGC_GATEWAY_CREDENTIAL_ENV,
     headers: {
       [AGC_CONNECTION_HEADER]: AGC_GOVERNED_CONNECTION_ID,
-      [AGC_SESSION_HEADER]: AGC_GOVERNED_SESSION_ID,
       [AGC_RUNTIME_INSTANCE_HEADER]: AGC_GOVERNED_RUNTIME_INSTANCE_ID,
     },
     transport: 'sse',

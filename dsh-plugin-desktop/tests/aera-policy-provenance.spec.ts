@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 // This is an AERA-owned patch module inside the pinned provider package. Its
 // explicit path makes the source-custody seam visible and directly testable.
 // @ts-expect-error the patch-private module intentionally does not widen the upstream public API
-import { aeraPolicyProvenanceHeader } from '../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/aera-policy-provenance.js'
+import { aeraPolicyProvenanceHeader, withAeraExecutionSession } from '../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/aera-policy-provenance.js'
 
 describe('Aera Code policy provenance', () => {
   it('projects immutable message source into a content-free correlation header', () => {
@@ -66,6 +66,25 @@ describe('Aera Code policy provenance', () => {
       new URL('../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js', import.meta.url),
       'utf8',
     )
-    expect(source).toContain('withAeraPolicyProvenance(profile.headers, options.messages)')
+    expect(source).toContain('withAeraExecutionSession(withAeraPolicyProvenance(profile.headers, options.messages), options.sessionId)')
+  })
+
+  it('uses the live Aera Code Session and rejects profile-level identity collisions', () => {
+    expect(withAeraExecutionSession({
+      Session_ID: 'stale-profile-session',
+      'X-Client-Request-Id': 'stale-request-id',
+      'x-aera-connection-id': 'connection-a',
+    }, 'session-live-a')).toEqual({
+      session_id: 'session-live-a',
+      'x-client-request-id': 'session-live-a',
+      'x-aera-connection-id': 'connection-a',
+    })
+
+    expect(() => withAeraExecutionSession({}, 'invalid session id')).toThrow('AERA_CODE_SESSION_ID_INVALID')
+    expect(withAeraExecutionSession({}, `s${'a'.repeat(127)}`)).toMatchObject({
+      session_id: `s${'a'.repeat(127)}`,
+    })
+    expect(() => withAeraExecutionSession({}, `s${'a'.repeat(128)}`))
+      .toThrow('AERA_CODE_SESSION_ID_INVALID')
   })
 })
