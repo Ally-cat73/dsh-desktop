@@ -20,6 +20,37 @@ describe('Aera Code native identity', () => {
     })
   })
 
+  it('keeps defined user-visible host surfaces Aera-branded without hiding provider truth', () => {
+    const sourceRoot = join(process.cwd(), 'src')
+    const visibleSurfaces = [
+      'client/desktop-settings-locales.ts',
+      'recovery-copy.ts',
+      'startup-recovery-window.ts',
+      'startup-recovery-controller.ts',
+      'recovery-plugin-uninstall.ts',
+      'main.ts',
+    ].map(path => readFileSync(join(sourceRoot, path), 'utf8')).join('\n')
+    const welcomePatch = readFileSync(join(
+      process.cwd(), '..', '.yarn', 'patches',
+      '@deepseek-ai-dsh-client-ui-settings-models-npm-0.1.1-rc.2-5348824733.patch',
+    ), 'utf8')
+    const rootManifest = readFileSync(join(process.cwd(), '..', 'package.json'), 'utf8')
+
+    for (const forbiddenHostCopy of [
+      'DSH Terminal',
+      'DSH will remove',
+      'DSH plugin uninstall',
+      'The DSH plugin command',
+      "concernLabel === 'DSH home'",
+    ]) expect(visibleSurfaces).not.toContain(forbiddenHostCopy)
+    expect(welcomePatch).not.toContain('DeepSeek Harness 0.1 remains in testing')
+    expect(welcomePatch).not.toContain('DeepSeek Harness 目前的 0.1 版本')
+
+    // Internal package and truthful model/Provider identity remains intact.
+    expect(rootManifest).toContain('@deepseek-ai/dsh-llm-deepseek')
+    expect(rootManifest).toContain('@deepseek-ai/dsh-client-runtime')
+  })
+
   // WO-AGC-004 §21 — the governed dogfood credential resolves from Keychain
   // on an ordinary Finder launch, by NAME. No value is present anywhere.
   it('resolves the governed AGC Gateway credential profile from Keychain', () => {

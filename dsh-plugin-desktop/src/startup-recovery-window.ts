@@ -346,7 +346,7 @@ export class DesktopStartupRecoveryWindow {
         this.activeTab = 'diagnostics'
         shell.showItemInFolder(this.diagnosticPath)
       } else if (action.action === 'open-terminal') {
-        if (this.options.openTerminal === undefined) throw new Error('DSH Terminal is unavailable for this startup stage.')
+        if (this.options.openTerminal === undefined) throw new Error('Aera Code Terminal is unavailable for this startup stage.')
         await this.options.openTerminal()
       } else if (action.action === 'open-profile-creator') {
         this.activeTab = 'profiles'

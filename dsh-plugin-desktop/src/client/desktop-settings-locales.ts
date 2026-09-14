@@ -113,7 +113,7 @@ export const en: Record<DesktopSettingsLocaleKey, string> = {
   exportDiagnosticsError: 'The diagnostics export flow could not be opened just now. Please try again shortly.',
   openTerminal: 'Open Aera Code Terminal',
   openingTerminal: 'Opening…',
-  openTerminalError: 'DSH Terminal could not be opened just now. You can still open it from the application menu.',
+  openTerminalError: 'Aera Code Terminal could not be opened just now. You can still open it from the application menu.',
   currentVersion: 'Current version',
   checkForUpdates: 'Check for updates',
   checkingForUpdates: 'Checking…',
