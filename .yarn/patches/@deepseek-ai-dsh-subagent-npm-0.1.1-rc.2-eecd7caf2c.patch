@@ -1,8 +1,135 @@
 diff --git a/lib/index.js b/lib/index.js
-index bd9741ed440979753359abc5c479550ee5827167..70fe93831e3244e7ffd2590e816ed92b33bde692 100644
+index bd9741ed440979753359abc5c479550ee5827167..7132987285c33498e4cf9c3cec24c0009aff7e4a 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -1491,17 +1491,18 @@ var SubagentContinuationManager = class {
+@@ -325,7 +325,7 @@ function renderThrown(value) {
+ * Supporting another composition input is a deliberate version change, never
+ * an implicit extra field.
+ */
+-const SUBAGENT_DESCRIPTOR_VERSION = 2;
++const SUBAGENT_DESCRIPTOR_VERSION = 3;
+ const DESCRIPTOR_BASE_KEYS = [
+ 	"version",
+ 	"mode",
+@@ -338,7 +338,8 @@ const CONTINUABLE_DESCRIPTOR_KEYS = new Set([
+ 	"agentProvider",
+ 	"agentModel",
+ 	"persona",
+-	"toolFilter"
++	"toolFilter",
++	"nativeTurnMessageId"
+ ]);
+ const TOOL_FILTER_KEYS = new Set(["allow", "deny"]);
+ /** Whether a persisted JSON value is an object record. */
+@@ -383,7 +384,7 @@ function parseSubagentDescriptor(value) {
+ 	if (!isRecord(value)) throw new Error("persisted subagent descriptor payload must be an object");
+ 	const version = value["version"];
+ 	if (typeof version !== "number") throw new Error("persisted subagent descriptor version must be a number");
+-	if (version !== 2) return void 0;
++	if (version !== 2 && version !== 3) return void 0;
+ 	const mode = value["mode"];
+ 	if (mode !== "one-shot" && mode !== "continuable") throw new Error("persisted subagent descriptor mode must be \"one-shot\" or \"continuable\"");
+ 	assertKnownKeys(value, mode === "one-shot" ? ONE_SHOT_DESCRIPTOR_KEYS : CONTINUABLE_DESCRIPTOR_KEYS, "payload");
+@@ -392,7 +393,7 @@ function parseSubagentDescriptor(value) {
+ 	if (mode === "one-shot") {
+ 		const label = optionalString(value, "label");
+ 		return {
+-			version: 2,
++			version,
+ 			mode,
+ 			provider,
+ 			...label !== void 0 ? { label } : {}
+@@ -403,33 +404,36 @@ function parseSubagentDescriptor(value) {
+ 	const agentProvider = optionalString(value, "agentProvider");
+ 	const agentModel = optionalString(value, "agentModel");
+ 	const persona = optionalString(value, "persona");
++	const nativeTurnMessageId = optionalString(value, "nativeTurnMessageId");
+ 	const toolFilter = Object.hasOwn(value, "toolFilter") ? parseToolFilter(value["toolFilter"]) : void 0;
+ 	return {
+-		version: 2,
++		version,
+ 		mode,
+ 		provider,
+ 		label,
+ 		...agentProvider !== void 0 ? { agentProvider } : {},
+ 		...agentModel !== void 0 ? { agentModel } : {},
+ 		...persona !== void 0 ? { persona } : {},
+-		...toolFilter !== void 0 ? { toolFilter } : {}
++		...toolFilter !== void 0 ? { toolFilter } : {},
++		...nativeTurnMessageId !== void 0 ? { nativeTurnMessageId } : {}
+ 	};
+ }
+ function snapshotSubagentDescriptor(input) {
+ 	const snapshot = snapshotJsonValue(input.mode === "one-shot" ? {
+-		version: 2,
++		version: 3,
+ 		mode: input.mode,
+ 		provider: input.provider,
+ 		...input.label !== void 0 ? { label: input.label } : {}
+ 	} : {
+-		version: 2,
++		version: 3,
+ 		mode: input.mode,
+ 		provider: input.provider,
+ 		label: input.label,
+ 		...input.agentProvider !== void 0 ? { agentProvider: input.agentProvider } : {},
+ 		...input.agentModel !== void 0 ? { agentModel: input.agentModel } : {},
+ 		...input.persona !== void 0 ? { persona: input.persona } : {},
+-		...input.toolFilter !== void 0 ? { toolFilter: input.toolFilter } : {}
++		...input.toolFilter !== void 0 ? { toolFilter: input.toolFilter } : {},
++		nativeTurnMessageId: input.nativeTurnMessageId
+ 	});
+ 	if (snapshot === void 0) throw new Error("subagent descriptor is not losslessly JSON-serializable");
+ 	return snapshot;
+@@ -779,10 +783,13 @@ var SubagentContinuationManager = class {
+ 		const childDepth = resolveChildDepth(parent, request.maxDepth);
+ 		const agentProvider = request.agentOptions?.provider ?? parent.options.provider;
+ 		const agentModel = request.agentOptions?.model ?? parent.options.model;
++		const nativeTurnMessageId = [...parent.session.events].reverse().find((event) => event.type === "user/message" && event.data.source.kind === "user")?.data.id;
++		if (nativeTurnMessageId === void 0) throw new SubagentError("continuable subagent launch has no source user-turn identity", "CONTINUATION_UNAVAILABLE");
+ 		const descriptor = snapshotSubagentDescriptor({
+ 			mode: "continuable",
+ 			provider: spec.provider,
+ 			label: spec.label,
++			nativeTurnMessageId,
+ 			...agentProvider !== void 0 ? { agentProvider } : {},
+ 			...agentModel !== void 0 ? { agentModel } : {},
+ 			...request.persona !== void 0 ? { persona: request.persona } : {},
+@@ -815,6 +822,7 @@ var SubagentContinuationManager = class {
+ 					childId,
+ 					provider: spec.provider,
+ 					parent,
++					nativeTurnMessageId,
+ 					create: {
+ 						seed,
+ 						meta: childSessionMeta(parent, childDepth, lineageSeedLength),
+@@ -953,7 +961,8 @@ var SubagentContinuationManager = class {
+ 			source: {
+ 				kind: "subagent-report",
+ 				form: "relay",
+-				senderSessionId: activation.childId
++				senderSessionId: activation.childId,
++				nativeTurnMessageId: activation.nativeTurnMessageId
+ 			}
+ 		});
+ 		if (delivery === "next-step") this.sendWaking(parent, message, () => {
+@@ -1161,6 +1170,7 @@ var SubagentContinuationManager = class {
+ 				childId,
+ 				provider: descriptor.provider,
+ 				parent,
++				nativeTurnMessageId: descriptor.nativeTurnMessageId,
+ 				agentOptions: {
+ 					...descriptor.agentProvider !== void 0 ? { provider: descriptor.agentProvider } : {},
+ 					...descriptor.agentModel !== void 0 ? { model: descriptor.agentModel } : {}
+@@ -1247,6 +1257,7 @@ var SubagentContinuationManager = class {
+ 		const activation = {
+ 			childId,
+ 			parentSession: parent.id,
++			nativeTurnMessageId: inputs.nativeTurnMessageId,
+ 			provider,
+ 			handle,
+ 			ancestry: new WeakSet([handle.agent, ...parentLineage]),
+@@ -1491,22 +1502,24 @@ var SubagentContinuationManager = class {
  			const parent = this.ctx.agents.get(activation.parentSession);
  			if (parent === void 0) return;
  			const summary = settlementSummary(activation.childId, terminal.stopReason);
@@ -23,3 +150,10 @@ index bd9741ed440979753359abc5c479550ee5827167..70fe93831e3244e7ffd2590e816ed92b
  				source: {
  					kind: "subagent-settled",
  					form: "notice",
+ 					summary: boundContextSummary(summary),
+-					senderSessionId: activation.childId
++					senderSessionId: activation.childId,
++					nativeTurnMessageId: activation.nativeTurnMessageId
+ 				}
+ 			});
+ 			if (this.closingTeardownFor(parent) !== void 0) {

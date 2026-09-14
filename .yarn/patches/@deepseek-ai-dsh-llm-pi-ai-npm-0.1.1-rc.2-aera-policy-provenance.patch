@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..aera001
 --- /dev/null
 +++ b/lib/aera-policy-provenance.js
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,167 @@
 +import { createHash } from "node:crypto";
 +
 +const HEADER = "x-aera-policy-provenance-v1";
@@ -32,6 +32,15 @@ index 0000000..aera001
 +		trust_class: "RUNTIME_SUPPLIED",
 +		semantic_role: "CONTEXT_INTEGRITY",
 +		temporal_role: "RUNTIME_CONTEXT"
++	};
++	if ((kind === "subagent-report" || kind === "subagent-settled")
++		&& typeof message?.source?.nativeTurnMessageId === "string"
++		&& /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(message.source.nativeTurnMessageId)) return {
++		source_type: "RUNTIME_PLUGIN_CONTEXT",
++		trust_class: "RUNTIME_SUPPLIED",
++		semantic_role: "CONTEXT_INTEGRITY",
++		temporal_role: "RUNTIME_CONTEXT",
++		native_turn_correlation: true
 +	};
 +	if (message?.role === "system" || kind === "plugin") return {
 +		source_type: "RUNTIME_PLUGIN_CONTEXT",
@@ -64,8 +73,12 @@ index 0000000..aera001
 +		const content = textOf(message);
 +		if (identity === null || content.length === 0) continue;
 +		if (typeof message.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(message.id)) continue;
++		const correlationId = identity.native_turn_correlation === true
++			&& typeof message?.source?.nativeTurnMessageId === "string"
++			? message.source.nativeTurnMessageId
++			: message.id;
 +		segments.push({
-+			correlation_id: message.id,
++			correlation_id: correlationId,
 +			...identity,
 +			retained_ordinal: retainedOrdinal,
 +			content_sha256: createHash("sha256").update(content, "utf8").digest("hex")
