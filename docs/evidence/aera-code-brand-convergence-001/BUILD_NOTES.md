@@ -38,6 +38,52 @@
 - Retained internal package descriptions, source comments, exact `dsh` commands, legacy `DSH Desktop` migration key, protocol/schema names and truthful Provider/model names.
 - Focused active-package regression remains 3 files / 40 tests PASS.
 
+## Final candidate and installation
+
+- Source: `7d9165b8eb3e7dfa3b4b524a7837fa43188f3100`, tree `cf472cabfdd983f55b185f06bb5e6d015b1ea3e9`.
+- UbiCloud: run 34810374314 PASS (change classifier and full `yarn check`).
+- DMG SHA-256: `da50978a0701d9e278a456117c2a04372a0e813148e85a25d0f246b7c9a5acba`.
+- Candidate/installed `app.asar` SHA-256: `c90524cd10d5d9a45e78e9928772a647bdeca441ca9c913d5b2937666d10f84a`.
+- Bundle/version/architecture: `dev.aerastudios.code`, 2.0.4, universal x86_64 + arm64.
+- Rollback: `/Users/Allyd/AERA-Workspace/app-backups/Aera Code.app.pre-brand-convergence-20260914T154900`, prior `app.asar` SHA-256 `3326de95477cfbcdd7cfdefe1e1cd7cdaf29160bd5bc05108e05b563c8074001`.
+- Visual evidence: eight JPEG captures under `screenshots/`; all required surfaces inspected without a Provider effect.
+- Merge and canonical banking remain held pending owner visual acceptance.
+
+## Canonical merge
+
+- Owner acceptance: `OWNER_AERA_CODE_BRAND_ACCEPTANCE_ACCEPTED`.
+- PR 15: MERGED into `agc/wo-agc-004-canonical-desktop-001`.
+- Canonical merge: `d9f1aa15976e97d21d4a026fb260cc0f3e93c5bd`.
+- Canonical tree: `cf472cabfdd983f55b185f06bb5e6d015b1ea3e9`, exactly equal to the accepted source tree.
+- Accepted source `7d9165b8eb3e7dfa3b4b524a7837fa43188f3100` is the merge's second parent and a proven ancestor.
+- Merge timestamp: `2026-09-14T17:39:45+10:00`.
+
+## Canonical merge-source gate
+
+- Clean detached worktree: `/Users/Allyd/AERA-Workspace/.worktrees/aera-code-brand-canonical-build-001` at canonical merge/tree.
+- Immutable install completed with no source, lockfile, dependency version or submodule change.
+- Full `yarn check`: PASS; Market 268; Desktop 1,084 PASS / 4 skipped; runtime closure 201; licence audit 551; operation reliability 7 / 18.
+
+## Canonical package equivalence
+
+- Canonical DMG: SHA-256 `8b86cfd38527310ebc0205e0836c52ed98186ee4ef39c167d1b07b5cfa09e66e`.
+- Canonical `app.asar`: SHA-256 `c90524cd10d5d9a45e78e9928772a647bdeca441ca9c913d5b2937666d10f84a`.
+- Accepted-candidate `app.asar`: identical SHA-256.
+- Entire accepted and canonical application bundles: 23,275 files each; per-file SHA-256 manifests have no difference.
+- DMG containers are not byte-identical (`da50978a…` accepted versus `8b86cfd3…` canonical) because a new HFS/DMG container carries regenerated build-time filesystem metadata. Contained app semantics and bytes are exact.
+- Canonical expanded packaged-brand audit: PASS.
+
+## Final canonical installation and regression
+
+- Accepted-candidate preservation: `/Users/Allyd/AERA-Workspace/app-backups/Aera Code.app.accepted-pr15-7d9165b8`.
+- Exact canonical build installed at `/Users/Allyd/Applications/Aera Code.app`; package and installed `app.asar` hashes match.
+- Post-merge visual smoke: PASS across all required product surfaces.
+- Zero-Provider New Session readiness: PASS; governed route and ready composer present; no Provider request.
+- Active Aera brand composition is canonical. Visible donor-host identity is removed while technical DSH compatibility identifiers and truthful Provider/model identities remain.
+- Historical rejected package records remain intact above.
+- Baseline receipt: `AERA_CODE_PRODUCT_IDENTITY_BASELINE_V1.json`, SHA-256 `6fd65b95a741906ca38dde8fb4d270ac3080a3ee1fe97854bd504ea554c4a374`.
+- Final verdict: `AERA_CODE_PRODUCT_IDENTITY_CONVERGED_AND_CANONICALLY_BANKED`.
+
 ## Full local gate
 
 - Pinned submodule materialised at unchanged `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`.

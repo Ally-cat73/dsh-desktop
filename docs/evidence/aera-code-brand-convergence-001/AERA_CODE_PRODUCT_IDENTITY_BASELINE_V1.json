@@ -1,0 +1,53 @@
+{
+  "schema": "aera.code.product-identity-baseline",
+  "version": 1,
+  "owner": "Alyshia Daley",
+  "owner_acceptance": "OWNER_AERA_CODE_BRAND_ACCEPTANCE_ACCEPTED",
+  "accepted_source_commit": "7d9165b8eb3e7dfa3b4b524a7837fa43188f3100",
+  "accepted_source_tree": "cf472cabfdd983f55b185f06bb5e6d015b1ea3e9",
+  "canonical_branch": "agc/wo-agc-004-canonical-desktop-001",
+  "canonical_merge_commit": "d9f1aa15976e97d21d4a026fb260cc0f3e93c5bd",
+  "canonical_tree": "cf472cabfdd983f55b185f06bb5e6d015b1ea3e9",
+  "pull_request": {
+    "repository": "Ally-cat73/dsh-desktop",
+    "number": 15,
+    "status": "MERGED",
+    "merged_at": "2026-09-14T17:39:45+10:00"
+  },
+  "ci": {
+    "provider": "UbiCloud",
+    "run_id": 34810374314,
+    "status": "PASS",
+    "head_commit": "7d9165b8eb3e7dfa3b4b524a7837fa43188f3100"
+  },
+  "canonical_package": {
+    "dmg_sha256": "8b86cfd38527310ebc0205e0836c52ed98186ee4ef39c167d1b07b5cfa09e66e",
+    "app_asar_sha256": "c90524cd10d5d9a45e78e9928772a647bdeca441ca9c913d5b2937666d10f84a",
+    "bundle_id": "dev.aerastudios.code",
+    "product_version": "2.0.4",
+    "architecture": [
+      "x86_64",
+      "arm64"
+    ]
+  },
+  "installed_product": {
+    "path": "/Users/Allyd/Applications/Aera Code.app",
+    "app_asar_sha256": "c90524cd10d5d9a45e78e9928772a647bdeca441ca9c913d5b2937666d10f84a",
+    "status": "RUNNING_AND_VERIFIED"
+  },
+  "rollback": {
+    "pre_brand_path": "/Users/Allyd/AERA-Workspace/app-backups/Aera Code.app.pre-brand-convergence-20260914T154900",
+    "pre_brand_app_asar_sha256": "3326de95477cfbcdd7cfdefe1e1cd7cdaf29160bd5bc05108e05b563c8074001",
+    "accepted_candidate_path": "/Users/Allyd/AERA-Workspace/app-backups/Aera Code.app.accepted-pr15-7d9165b8",
+    "accepted_candidate_app_asar_sha256": "c90524cd10d5d9a45e78e9928772a647bdeca441ca9c913d5b2937666d10f84a"
+  },
+  "visual_evidence": {
+    "owner_acceptance": "screenshots/01-main-shell.jpg through screenshots/08-restart-dialog.jpg",
+    "canonical_smoke": "screenshots/09-canonical-new-session.jpg through screenshots/15-canonical-restart-dialog.jpg"
+  },
+  "packaged_audit": "AERA_CODE_PACKAGED_BRAND_AUDIT.md",
+  "zero_provider_readiness": "PASS",
+  "provider_effects": 0,
+  "infrastructure_changed": false,
+  "closure_verdict": "AERA_CODE_PRODUCT_IDENTITY_CONVERGED_AND_CANONICALLY_BANKED"
+}
