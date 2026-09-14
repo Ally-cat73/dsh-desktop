@@ -48,9 +48,13 @@ describe('Aera Code native identity', () => {
     const packageRoot = join(process.cwd(), 'node_modules')
     const reachableClientSurfaces = [
       join(process.cwd(), '..', 'dsh-community-market', 'src', 'client', 'locales.ts'),
+      join(process.cwd(), '..', 'dsh-community-market', 'src', 'host', 'routes.ts'),
       join(packageRoot, 'dshmarket', 'client', 'client.js'),
+      join(packageRoot, 'dshmarket', 'lib', 'routes.js'),
       join(packageRoot, '@deepseek-ai', 'dsh-client-ui-settings-models', 'lib', 'client.js'),
       join(packageRoot, '@deepseek-ai', 'dsh-client-ui-directory-picker-browse', 'lib', 'client.js'),
+      join(packageRoot, '@deepseek-ai', 'dsh-client-ui-renderer', 'lib', 'client.js'),
+      join(packageRoot, '@deepseek-ai', 'dsh-web-frontend', 'dist', 'index.html'),
       join(packageRoot, '@deepseek-ai', 'dsh-system-prompt', 'lib', 'index.js'),
     ].map(path => readFileSync(path, 'utf8')).join('\n')
 
@@ -63,6 +67,10 @@ describe('Aera Code native identity', () => {
       'Open DSH Terminal',
       'DSH Desktop native directory picker',
       'DSH Desktop directory validation',
+      'opening DSH Terminal requires',
+      'stop DeepSeek Harness from starting',
+      'const productTitle = "DeepSeek Harness"',
+      '<title>DeepSeek Harness</title>',
       'You are an AI agent powered by DeepSeek Harness.',
     ]) expect(reachableClientSurfaces).not.toContain(forbiddenHostCopy)
     expect(reachableClientSurfaces).toContain('You are an AI agent working in Aera Code.')

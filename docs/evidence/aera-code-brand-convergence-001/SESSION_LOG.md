@@ -40,3 +40,11 @@
 - Focused active-package identity gate: 3 files / 40 tests PASS.
 - Repeated full headless gate PASS after packaged-content remediation: Market 23 files / 268 tests; Desktop 111 files / 1,084 tests PASS, 4 skipped; runtime closure 201 nodes; licence audit 551 packages; operation reliability 7 operations / 18 fault contracts; build/typecheck and repository/document contracts PASS.
 - Current phase: update the existing unmerged PR, rerun UbiCloud CI, and create a replacement package from the exact new head.
+
+## 2026-09-14 — Second candidate package rejected by expanded audit
+
+- Corrected head `93eabb760f20c778b2e572873f5e15aa65193a87` passed required UbiCloud run 34809389720 (change classifier and full check).
+- The replacement universal package passed DMG verification, bundle identity and architecture checks, but expanded `app.asar` inspection found four further reachable donor-host strings: a market conflict fallback, a market terminal transport error, the renderer fallback document title and the initial packaged HTML title. The package was not installed.
+- Added deterministic active-package regression coverage for all four paths, then branded only their visible copy. The `dshmarket` package identity, renderer APIs, web frontend behavior and terminal route semantics remain unchanged.
+- Focused post-repair gate: 3 files / 40 tests PASS.
+- Current phase: repeat full validation and candidate custody on the complete packaged-surface inventory.

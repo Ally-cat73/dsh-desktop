@@ -1,5 +1,5 @@
 diff --git a/client/client.js b/client/client.js
-index 0ad55132e3198e5c5e39b616d7e881751effa0e1..3a7397c1e6a4957015cf05d182fdef8adade968f 100644
+index 0ad55132e3198e5c5e39b616d7e881751effa0e1..2ccae3b65092e2b229d89eb5bbb14b27b2beb580 100644
 --- a/client/client.js
 +++ b/client/client.js
 @@ -41,7 +41,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
@@ -265,7 +265,7 @@ index 2672901966a04e97701286234568a649014c4c2f..345d59a9113fb4d74bf94dda6667c87b
   * Write the profile manifest atomically: a temp file in the same directory is
   * written first, then renamed over package.json, so a crash mid-toggle never
 diff --git a/lib/routes.js b/lib/routes.js
-index 6c461bdf34c2fa077de61ba1b3194cff73d9fa6c..53300b5d91797c55c95df850b9c64fbd6f9bff9f 100644
+index 6c461bdf34c2fa077de61ba1b3194cff73d9fa6c..e4cc449461f325efbb80da2d11a4c25c31f2d0ad 100644
 --- a/lib/routes.js
 +++ b/lib/routes.js
 @@ -15,7 +15,7 @@ import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMember
@@ -494,6 +494,15 @@ index 6c461bdf34c2fa077de61ba1b3194cff73d9fa6c..53300b5d91797c55c95df850b9c64fbd
                              ok = result.ok;
                              detail = result.detail;
                          }
+@@ -2169,7 +2202,7 @@ export function mountMarketRoutes(host, config, commandRuntime, agentsLookup) {
+                             // ids.
+                             conflictGroups: conflictGroups.length > 0 ? conflictGroups : undefined,
+                             error: conflictGroups.length > 0
+-                                ? `「${conflicts[0].name}」与已安装的 ${conflictGroups.map(group => `「${group.owner}」（${group.ids.join('、')}）`).join('、')} 占用相同的 loader 条目 id，无法在同一环境中共存——保留会导致 DeepSeek Harness 下次启动失败，因此已自动移除。 / "${conflicts[0].name}" declares the same loader entry id(s) as the installed ${conflictGroups.map(group => `"${group.owner}" (${group.ids.join(', ')})`).join(', ')}; they cannot coexist in one environment — keeping it would stop DeepSeek Harness from starting, so it was removed.`
++                                ? `「${conflicts[0].name}」与已安装的 ${conflictGroups.map(group => `「${group.owner}」（${group.ids.join('、')}）`).join('、')} 占用相同的 loader 条目 id，无法在同一环境中共存——保留会导致 Aera Code 下次启动失败，因此已自动移除。 / "${conflicts[0].name}" declares the same loader entry id(s) as the installed ${conflictGroups.map(group => `"${group.owner}" (${group.ids.join(', ')})`).join(', ')}; they cannot coexist in one environment — keeping it would stop Aera Code from starting, so it was removed.`
+                                 : notAPlugin
+                                     ? 'nothing installable: the plugin(s) need a build step (blocked by default, see allowBuilds) or ship no prebuilt artifacts / 没有可安装的内容：插件需要构建授权（allowBuilds，默认拦截）或未附带构建产物，详见导出日志'
+                                     : Array.isArray(ignoredBuilds) && ignoredBuilds.length > 0
 diff --git a/lib/types/dsh-cli.d.ts b/lib/types/dsh-cli.d.ts
 index 9e3ba5e405ec80f8efd5513e220d9ea9a9046ae5..24b65b0351606464d583af54f2c27a2a2b18cebc 100644
 --- a/lib/types/dsh-cli.d.ts
@@ -867,7 +876,7 @@ index 1726a84e0de1959f77be75d3d1df0fa917666e2b..90ca6e7a981a381e95753f28926569e6
   * Write the profile manifest atomically: a temp file in the same directory is
   * written first, then renamed over package.json, so a crash mid-toggle never
 diff --git a/src/routes.ts b/src/routes.ts
-index 5e5b0d517ddff8e5f634a3a890c9d2e12f7d42a0..e9f6c16c8a9fac58759e82c28d48d0a70b0fb189 100644
+index 5e5b0d517ddff8e5f634a3a890c9d2e12f7d42a0..3d5ec5ae472e1540b5337a3be6cb61cc6db4897f 100644
 --- a/src/routes.ts
 +++ b/src/routes.ts
 @@ -23,7 +23,7 @@ import {
@@ -1114,6 +1123,15 @@ index 5e5b0d517ddff8e5f634a3a890c9d2e12f7d42a0..e9f6c16c8a9fac58759e82c28d48d0a7
                ok = result.ok
                detail = result.detail
              } else {
+@@ -2220,7 +2267,7 @@ export function mountMarketRoutes(
+               // ids.
+               conflictGroups: conflictGroups.length > 0 ? conflictGroups : undefined,
+               error: conflictGroups.length > 0
+-                ? `「${conflicts[0].name}」与已安装的 ${conflictGroups.map(group => `「${group.owner}」（${group.ids.join('、')}）`).join('、')} 占用相同的 loader 条目 id，无法在同一环境中共存——保留会导致 DeepSeek Harness 下次启动失败，因此已自动移除。 / "${conflicts[0].name}" declares the same loader entry id(s) as the installed ${conflictGroups.map(group => `"${group.owner}" (${group.ids.join(', ')})`).join(', ')}; they cannot coexist in one environment — keeping it would stop DeepSeek Harness from starting, so it was removed.`
++                ? `「${conflicts[0].name}」与已安装的 ${conflictGroups.map(group => `「${group.owner}」（${group.ids.join('、')}）`).join('、')} 占用相同的 loader 条目 id，无法在同一环境中共存——保留会导致 Aera Code 下次启动失败，因此已自动移除。 / "${conflicts[0].name}" declares the same loader entry id(s) as the installed ${conflictGroups.map(group => `"${group.owner}" (${group.ids.join(', ')})`).join(', ')}; they cannot coexist in one environment — keeping it would stop Aera Code from starting, so it was removed.`
+                 : notAPlugin
+                   ? 'nothing installable: the plugin(s) need a build step (blocked by default, see allowBuilds) or ship no prebuilt artifacts / 没有可安装的内容：插件需要构建授权（allowBuilds，默认拦截）或未附带构建产物，详见导出日志'
+                   : Array.isArray(ignoredBuilds) && ignoredBuilds.length > 0
 diff --git a/src/updates.ts b/src/updates.ts
 index 99b500573d2e5c7fa9d4ab27555d4e507f7bb0c4..e67bfaf79ae0228e022f445bbe9be1d4ab0962ca 100644
 --- a/src/updates.ts

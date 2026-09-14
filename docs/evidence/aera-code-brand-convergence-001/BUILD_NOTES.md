@@ -31,6 +31,13 @@
 - Focused regression after active dependency materialisation: 3 files / 40 tests PASS.
 - Repeated `corepack yarn check`: PASS; Market 268 tests; Desktop 1,084 tests PASS / 4 skipped; runtime closure 201 nodes; licence audit 551 packages; operation reliability 7 operations / 18 fault contracts.
 
+## Expanded package audit remediation
+
+- Rejected second package without installation: DMG SHA-256 `f3251c9e228ee4bf2608873c40cc1889be255e0aca8623294bc995cfc819dab0`; candidate `app.asar` SHA-256 `67e43d5566bc849029bda8cbdc324e35171ab01edb4962651fb9640ddb770c46`.
+- Corrected the market conflict/terminal error copy and both initial/fallback renderer document titles.
+- Retained internal package descriptions, source comments, exact `dsh` commands, legacy `DSH Desktop` migration key, protocol/schema names and truthful Provider/model names.
+- Focused active-package regression remains 3 files / 40 tests PASS.
+
 ## Full local gate
 
 - Pinned submodule materialised at unchanged `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`.
