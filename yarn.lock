@@ -49,14 +49,14 @@ __metadata:
 
 "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=05eb87&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=48c579&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/cis-contracts": "npm:0.1.0"
     "@aera/evidentiary-work-graph": "npm:0.1.0"
     "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
     "@aera/harness": "npm:0.1.0"
     "@aera/participation-contracts": "npm:0.1.0"
-  checksum: 10c0/670a351ae16d38ffcc096c9fe6bc6d66a3478a37b244174a90327b2630a5a2bfc5a9359d69337fe431cbe6b1a987eed3d04687d6c4d434debbf5c198120ad043
+  checksum: 10c0/85272d5f0be391041cc2ba641502a0c9c7fe3fda425dee713c57633ded5d30d37de5ded894bff6ffa973684dd903cdcc076e8e6748b122f0d615c86dc5bb6ae2
   languageName: node
   linkType: hard
 
@@ -3793,7 +3793,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-subagent@npm:0.1.1-rc.2, @deepseek-ai/dsh-subagent@npm:^0.1.1-rc.2":
+"@deepseek-ai/dsh-subagent@npm:0.1.1-rc.2":
   version: 0.1.1-rc.2
   resolution: "@deepseek-ai/dsh-subagent@npm:0.1.1-rc.2"
   dependencies:
@@ -3833,6 +3833,49 @@ __metadata:
     "@deepseek-ai/dsh-user-approval":
       optional: true
   checksum: 10c0/329bebd229ea00219a5a42c3f6efcbb9514ad5d02c164115e7505211e6a667f2df17dabe63c2b1de67c549d974c7e5ff56d2153649ff65d209a15fcb79415da0
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-subagent@patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch":
+  version: 0.1.1-rc.2
+  resolution: "@deepseek-ai/dsh-subagent@patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch::version=0.1.1-rc.2&hash=6ffbed"
+  dependencies:
+    zod: "npm:^4.4.3"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.1
+    "@deepseek-ai/dsh-agent": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-agent-presets": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-brand": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-invariants": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-jobs": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-sandbox": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-sandbox-policy": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-scope": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session-persistence": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session-projection": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-session-projection-cache": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
+    "@deepseek-ai/dsh-user-approval": ^0.1.1-rc.2
+  peerDependenciesMeta:
+    "@deepseek-ai/dsh-agent-presets":
+      optional: true
+    "@deepseek-ai/dsh-jobs":
+      optional: true
+    "@deepseek-ai/dsh-sandbox":
+      optional: true
+    "@deepseek-ai/dsh-sandbox-policy":
+      optional: true
+    "@deepseek-ai/dsh-session-persistence":
+      optional: true
+    "@deepseek-ai/dsh-session-projection":
+      optional: true
+    "@deepseek-ai/dsh-session-projection-cache":
+      optional: true
+    "@deepseek-ai/dsh-user-approval":
+      optional: true
+  checksum: 10c0/3e3b663f85e9a75570c88dbf497b9abefaa51cf455cc4d2c67182b6e2494f7a1bf64255b5facb6b101b43cf6c6fbb218d2c3e2cbba826dd79bfabdc78a2f10e4
   languageName: node
   linkType: hard
 
@@ -8720,7 +8763,7 @@ __metadata:
     "@deepseek-ai/dsh-spill": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-storage": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-storage-domain": "npm:0.1.1-rc.2"
-    "@deepseek-ai/dsh-subagent": "npm:0.1.1-rc.2"
+    "@deepseek-ai/dsh-subagent": "patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch"
     "@deepseek-ai/dsh-subagent-in-process-driver": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-subprocess": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-subprocess-local": "npm:0.1.1-rc.2"

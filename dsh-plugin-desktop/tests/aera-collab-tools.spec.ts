@@ -41,6 +41,16 @@ const TEST_WO = 'WO-TEST-AGC-E-AGENT-ACCESS-001'
 const humanPrincipalId = issueAeraPrincipalId()
 const AGENT_NAME = 'TEST Aera Code Desktop Worker'
 const DELEGATION_ID = 'delegation-TEST-agc-e-agent-access-001'
+const OWNER_WO = 'WO-TEST-OWNER-ADMISSION-001'
+const OWNER_PAYLOAD = [
+  'AERA-WORK-ORDER-STANDARD-003 v3.0',
+  '',
+  `WORK ORDER: ${OWNER_WO}`,
+  'TITLE: Owner admission test',
+  'OWNER: Alyshia Daley',
+  '',
+  'END OWNER ORDER.',
+].join('\n')
 
 let storeDir: string
 let corpusRoot: string
@@ -221,6 +231,104 @@ describe('§18 the packaged plugin registers all five collaboration tools', () =
 })
 
 describe('§4 agent-callable access through the real runtime mechanics', () => {
+  it('admits an owner-supplied formal Work Order before the first Provider request', async () => {
+    const admissionStore = join(mkdtempSync(join(tmpdir(), 'aera-collab-admission-')), 'store')
+    const service = new CollabWorkspaceService({
+      storeDir: admissionStore, corpusRoot, stackRoot,
+      principalId: humanPrincipalId as string,
+      principalName: 'Alyshia Daley',
+      agentName: AGENT_NAME,
+      agentRole: 'IMPLEMENTER',
+      delegationId: DELEGATION_ID,
+    })
+    const adapter = new ScriptedTestModelDouble([textTurn('admitted')])
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SystemPrompt, { persona: '' })
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(collabTools, { service })
+    ctx.llm.registerAdapter(['scripted-test'], adapter)
+
+    const nativeSessionId = SessionId('owner-admission-native-session')
+    const agent = ctx.agentLoop.create(nativeSessionId, {
+      provider: 'scripted-test', model: 'TEST-scripted-double',
+    })
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: OWNER_PAYLOAD }], source: { kind: 'user' },
+    }))
+    await agent.whenIdle()
+
+    expect(adapter.requests).toHaveLength(1)
+    expect(JSON.stringify(adapter.requests[0]?.messages)).toContain(`Current canonical Work Order: ${OWNER_WO}`)
+    const durable = new ParticipationStore(admissionStore)
+    expect(durable.listWorkOrders()).toEqual([
+      expect.objectContaining({
+        workOrderId: OWNER_WO, exactPayload: OWNER_PAYLOAD,
+        authorityClass: 'OWNER_SUPPLIED', lifecycleStatus: 'ACTIVE', revision: 1,
+        source: expect.objectContaining({ nativeSessionId: String(nativeSessionId) }),
+      }),
+    ])
+    expect(durable.listEvents().some(event => event.eventKind === 'CHANGE_RECORDED')).toBe(true)
+    await expect(service.admitOwnerWorkOrder({
+      workOrderId: OWNER_WO, title: 'Owner admission test', exactPayload: OWNER_PAYLOAD,
+      nativeSessionId: String(nativeSessionId), messageId: 'same-content-replay',
+      eventSequence: 99, submittedAt: '2026-09-14T00:00:00.000Z',
+    })).resolves.toMatchObject({ workOrderId: OWNER_WO, revision: 1 })
+    expect(durable.listWorkOrders()).toHaveLength(1)
+    expect(durable.listEvents().filter(event => event.eventKind === 'CHANGE_RECORDED')).toHaveLength(1)
+
+    const resumed = new CollabWorkspaceService({
+      storeDir: admissionStore, corpusRoot, stackRoot,
+      principalId: humanPrincipalId as string,
+      principalName: 'Alyshia Daley',
+      agentName: AGENT_NAME,
+      agentRole: 'IMPLEMENTER',
+      delegationId: DELEGATION_ID,
+    })
+    await expect(resumed.resumeAgentWorkContextForNativeSession(String(nativeSessionId)))
+      .resolves.toMatchObject({ workOrderId: OWNER_WO })
+  }, 60_000)
+
+  it('rejects same-id different-content owner input before another Provider request', async () => {
+    const admissionStore = join(mkdtempSync(join(tmpdir(), 'aera-collab-conflict-')), 'store')
+    const service = new CollabWorkspaceService({
+      storeDir: admissionStore, corpusRoot, stackRoot,
+      principalId: humanPrincipalId as string,
+      principalName: 'Alyshia Daley',
+      agentName: AGENT_NAME,
+      agentRole: 'IMPLEMENTER',
+      delegationId: DELEGATION_ID,
+    })
+    const adapter = new ScriptedTestModelDouble([textTurn('first')])
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SystemPrompt, { persona: '' })
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(collabTools, { service })
+    ctx.llm.registerAdapter(['scripted-test'], adapter)
+    const agent = ctx.agentLoop.create(SessionId('owner-conflict-native-session'), {
+      provider: 'scripted-test', model: 'TEST-scripted-double',
+    })
+
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: OWNER_PAYLOAD }], source: { kind: 'user' },
+    }))
+    await agent.whenIdle()
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: `${OWNER_PAYLOAD}\nCONFLICTING CHANGE` }], source: { kind: 'user' },
+    }))
+    await agent.whenIdle()
+
+    expect(adapter.requests).toHaveLength(1)
+    expect(new ParticipationStore(admissionStore).listWorkOrders()).toHaveLength(1)
+  }, 60_000)
+
   it('an agent session invokes all five collaboration tools and records attributed progress', async () => {
     const service = new CollabWorkspaceService({
       storeDir, corpusRoot, stackRoot,

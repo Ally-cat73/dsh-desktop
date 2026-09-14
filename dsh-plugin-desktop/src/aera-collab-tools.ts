@@ -28,6 +28,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { CollabHonestError, CollabWorkspaceService, resolveCollabConfig } from './aera-collab-service.ts'
 
@@ -36,6 +38,30 @@ export const name = 'aera-collab-agent-tools'
 
 /** The native DSH tool registry is the only injected service. */
 export const inject = ['tools']
+
+interface OwnerWorkOrderInput {
+  readonly workOrderId: string
+  readonly title: string
+  readonly exactPayload: string
+}
+
+/** Recognise only the explicit AERA formal Work Order grammar. */
+export function recogniseOwnerWorkOrder(message: {
+  readonly source: { readonly kind: string }
+  readonly content: readonly { readonly type: string, readonly text?: string }[]
+}): OwnerWorkOrderInput | undefined {
+  if (message.source.kind !== 'user') return undefined
+  const exactPayload = message.content
+    .filter((block): block is { readonly type: string, readonly text: string } =>
+      block.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('\n')
+  if (!exactPayload.startsWith('AERA-WORK-ORDER-STANDARD-003 v3.0')) return undefined
+  const id = exactPayload.match(/^\s*(?:WORK ORDER(?: ID)?|WORK-ORDER ID):\s*(WO-[A-Z0-9][A-Z0-9_-]+)\s*$/imu)?.[1]
+  const title = exactPayload.match(/^\s*TITLE:\s*(.+?)\s*$/imu)?.[1]?.trim()
+  if (id === undefined || title === undefined || title.length === 0) return undefined
+  return { workOrderId: id, title, exactPayload }
+}
 
 /** Optional composition-time overrides (tests supply a prepared service). */
 export interface Config {
@@ -83,6 +109,42 @@ export function apply(ctx: Context, config: Config = {}): void {
     ?? new CollabWorkspaceService(
       resolveCollabConfig(process.env, process.env['AERA_COLLAB_WORKSPACE_ROOT']),
     )
+
+  ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
+    const hasOwnerInput = messages.some(message => message.source.kind === 'user')
+    if (!hasOwnerInput) return next()
+    const ownerMessage = messages.find(message => recogniseOwnerWorkOrder(message) !== undefined)
+    const formal = ownerMessage === undefined ? undefined : recogniseOwnerWorkOrder(ownerMessage)
+    let institutional: { workOrderId: string } | undefined
+    if (formal !== undefined && ownerMessage !== undefined) {
+      institutional = await service.admitOwnerWorkOrder({
+        ...formal,
+        nativeSessionId: String(agent.id),
+        messageId: String(ownerMessage.id),
+        eventSequence: agent.session.seq,
+        submittedAt: new Date().toISOString(),
+      })
+    } else {
+      institutional = await service.resumeAgentWorkContextForNativeSession(String(agent.id))
+    }
+    const decision = await next()
+    if (decision.kind === 'reject' || institutional === undefined) return decision
+    const text = await service.agentInstitutionalContext()
+    if (text === undefined) return decision
+    return {
+      kind: 'enter',
+      messages: [
+        ...decision.messages,
+        createUserMessage({
+          content: [{ type: 'text', text }],
+          source: {
+            kind: 'plugin', plugin: name, form: 'snapshot',
+            sections: [{ name: 'canonical-work-context', text }],
+          },
+        }),
+      ],
+    }
+  }, { prepend: true })
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'aera_collab_resolve_work_context',
