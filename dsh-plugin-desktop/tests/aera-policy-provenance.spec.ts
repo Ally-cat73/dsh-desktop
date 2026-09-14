@@ -85,6 +85,7 @@ describe('Aera Code policy provenance', () => {
         source: {
           kind, form: kind === 'subagent-report' ? 'relay' : 'notice',
           senderSessionId: 'child-session-1', nativeTurnMessageId: 'owner-source-turn-1',
+          nativeTurnTerminal: kind === 'subagent-settled',
         },
         content: [{ type: 'text', text }],
       }])
@@ -93,6 +94,7 @@ describe('Aera Code policy provenance', () => {
         source_type: 'RUNTIME_PLUGIN_CONTEXT',
         temporal_role: 'RUNTIME_CONTEXT',
         native_turn_correlation: true,
+        native_turn_terminal: kind === 'subagent-settled',
         content_sha256: createHash('sha256').update(text).digest('hex'),
       })])
     }

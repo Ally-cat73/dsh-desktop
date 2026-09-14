@@ -12,6 +12,7 @@ describe('Aera Code background subagent settlement custody', () => {
     expect(source).toContain('...closingText')
     expect(source).not.toContain('}, ...terminal.output]]')
     expect(source).toContain('nativeTurnMessageId')
+    expect(source).toContain('nativeTurnTerminal')
     expect(source).toContain('continuable subagent launch has no source user-turn identity')
     expect(source).toContain('version: 3')
   })

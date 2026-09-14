@@ -103,13 +103,14 @@ index bd9741ed440979753359abc5c479550ee5827167..7132987285c33498e4cf9c3cec24c000
  					create: {
  						seed,
  						meta: childSessionMeta(parent, childDepth, lineageSeedLength),
-@@ -953,7 +961,8 @@ var SubagentContinuationManager = class {
+@@ -953,7 +961,9 @@ var SubagentContinuationManager = class {
  			source: {
  				kind: "subagent-report",
  				form: "relay",
 -				senderSessionId: activation.childId
 +				senderSessionId: activation.childId,
-+				nativeTurnMessageId: activation.nativeTurnMessageId
++				nativeTurnMessageId: activation.nativeTurnMessageId,
++				nativeTurnTerminal: false
  			}
  		});
  		if (delivery === "next-step") this.sendWaking(parent, message, () => {
@@ -129,11 +130,12 @@ index bd9741ed440979753359abc5c479550ee5827167..7132987285c33498e4cf9c3cec24c000
  			provider,
  			handle,
  			ancestry: new WeakSet([handle.agent, ...parentLineage]),
-@@ -1491,22 +1502,24 @@ var SubagentContinuationManager = class {
+@@ -1491,22 +1502,26 @@ var SubagentContinuationManager = class {
  			const parent = this.ctx.agents.get(activation.parentSession);
  			if (parent === void 0) return;
  			const summary = settlementSummary(activation.childId, terminal.stopReason);
 +			const closingText = terminal.output?.filter((block) => block?.type === "text" && typeof block.text === "string");
++			const nativeTurnTerminal = ![...this.activations.values()].some((candidate) => candidate.parentSession === activation.parentSession);
  			const message = createUserMessage({
  				content: [{
  					type: "text",
@@ -153,7 +155,8 @@ index bd9741ed440979753359abc5c479550ee5827167..7132987285c33498e4cf9c3cec24c000
  					summary: boundContextSummary(summary),
 -					senderSessionId: activation.childId
 +					senderSessionId: activation.childId,
-+					nativeTurnMessageId: activation.nativeTurnMessageId
++					nativeTurnMessageId: activation.nativeTurnMessageId,
++					nativeTurnTerminal
  				}
  			});
  			if (this.closingTeardownFor(parent) !== void 0) {
