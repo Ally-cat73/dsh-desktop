@@ -15,6 +15,10 @@ Only visible host-product identity is replaced. Provider/model names, package/pr
 | `@deepseek-ai/dsh-client-ui-conversation` packaged Client | fish hero fallback | New Session | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE through supported hero mark slot |
 | Browser document title | `<session> — DeepSeek Harness` | Accessibility/window document title | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with `Aera Code` via existing observer |
 | `.yarn/patches/@deepseek-ai-dsh-client-ui-settings-models…patch` | English/Chinese DeepSeek Harness internal-testing welcome copy | First-run onboarding notice | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with Aera Code copy; keep open/plugin language product-neutral |
+| `dsh-community-market/src/client/locales.ts` | DeepSeek Harness/DSH Desktop host references | Community-market notices, confirmations and host-state guidance | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with Aera Code or product-neutral host wording; retain plugin compatibility terminology |
+| patched `dshmarket/client/client.js` | Restart/start DeepSeek Harness host copy | Optional bundled market UI | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with Aera Code host wording; retain actual `dshmarket` product identity |
+| patched `@deepseek-ai/dsh-client-ui-directory-picker-browse` | DSH Desktop native-picker error copy | Directory-picker failure | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with Aera Code; retain package/command identity |
+| patched `@deepseek-ai/dsh-system-prompt` | `You are an AI agent powered by DeepSeek Harness.` | Expandable system-context evidence supplied to the model | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE sentence with Aera Code; retain `harness:identity`, config key and package identity |
 | `dsh-plugin-desktop/src/client/desktop-settings-locales.ts` | `DSH Terminal could not be opened…` | Desktop settings error | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with Aera Code Terminal |
 | `dsh-plugin-desktop/src/startup-recovery-window.ts` | `DSH Terminal is unavailable…` | Recovery error | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with Aera Code Terminal |
 | `dsh-plugin-desktop/src/recovery-copy.ts` | `DSH will remove…`, `DSH plugin uninstall` | Recovery confirmation/status | USER_VISIBLE_PRODUCT_IDENTITY | REPLACE with Aera Code/built-in plugin wording |
@@ -46,6 +50,7 @@ Only visible host-product identity is replaced. Provider/model names, package/pr
 - **Fail:** left sidebar visibly presents donor fish + `deepseek HARNESS`.
 - **Fail:** accessibility document title ends in `DeepSeek Harness`.
 - **At risk:** New Session hero falls back to donor fish because the Aera occupant is not activated.
+- **At risk:** bundled market, onboarding, native-picker and system-context surfaces contain additional donor host-product copy even when the outer shell is branded.
 - **Pass:** native application title bar, macOS app menu, About, Settings heading, Terminal action, bundle name and bundle ID already present as Aera Code.
 - **Pass:** Models shows `AERA Gateway (governed)`; no truthful Provider/model identity is being hidden.
 

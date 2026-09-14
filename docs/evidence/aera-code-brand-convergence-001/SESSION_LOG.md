@@ -30,3 +30,13 @@
 - The next full check exposed one expected copy-contract assertion still requiring the historical `DSH home` phrase. The test was corrected to require the truthful `settings.yaml` plus product-neutral `运行时补丁` wording.
 - Final full headless gate PASS: Market 23 files / 268 tests; Desktop 111 files / 1,083 tests PASS, 4 skipped; runtime closure 201 nodes; licence audit 551 packages; operation reliability 7 operations / 18 fault contracts; build/typecheck and repository/document contracts PASS.
 - Current phase: create the Alyshia-authored candidate commit, open the owner-controlled PR, run UbiCloud CI, then package and visually inspect the unmerged PR head.
+
+## 2026-09-14 — First candidate package rejected by packaged-content audit
+
+- Candidate commit `1a83e7322bc58a4f8f1c9dee8cde332a2eae8b63` was pushed to owner-controlled PR 15; UbiCloud run 34807711561 passed both required jobs on that exact head.
+- `dist:mac-smoke` produced a universal candidate, but the pre-install packaged-content audit rejected it. It was not installed and the accepted installed app remained untouched.
+- Mechanically proven gaps: active community-market and optional `dshmarket` client copy still named the donor host; the settings-models patch had branded only a retained `.orig` file rather than the active client; native-picker errors said DSH Desktop; and the expandable system-context identity sentence named DeepSeek Harness.
+- TDD expansion now scans reachable installed dependency clients rather than patch prose. The active settings-models, market, picker and system-context surfaces are branded Aera Code or product-neutral, while their package/config/protocol identities remain unchanged.
+- Focused active-package identity gate: 3 files / 40 tests PASS.
+- Repeated full headless gate PASS after packaged-content remediation: Market 23 files / 268 tests; Desktop 111 files / 1,084 tests PASS, 4 skipped; runtime closure 201 nodes; licence audit 551 packages; operation reliability 7 operations / 18 fault contracts; build/typecheck and repository/document contracts PASS.
+- Current phase: update the existing unmerged PR, rerun UbiCloud CI, and create a replacement package from the exact new head.

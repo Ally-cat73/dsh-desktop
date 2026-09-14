@@ -30,10 +30,6 @@ describe('Aera Code native identity', () => {
       'recovery-plugin-uninstall.ts',
       'main.ts',
     ].map(path => readFileSync(join(sourceRoot, path), 'utf8')).join('\n')
-    const welcomePatch = readFileSync(join(
-      process.cwd(), '..', '.yarn', 'patches',
-      '@deepseek-ai-dsh-client-ui-settings-models-npm-0.1.1-rc.2-5348824733.patch',
-    ), 'utf8')
     const rootManifest = readFileSync(join(process.cwd(), '..', 'package.json'), 'utf8')
 
     for (const forbiddenHostCopy of [
@@ -43,12 +39,33 @@ describe('Aera Code native identity', () => {
       'The DSH plugin command',
       "concernLabel === 'DSH home'",
     ]) expect(visibleSurfaces).not.toContain(forbiddenHostCopy)
-    expect(welcomePatch).not.toContain('DeepSeek Harness 0.1 remains in testing')
-    expect(welcomePatch).not.toContain('DeepSeek Harness 目前的 0.1 版本')
-
     // Internal package and truthful model/Provider identity remains intact.
     expect(rootManifest).toContain('@deepseek-ai/dsh-llm-deepseek')
     expect(rootManifest).toContain('@deepseek-ai/dsh-client-runtime')
+  })
+
+  it('keeps bundled plugin-market, onboarding, and picker surfaces free of donor host copy', () => {
+    const packageRoot = join(process.cwd(), 'node_modules')
+    const reachableClientSurfaces = [
+      join(process.cwd(), '..', 'dsh-community-market', 'src', 'client', 'locales.ts'),
+      join(packageRoot, 'dshmarket', 'client', 'client.js'),
+      join(packageRoot, '@deepseek-ai', 'dsh-client-ui-settings-models', 'lib', 'client.js'),
+      join(packageRoot, '@deepseek-ai', 'dsh-client-ui-directory-picker-browse', 'lib', 'client.js'),
+      join(packageRoot, '@deepseek-ai', 'dsh-system-prompt', 'lib', 'index.js'),
+    ].map(path => readFileSync(path, 'utf8')).join('\n')
+
+    for (const forbiddenHostCopy of [
+      'DeepSeek Harness 0.1 remains in testing',
+      'DeepSeek Harness 目前的 0.1 版本',
+      'Discover community plugins for DeepSeek Harness',
+      'Restart DeepSeek Harness',
+      'DSH Desktop is required',
+      'Open DSH Terminal',
+      'DSH Desktop native directory picker',
+      'DSH Desktop directory validation',
+      'You are an AI agent powered by DeepSeek Harness.',
+    ]) expect(reachableClientSurfaces).not.toContain(forbiddenHostCopy)
+    expect(reachableClientSurfaces).toContain('You are an AI agent working in Aera Code.')
   })
 
   // WO-AGC-004 §21 — the governed dogfood credential resolves from Keychain

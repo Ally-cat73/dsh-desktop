@@ -1,0 +1,13 @@
+diff --git a/lib/index.js b/lib/index.js
+index 4a3fe3e..dd52687 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -166,7 +166,7 @@ var SystemPrompt = class extends Service {
+ 		if (config.includeHarnessIdentity ?? true) this.section({
+ 			name: "harness:identity",
+ 			order: -100,
+-			text: "You are an AI agent powered by DeepSeek Harness."
++			text: "You are an AI agent working in Aera Code."
+ 		});
+ 		this.section({
+ 			name: PERSONA_SECTION,
