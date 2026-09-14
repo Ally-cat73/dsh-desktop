@@ -38,6 +38,7 @@ import {
   PRINCIPALS_FILE,
   ParticipationCollaborationClient,
   ParticipationStore,
+  ParticipationStoreError,
   SESSIONS_FILE,
   WORK_ORDERS_FILE,
   buildParticipationProjection,
@@ -126,6 +127,7 @@ export class CollabHonestError extends Error {
       | 'PROJECTION_UNAVAILABLE'
       | 'PRINCIPAL_UNAVAILABLE'
       | 'WORK_ORDER_NOT_FOUND'
+      | 'WORK_ORDER_CONFLICT'
       | 'NOT_JOINED'
       | 'AGENT_UNAVAILABLE'
       | 'INVALID_INPUT'
@@ -161,6 +163,118 @@ export class CollabWorkspaceService {
   private agentWorkOrderId: string | null = null
 
   constructor(private readonly config: CollabWorkspaceConfig) {}
+
+  /**
+   * Admit one exact owner-authored formal Work Order into the canonical
+   * participation store before execution begins, then bind the configured
+   * agent to it. The first accepted source remains its provenance; replaying
+   * identical content is idempotent and conflicting content is refused.
+   */
+  async admitOwnerWorkOrder(input: {
+    readonly workOrderId: string
+    readonly title: string
+    readonly exactPayload: string
+    readonly nativeSessionId: string
+    readonly messageId: string
+    readonly eventSequence: number
+    readonly submittedAt: string
+  }): Promise<{ workOrderId: string, lifecycleStatus: string, revision: number }> {
+    const store = this.requireStore()
+    const { principalId, principalName } = this.config
+    if (principalId === undefined || principalName === undefined || !isAeraPrincipalId(principalId)) {
+      throw new CollabHonestError(
+        'PRINCIPAL_UNAVAILABLE',
+        'Owner Work Order admission requires the configured canonical human principal.',
+      )
+    }
+    const existed = store.listWorkOrders().some(order => order.workOrderId === input.workOrderId)
+    let record
+    try {
+      record = store.registerWorkOrder({
+        workOrderId: input.workOrderId,
+        title: input.title,
+        exactPayload: input.exactPayload,
+        authorityClass: 'OWNER_SUPPLIED',
+        lifecycleStatus: 'ACTIVE',
+        owner: { principalId, displayName: principalName },
+        source: {
+          nativeSessionId: input.nativeSessionId,
+          messageId: input.messageId,
+          eventSequence: input.eventSequence,
+          submittedAt: input.submittedAt,
+        },
+      })
+    } catch (error) {
+      if (error instanceof ParticipationStoreError
+        && error.code === 'WORK_ORDER_REGISTRATION_CONFLICT') {
+        throw new CollabHonestError(
+          'WORK_ORDER_CONFLICT',
+          `Work Order ${input.workOrderId} already exists with different canonical content. The existing record was not overwritten.`,
+        )
+      }
+      throw error
+    }
+    if (this.agentWorkOrderId !== input.workOrderId) {
+      await this.closeAgentWorkContext()
+      await this.openAgentWorkContext(input.workOrderId)
+    }
+    if (!existed) {
+      await this.agentRecordProgressNote(
+        `Owner-supplied Work Order admitted from native Session ${input.nativeSessionId}; execution remains in progress.`,
+      )
+    }
+    return {
+      workOrderId: record.workOrderId,
+      lifecycleStatus: record.lifecycleStatus ?? 'ACTIVE',
+      revision: record.revision ?? 1,
+    }
+  }
+
+  /** Restore the WorkContext associated with one native Aera Code Session. */
+  async resumeAgentWorkContextForNativeSession(nativeSessionId: string): Promise<{
+    workOrderId: string
+    lifecycleStatus: string
+    revision: number
+  } | undefined> {
+    if (this.config.storeDir === undefined) return undefined
+    if (this.agentWorkOrderId !== null) {
+      const current = this.requireStore().listWorkOrders()
+        .find(order => order.workOrderId === this.agentWorkOrderId)
+      return current === undefined ? undefined : {
+        workOrderId: current.workOrderId,
+        lifecycleStatus: current.lifecycleStatus ?? 'ACTIVE',
+        revision: current.revision ?? 1,
+      }
+    }
+    const record = this.requireStore().listWorkOrders()
+      .find(order => order.source?.nativeSessionId === nativeSessionId)
+    if (record === undefined) return undefined
+    await this.openAgentWorkContext(record.workOrderId)
+    return {
+      workOrderId: record.workOrderId,
+      lifecycleStatus: record.lifecycleStatus ?? 'ACTIVE',
+      revision: record.revision ?? 1,
+    }
+  }
+
+  /** Render a bounded, non-authoritative model context from canonical facts. */
+  async agentInstitutionalContext(): Promise<string | undefined> {
+    if (this.agentWorkOrderId === null) return undefined
+    const record = this.requireStore().listWorkOrders()
+      .find(order => order.workOrderId === this.agentWorkOrderId)
+    if (record === undefined) return undefined
+    const packet = await this.agentContextPacket()
+    return [
+      `Current canonical Work Order: ${record.workOrderId}`,
+      `Title: ${record.title}`,
+      `Authority: ${record.authorityClass ?? 'RECORDED'}`,
+      `Status: ${record.lifecycleStatus ?? 'RECORDED'}; revision ${record.revision ?? 1}`,
+      `Recorded progress events: ${this.requireStore().listEvents().filter(event =>
+        !isUnattributedChange(event.attribution)
+        && event.attribution.workOrderId === record.workOrderId).length}`,
+      `Context: ${packet.currentCanonicalState.length} current-state item(s), ${packet.governingDecisions.length} governing decision(s), ${packet.knownResiduals.length} unresolved item(s).`,
+    ].join('\n')
+  }
 
   availability(): CollabAvailability {
     return {

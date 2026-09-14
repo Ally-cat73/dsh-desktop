@@ -1,0 +1,25 @@
+diff --git a/lib/index.js b/lib/index.js
+index bd9741ed440979753359abc5c479550ee5827167..70fe93831e3244e7ffd2590e816ed92b33bde692 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -1491,17 +1491,18 @@ var SubagentContinuationManager = class {
+ 			const parent = this.ctx.agents.get(activation.parentSession);
+ 			if (parent === void 0) return;
+ 			const summary = settlementSummary(activation.childId, terminal.stopReason);
++			const closingText = terminal.output?.filter((block) => block?.type === "text" && typeof block.text === "string");
+ 			const message = createUserMessage({
+ 				content: [{
+ 					type: "text",
+ 					text: summary
+-				}, ...terminal.output === void 0 ? [{
++				}, closingText === void 0 || closingText.length === 0 ? [{
+ 					type: "text",
+ 					text: "It left no closing message."
+ 				}] : [{
+ 					type: "text",
+ 					text: "Its closing message:"
+-				}, ...terminal.output]],
++				}, ...closingText]],
+ 				source: {
+ 					kind: "subagent-settled",
+ 					form: "notice",
