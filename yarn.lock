@@ -2990,7 +2990,7 @@ __metadata:
 
 "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=d61949&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=6c2758&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@deepseek-ai/schemastery": "npm:^3.18.1"
     "@earendil-works/pi-ai": "npm:^0.82.1"
@@ -3004,7 +3004,7 @@ __metadata:
     "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
     "@deepseek-ai/dsh-settings": ^0.1.1-rc.2
     "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
-  checksum: 10c0/1fa005b83d3f550588bef44c51fe0a926f749f20477cbdbae537e7e8892e4588ee30b4edd710edd73441198b14bda05d1f96e9a97f4debfc1c67cf3e5ce1d315
+  checksum: 10c0/820b20bf44fe22ffaa25e49563a5ba05fb6f25820515fa1fb643d1ca74f96a4ba46ba2c938d3e428d77b59e659dc1f55af230a299c3505a6a4b9cae2247670db
   languageName: node
   linkType: hard
 
@@ -3838,7 +3838,7 @@ __metadata:
 
 "@deepseek-ai/dsh-subagent@patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-subagent@patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch::version=0.1.1-rc.2&hash=71e55c"
+  resolution: "@deepseek-ai/dsh-subagent@patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch::version=0.1.1-rc.2&hash=ec2d06"
   dependencies:
     zod: "npm:^4.4.3"
   peerDependencies:
@@ -3875,7 +3875,7 @@ __metadata:
       optional: true
     "@deepseek-ai/dsh-user-approval":
       optional: true
-  checksum: 10c0/ad416fa5a806ff42f074b0503a81f222297e34687b92a0241d503443d3c3a04a34ba87b9837f5c2a1ad6d3c845bf8099b953b940614cfe51247d5e59dc480925
+  checksum: 10c0/1de4630b7dc05712c61a0b4e9221175d3653112ce7c57dfec569cfd8412936e72219bd9562e9ae8b31657d91c16f1df28e577f985052ce1937a9b6712d9b9b16
   languageName: node
   linkType: hard
 
