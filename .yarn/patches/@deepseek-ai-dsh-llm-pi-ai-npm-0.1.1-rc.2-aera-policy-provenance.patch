@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..aera001
 --- /dev/null
 +++ b/lib/aera-policy-provenance.js
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,177 @@
 +import { createHash } from "node:crypto";
 +
 +const HEADER = "x-aera-policy-provenance-v1";
@@ -67,12 +67,21 @@ index 0000000..aera001
 +			break;
 +		}
 +	}
++	const currentUserMessage = currentUserIndex < 0 ? void 0 : messages[currentUserIndex];
 +	const segments = [];
-+	for (const [retainedOrdinal, message] of messages.entries()) {
-+		const identity = identityOf(message, retainedOrdinal === currentUserIndex);
++	let retainedOrdinal = 0;
++	for (const message of messages) {
 +		const content = textOf(message);
-+		if (identity === null || content.length === 0) continue;
-+		if (typeof message.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(message.id)) continue;
++		const retained = message?.role !== "system"
++			&& message?.role !== "developer"
++			&& message?.source?.kind !== "tool"
++			&& content.length > 0;
++		if (!retained) continue;
++		const identity = identityOf(message, message === currentUserMessage);
++		if (identity === null || typeof message.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(message.id)) {
++			retainedOrdinal += 1;
++			continue;
++		}
 +		const correlationId = identity.native_turn_correlation === true
 +			&& typeof message?.source?.nativeTurnMessageId === "string"
 +			? message.source.nativeTurnMessageId
@@ -83,6 +92,7 @@ index 0000000..aera001
 +			retained_ordinal: retainedOrdinal,
 +			content_sha256: createHash("sha256").update(content, "utf8").digest("hex")
 +		});
++		retainedOrdinal += 1;
 +	}
 +	return segments.length === 0 ? void 0 : JSON.stringify({ version: 1, segments });
 +}

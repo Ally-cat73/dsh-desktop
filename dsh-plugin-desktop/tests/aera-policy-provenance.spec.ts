@@ -12,7 +12,7 @@ describe('Aera Code policy provenance', () => {
     const texts = ['owner prompt', 'runtime plugin context', 'runtime skill catalogue']
     const raw = aeraPolicyProvenanceHeader([
       { id: 'owner-1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: texts[0] }] },
-      { id: 'plugin-1', role: 'system', source: { kind: 'plugin' }, content: [{ type: 'text', text: texts[1] }] },
+      { id: 'plugin-1', role: 'user', source: { kind: 'plugin' }, content: [{ type: 'text', text: texts[1] }] },
       { id: 'skills-1', role: 'user', source: { kind: 'skill-catalog' }, content: [{ type: 'text', text: texts[2] }] },
     ])
     const envelope = JSON.parse(raw)
@@ -96,6 +96,25 @@ describe('Aera Code policy provenance', () => {
         content_sha256: createHash('sha256').update(text).digest('hex'),
       })])
     }
+  })
+
+  it('uses provider retained ordinals rather than raw Harness message indexes', () => {
+    const raw = aeraPolicyProvenanceHeader([
+      { id: 'owner-source-turn-1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'owner task' }] },
+      { id: 'assistant-text-1', role: 'assistant', source: { kind: 'model' }, content: [{ type: 'text', text: 'working' }] },
+      { id: 'tool-result-1', role: 'user', source: { kind: 'tool', callId: 'call-1' }, content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'result' }] }] },
+      {
+        id: 'settlement-1', role: 'user',
+        source: { kind: 'subagent-settled', form: 'notice', senderSessionId: 'child-1', nativeTurnMessageId: 'owner-source-turn-1' },
+        content: [{ type: 'text', text: 'child settled' }],
+      },
+    ])
+    expect(JSON.parse(raw).segments.map((segment: { correlation_id: string; retained_ordinal: number }) => ({
+      correlation: segment.correlation_id, ordinal: segment.retained_ordinal,
+    }))).toEqual([
+      { correlation: 'owner-source-turn-1', ordinal: 0 },
+      { correlation: 'owner-source-turn-1', ordinal: 2 },
+    ])
   })
 
   it('patches title generation to reuse the exact source user message identity', () => {
