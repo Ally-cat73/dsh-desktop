@@ -21,7 +21,7 @@ describe('Desktop product copy', () => {
     expect(copy.rollbackCheckpoint).toBe('回滚到此槽位')
     expect(copy.confirmRollbackBody('2026/8/25 10:00:00')).toContain('当前 Profile')
     expect(copy.confirmRollbackBody('2026/8/25 10:00:00')).toContain('settings.yaml')
-    expect(copy.confirmRollbackBody('2026/8/25 10:00:00')).toContain('DSH home 补丁')
+    expect(copy.confirmRollbackBody('2026/8/25 10:00:00')).toContain('运行时补丁')
   })
 
   it('ships localized native update and failure dialogs', () => {

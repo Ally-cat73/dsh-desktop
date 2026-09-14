@@ -48,6 +48,50 @@ describe('desktop client environment', () => {
       .toEqual({ version: '2.0.3', mode: 'extended', platform: 'win32', material: 'mica', micaSupported: true })
   })
 
+  it('activates the Aera Code brand occupants for every desktop renderer', () => {
+    vi.stubGlobal('window', {
+      location: {
+        search: '?dsh-desktop-mode=compatibility&dsh-desktop-platform=darwin&dsh-desktop-version=2.0.4&dsh-desktop-material=transparent',
+      },
+    })
+    const registrations: string[] = []
+    const ctx = {
+      effect: vi.fn(),
+      settingsScope: { bind: vi.fn(() => ({ set: vi.fn() })) },
+      locale: {
+        bind: vi.fn(() => (key: string) => key),
+        register: vi.fn(),
+      },
+      slots: {
+        inject: vi.fn((_name: string, mount: () => unknown) => {
+          const result = mount()
+          if (result && typeof result === 'object' && Symbol.iterator in result) {
+            for (const _effect of result as Iterable<unknown>) void _effect
+          }
+          return result
+        }),
+        register: vi.fn((options: { name: string }) => {
+          registrations.push(options.name)
+          return () => undefined
+        }),
+      },
+      sessions: { currentProvideInfo: undefined },
+      conversation: { blocks: {} },
+      workspaces: { create: vi.fn(), startSession: vi.fn() },
+    } as unknown as ClientContext
+
+    try {
+      apply(ctx)
+      expect(registrations).toEqual(expect.arrayContaining([
+        'sidebar.brand.mark',
+        'sidebar.brand.name',
+        'conversation.hero.brand.mark',
+      ]))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it.each([
     ['?dsh-desktop-mode=glass&dsh-desktop-platform=darwin', 'dsh-desktop-mode'],
     ['?dsh-desktop-mode=advanced', 'dsh-desktop-platform'],

@@ -37,3 +37,16 @@ index d7b153efbe32114cf2990abe169a4ac624f98ed9..80a9ff987b5152ffbe46be314a2e5dbd
  ${u(C.length)}`:C},[c,i,u]);return f.jsxs("div",{className:Xl.root,children:[f.jsxs("button",{type:"button",className:Xl.toggle,onClick:()=>{d(C=>!C)},children:[c?"▾":"▸"," ",n]}),c&&f.jsx("pre",{className:Xl.body,children:h})]})}function Wd({text:n}){return f.jsx("div",{className:I9.text,children:n})}function ur(n){var i;switch(n.type){case"text":case"inlineCode":case"code":return n.value??"";case"image":case"imageReference":return n.alt??"";case"break":return`
  `;case"html":return n.value??"";default:return((i=n.children)==null?void 0:i.map(ur).join(""))??""}}function Oi(n){return n.replace(/\s+/g," ").trim()}function p1(n){var i,l,u,c,d,h;switch(n.type){case"root":case"blockquote":return((i=n.children)==null?void 0:i.map(p1).filter(Boolean).join(`
  
+diff --git a/dist/index.html b/dist/index.html
+index 884367de82d95bdc47aba270ab12a64a157b8690..100abf644f9130fc21c4e1aca128a209efbd2b5b 100644
+--- a/dist/index.html
++++ b/dist/index.html
+@@ -5,7 +5,7 @@
+     <meta name="viewport" content="width=device-width, initial-scale=1" />
+     <link rel="manifest" href="/manifest.webmanifest" />
+     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+-    <title>DeepSeek Harness</title>
++    <title>Aera Code</title>
+     <script type="module" crossorigin src="/assets/index-ClqxG24t.js"></script>
+     <link rel="modulepreload" crossorigin href="/assets/vendor-D22_Mp1f.js">
+     <link rel="stylesheet" crossorigin href="/assets/vendor-CjyC-hUb.css">

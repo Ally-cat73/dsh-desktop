@@ -259,7 +259,7 @@ export class DesktopStartupRecoveryController {
         .some(bundle => bundle.packageName === preview.packageName)) {
         throw new DesktopStartupRecoveryControllerError(
           'operation-failed',
-          'The DSH plugin command completed, but the plugin remains in the current Profile.',
+          'The built-in plugin command completed, but the plugin remains in the current Profile.',
         )
       }
       return { action: 'uninstall', packageName: preview.packageName }

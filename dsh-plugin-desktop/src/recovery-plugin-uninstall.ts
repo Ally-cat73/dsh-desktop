@@ -104,7 +104,7 @@ export function formatRecoveryPluginRemoveFailure(cause: unknown): string {
     return cause instanceof Error ? cause.stack ?? cause.message : String(cause)
   }
   return [
-    'DSH plugin uninstall failed.',
+    'Aera Code plugin uninstall failed.',
     `Command: dsh plugin --profile ${cause.result.profileName} remove ${cause.result.packageName}`,
     `Package-manager policy: ${PNPM_IGNORE_MINIMUM_RELEASE_AGE}`,
     `Exit status: ${String(cause.result.exitCode)}`,

@@ -1,0 +1,13 @@
+diff --git a/lib/client.js b/lib/client.js
+index 3070c931066312e5fbf92213cee41881cd36d161..4adf9ae77c7e043ee36419f0a2f53e03abf54a00 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -898,7 +898,7 @@ window.__ModuleLoader__.load({
+ 		* @returns No rendered content.
+ 		*/
+ 		function DocumentTitle({ title }) {
+-			const productTitle = "DeepSeek Harness";
++			const productTitle = "Aera Code";
+ 			(0, react.useEffect)(() => {
+ 				document.title = title === void 0 ? productTitle : `${title} — ${productTitle}`;
+ 				return () => {

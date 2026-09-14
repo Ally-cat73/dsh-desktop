@@ -205,7 +205,7 @@ function notifyWindowsVolumeConcerns(
   const label = runtime.locale === 'zh'
     ? concernLabel === 'application install' ? '应用安装目录'
       : concernLabel === 'desktop user data' ? '桌面用户数据'
-        : concernLabel === 'DSH home' ? 'DSH 主目录'
+        : concernLabel === 'Aera Code runtime home' ? 'Aera Code 运行时主目录'
           : '某个配置路径'
     : concernLabel ?? 'A configured path'
   try {
@@ -463,7 +463,7 @@ async function start(): Promise<void> {
     const windowsVolumeConcerns = diagnoseWindowsVolumes(process.platform, [
       { label: 'application install', path: process.execPath },
       { label: 'desktop user data', path: app.getPath('userData') },
-      { label: 'DSH home', path: homeDir },
+      { label: 'Aera Code runtime home', path: homeDir },
     ])
     warnWindowsVolumeConcerns(electronLogger, windowsVolumeConcerns)
 
