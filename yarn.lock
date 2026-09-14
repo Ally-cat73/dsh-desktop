@@ -8763,7 +8763,7 @@ __metadata:
     "@deepseek-ai/dsh-spill": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-storage": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-storage-domain": "npm:0.1.1-rc.2"
-    "@deepseek-ai/dsh-subagent": "patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch"
+    "@deepseek-ai/dsh-subagent": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-subagent-in-process-driver": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-subprocess": "npm:0.1.1-rc.2"
     "@deepseek-ai/dsh-subprocess-local": "npm:0.1.1-rc.2"
