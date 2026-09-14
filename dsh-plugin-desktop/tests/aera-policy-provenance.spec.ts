@@ -77,6 +77,27 @@ describe('Aera Code policy provenance', () => {
     ])
   })
 
+  it('binds subagent reports and settlement notices to their durable source user Turn', () => {
+    for (const kind of ['subagent-report', 'subagent-settled']) {
+      const text = `runtime ${kind} notice`
+      const raw = aeraPolicyProvenanceHeader([{
+        id: `notice-${kind}`, role: 'user',
+        source: {
+          kind, form: kind === 'subagent-report' ? 'relay' : 'notice',
+          senderSessionId: 'child-session-1', nativeTurnMessageId: 'owner-source-turn-1',
+        },
+        content: [{ type: 'text', text }],
+      }])
+      expect(JSON.parse(raw).segments).toEqual([expect.objectContaining({
+        correlation_id: 'owner-source-turn-1',
+        source_type: 'RUNTIME_PLUGIN_CONTEXT',
+        temporal_role: 'RUNTIME_CONTEXT',
+        native_turn_correlation: true,
+        content_sha256: createHash('sha256').update(text).digest('hex'),
+      })])
+    }
+  })
+
   it('patches title generation to reuse the exact source user message identity', () => {
     const source = readFileSync(
       new URL('../node_modules/@deepseek-ai/dsh-session-title-llm/lib/index.js', import.meta.url),
