@@ -331,6 +331,122 @@ export function apply(ctx: Context, config: Config = {}): void {
     },
   })), 'aera-collab-tools: record')
 
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'aera_collab_repository_resource',
+    description:
+      'Resolve the joined WorkContext\'s canonical repository resources: every bound repository with its stable RepositoryId (aera-repo:<slug>), truthful role (PRIMARY / SOURCE_EVIDENCE / AFFECTED), verified provider identity (e.g. github:Owner/Name) and canonical branch. Optionally repository-qualify one PR number, commit or branch and fetch its live provider state against the EXACT provider repository. With several bindings and no repository_id/role the result is AMBIGUOUS_REPOSITORY listing the bindings — never a silent choice. A repository is never inferred from the workspace path or name; when live provider access fails the result says LIVE_PROVIDER_STATE_UNAVAILABLE rather than guessing. Requires a resolved WorkContext.',
+    parameters: {
+      repository_id: { type: 'string', description: 'Stable RepositoryId (aera-repo:<slug>) to select. Wins over role.' },
+      role: { type: 'string', enum: ['PRIMARY', 'SOURCE_EVIDENCE', 'AFFECTED'], description: 'Select the binding with this role when no repository_id is given.' },
+      pull_request_number: { type: 'number', description: 'Pull request number to repository-qualify and look up.' },
+      commit_sha: { type: 'string', description: 'Commit SHA to repository-qualify and look up.' },
+      branch_ref: { type: 'string', description: 'Branch name to repository-qualify and look up.' },
+      live: { type: 'boolean', description: 'Fetch live provider state for the named reference (default: true when a reference is given).' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          workOrderId: { type: 'string', required: true },
+          resolution: { type: 'string', required: true },
+          reason: { type: 'string' },
+          repositories: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                repositoryId: { type: 'string', required: true },
+                role: { type: 'string', required: true },
+                displayName: { type: 'string', required: true },
+                verification: { type: 'string', required: true },
+                providerIdentity: { type: 'string' },
+                canonicalBranch: { type: 'string' },
+                note: { type: 'string' },
+              },
+            },
+          },
+          repository: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              repositoryId: { type: 'string', required: true },
+              role: { type: 'string', required: true },
+              displayName: { type: 'string', required: true },
+              verification: { type: 'string', required: true },
+              providerIdentity: { type: 'string' },
+              canonicalBranch: { type: 'string' },
+              note: { type: 'string' },
+            },
+          },
+          reference: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { type: 'string', required: true },
+              reference: { type: 'string', required: true },
+              providerIdentity: { type: 'string' },
+              providerUrl: { type: 'string' },
+              reason: { type: 'string' },
+            },
+          },
+          liveState: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { type: 'string', required: true },
+              providerIdentity: { type: 'string' },
+              observedAt: { type: 'string' },
+              state: { type: 'string' },
+              mergeCommit: { type: 'string' },
+              mergedAt: { type: 'string' },
+              headRefOid: { type: 'string' },
+              baseRefName: { type: 'string' },
+              headRefName: { type: 'string' },
+              url: { type: 'string' },
+              reason: { type: 'string' },
+            },
+          },
+        },
+      },
+      render: renderJson,
+    },
+    async execute(args) {
+      const role = args.role
+      if (role !== undefined && role !== 'PRIMARY' && role !== 'SOURCE_EVIDENCE' && role !== 'AFFECTED') {
+        throw new Error('INVALID_INPUT: role must be PRIMARY, SOURCE_EVIDENCE or AFFECTED.')
+      }
+      const result = await honest(async () => service.agentResolveRepositoryResource({
+        ...(args.repository_id === undefined || args.repository_id.trim() === '' ? {} : { repositoryId: args.repository_id.trim() }),
+        ...(role === undefined ? {} : { role }),
+        ...(args.pull_request_number === undefined ? {} : { pullRequestNumber: args.pull_request_number }),
+        ...(args.commit_sha === undefined || args.commit_sha.trim() === '' ? {} : { commitSha: args.commit_sha.trim() }),
+        ...(args.branch_ref === undefined || args.branch_ref.trim() === '' ? {} : { branchRef: args.branch_ref.trim() }),
+        ...(args.live === undefined ? {} : { live: args.live }),
+      }))
+      const strip = (row: { repositoryId: string, role: string, displayName: string, verification: string, providerIdentity?: string, canonicalBranch?: string, note?: string }) => ({
+        repositoryId: row.repositoryId,
+        role: row.role,
+        displayName: row.displayName,
+        verification: row.verification,
+        ...(row.providerIdentity === undefined ? {} : { providerIdentity: row.providerIdentity }),
+        ...(row.canonicalBranch === undefined ? {} : { canonicalBranch: row.canonicalBranch }),
+        ...(row.note === undefined ? {} : { note: row.note }),
+      })
+      return {
+        workOrderId: result.workOrderId,
+        resolution: result.resolution,
+        ...(result.reason === undefined ? {} : { reason: result.reason }),
+        repositories: result.repositories.map(strip),
+        ...(result.repository === undefined ? {} : { repository: strip(result.repository) }),
+        ...(result.reference === undefined ? {} : { reference: result.reference }),
+        ...(result.liveState === undefined ? {} : { liveState: result.liveState }),
+      }
+    },
+  })), 'aera-collab-tools: repository_resource')
+
   ctx.effect(() => () => {
     void service.closeAgentWorkContext().catch(() => {})
   }, 'aera-collab-tools: agent session teardown')

@@ -43,13 +43,23 @@ import {
   WORK_ORDERS_FILE,
   buildParticipationProjection,
   mergeProjections,
+  resolveRepositoryReference,
   resolveWorkContext,
+  resolveWorkOrderRepositories,
+  type RepositoryReferenceResolution,
 } from '@aera/participation-runtime'
 import { buildProjection } from '@aera/evidentiary-work-graph'
 import type { EngineeringWorkGraphProjectionV1 } from '@aera/evidentiary-work-graph-contracts'
 import {
   isRepositoryId,
+  parseGitRemoteUrl,
+  providerRepositoryIdentity,
+  providerRepositoryKey,
   worktreeInstance,
+  type RepositoryBindingRole,
+  type RepositoryId,
+  type RepositoryProviderCoordinatesV1,
+  type WorkContextRepositoryV1,
   type WorktreeInstanceV1,
 } from '@aera/participation-contracts'
 import {
@@ -58,7 +68,7 @@ import {
   type AgentRole,
   type ParticipationSession,
 } from '@aera/evidentiary-work-graph-contracts'
-import { isAeraPrincipalId } from '@aera/cis-contracts'
+import { isAeraPrincipalId, type AeraPrincipalId } from '@aera/cis-contracts'
 import {
   buildContextView,
   type CollabContextView,
@@ -119,6 +129,62 @@ export function resolveCollabConfig(
   }
 }
 
+/**
+ * Composition-time seams. `runProvider` executes one read-only provider CLI
+ * query (`gh …`) and returns its stdout; tests supply a deterministic double.
+ * The default runner never receives credentials from this module — it runs
+ * the user's own `gh` with whatever authentication the host already holds.
+ */
+export interface CollabWorkspaceHooks {
+  readonly runProvider?: (args: readonly string[]) => string
+}
+
+/** Default read-only provider runner: the host's `gh` CLI, bounded by a timeout. */
+export function defaultProviderRunner(args: readonly string[]): string {
+  return execFileSync('gh', [...args], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+}
+
+/** Live provider state for one repository-qualified reference, or its honest absence. */
+export type CollabLiveProviderState =
+  | {
+      readonly kind: 'LIVE_PROVIDER_STATE'
+      readonly providerIdentity: string
+      readonly observedAt: string
+      readonly state?: string
+      readonly mergeCommit?: string
+      readonly mergedAt?: string
+      readonly headRefOid?: string
+      readonly baseRefName?: string
+      readonly headRefName?: string
+      readonly url?: string
+    }
+  | { readonly kind: 'LIVE_PROVIDER_STATE_UNAVAILABLE', readonly reason: string }
+
+/** The repository resource tool's result shape (see `aera_collab_repository_resource`). */
+export interface CollabRepositoryResolution {
+  readonly workOrderId: string
+  readonly resolution:
+    | 'RESOLVED'
+    | 'WORK_ORDER_UNBOUND'
+    | 'AMBIGUOUS_REPOSITORY'
+    | 'REPOSITORY_NOT_BOUND'
+    | 'REPOSITORY_NOT_FOUND'
+    | 'REPOSITORY_SCOPE_REFUSED'
+  readonly reason?: string
+  /** Every canonical binding of the Work Order, PRIMARY first. */
+  readonly repositories: readonly WorkContextRepositoryV1[]
+  /** The selected binding when resolution is RESOLVED. */
+  readonly repository?: WorkContextRepositoryV1
+  readonly reference?: {
+    readonly kind: 'PROVIDER_RESOLVED' | 'PROVIDER_IDENTITY_UNAVAILABLE' | 'REPOSITORY_MISMATCH'
+    readonly reference: string
+    readonly providerIdentity?: string
+    readonly providerUrl?: string
+    readonly reason?: string
+  }
+  readonly liveState?: CollabLiveProviderState
+}
+
 /** An honest, typed refusal. The UI shows `reason` verbatim. */
 export class CollabHonestError extends Error {
   constructor(
@@ -162,7 +228,10 @@ export class CollabWorkspaceService {
   private agentSession: ParticipationSession | null = null
   private agentWorkOrderId: string | null = null
 
-  constructor(private readonly config: CollabWorkspaceConfig) {}
+  constructor(
+    private readonly config: CollabWorkspaceConfig,
+    private readonly hooks: CollabWorkspaceHooks = {},
+  ) {}
 
   /**
    * Admit one exact owner-authored formal Work Order into the canonical
@@ -264,6 +333,14 @@ export class CollabWorkspaceService {
       .find(order => order.workOrderId === this.agentWorkOrderId)
     if (record === undefined) return undefined
     const packet = await this.agentContextPacket()
+    const { repositories } = resolveWorkOrderRepositories(this.requireStore(), record.workOrderId)
+    const repositoryLines = repositories.length === 0
+      ? ['Repository bindings: none recorded for this Work Order. Do not infer a repository from the workspace; ask for a bounded resolution.']
+      : [
+          `Repository bindings: ${repositories.map(row =>
+            `${row.repositoryId} (${row.role}${row.providerIdentity === undefined ? '; no verified provider remote' : `; ${row.providerIdentity}`}${row.canonicalBranch === undefined ? '' : `; branch ${row.canonicalBranch}`})`).join('; ')}`,
+          'Resolve any PR, commit or branch through aera_collab_repository_resource using these stable RepositoryIds; never infer a repository from the workspace path or name.',
+        ]
     return [
       `Current canonical Work Order: ${record.workOrderId}`,
       `Title: ${record.title}`,
@@ -273,7 +350,234 @@ export class CollabWorkspaceService {
         !isUnattributedChange(event.attribution)
         && event.attribution.workOrderId === record.workOrderId).length}`,
       `Context: ${packet.currentCanonicalState.length} current-state item(s), ${packet.governingDecisions.length} governing decision(s), ${packet.knownResiduals.length} unresolved item(s).`,
+      ...repositoryLines,
     ].join('\n')
+  }
+
+  // ------------------------------------------------------------------
+  // Repository resource identity — WO-AERA-COLLAB-STABLE-REPOSITORY-RESOURCE-IDENTITY-001
+  //
+  // The institutional read plane for repositories: which stable RepositoryIds
+  // the joined Work Order is bound to, their verified provider coordinates,
+  // and the repository-qualified resolution of a PR / commit / branch. Live
+  // provider state is fetched ONLY against the exact provider coordinates the
+  // canonical resource carries, through the injectable provider runner; any
+  // failure is reported as LIVE_PROVIDER_STATE_UNAVAILABLE, never guessed.
+  // Nothing here grants write, push, merge or deployment authority.
+  // ------------------------------------------------------------------
+
+  /** The Work Order this service currently observes for (agent plane first). */
+  private observedWorkOrderId(): string | null {
+    return this.agentWorkOrderId ?? this.workOrderId
+  }
+
+  /** The requester's authority scope: the delegating human principal. */
+  private requesterScope(): AeraPrincipalId | undefined {
+    const { principalId } = this.config
+    return principalId !== undefined && isAeraPrincipalId(principalId) ? principalId : undefined
+  }
+
+  /** The joined Work Order's canonical repository bindings (PRIMARY first). */
+  agentRepositoryResources(): { workOrderId: string, repositories: readonly WorkContextRepositoryV1[] } {
+    const { workOrderId } = this.requireAgentJoined()
+    const { repositories } = resolveWorkOrderRepositories(this.requireStore(), workOrderId)
+    return { workOrderId, repositories }
+  }
+
+  /**
+   * Resolve a repository (by RepositoryId, by binding role, or the sole
+   * binding) and, optionally, one repository-qualified reference, then fetch
+   * its live provider state when requested and possible.
+   */
+  agentResolveRepositoryResource(input: {
+    readonly repositoryId?: string
+    readonly role?: RepositoryBindingRole
+    readonly pullRequestNumber?: number
+    readonly commitSha?: string
+    readonly branchRef?: string
+    readonly live?: boolean
+  }): CollabRepositoryResolution {
+    const { workOrderId } = this.requireAgentJoined()
+    const store = this.requireStore()
+    const { repositories } = resolveWorkOrderRepositories(store, workOrderId)
+    const scope = this.requesterScope()
+    const resolution: RepositoryReferenceResolution = resolveRepositoryReference(store, {
+      workOrderId,
+      ...(input.repositoryId === undefined ? {} : { repositoryId: input.repositoryId }),
+      ...(input.role === undefined ? {} : { role: input.role }),
+      ...(input.pullRequestNumber === undefined ? {} : { pullRequestNumber: input.pullRequestNumber }),
+      ...(input.commitSha === undefined ? {} : { commitSha: input.commitSha }),
+      ...(input.branchRef === undefined ? {} : { branchRef: input.branchRef }),
+      ...(scope === undefined ? {} : { requesterScope: scope }),
+    })
+    if (resolution.kind !== 'RESOLVED') {
+      return {
+        workOrderId,
+        resolution: resolution.kind,
+        reason: resolution.reason,
+        repositories,
+      }
+    }
+    const reference = resolution.reference === undefined
+      ? undefined
+      : resolution.reference.kind === 'PROVIDER_RESOLVED'
+        ? {
+            kind: resolution.reference.kind,
+            reference: resolution.reference.reference,
+            providerIdentity: resolution.reference.providerIdentity,
+            providerUrl: resolution.reference.providerUrl,
+          }
+        : resolution.reference.kind === 'PROVIDER_IDENTITY_UNAVAILABLE'
+          ? { kind: resolution.reference.kind, reference: resolution.reference.reference, reason: resolution.reference.reason }
+          : { kind: resolution.reference.kind, reference: `${resolution.reference.referenceRepositoryId}`, reason: resolution.reference.reason }
+    const wantLive = input.live ?? resolution.reference !== undefined
+    const liveState = !wantLive || resolution.reference === undefined
+      ? undefined
+      : resolution.reference.kind !== 'PROVIDER_RESOLVED'
+        ? { kind: 'LIVE_PROVIDER_STATE_UNAVAILABLE' as const, reason: resolution.reference.reason }
+        : this.liveProviderState(resolution.reference.provider, input)
+    return {
+      workOrderId,
+      resolution: 'RESOLVED',
+      repositories,
+      repository: resolution.repository,
+      ...(reference === undefined ? {} : { reference }),
+      ...(liveState === undefined ? {} : { liveState }),
+    }
+  }
+
+  /** Live provider state for one reference against EXACT coordinates; never a guess. */
+  private liveProviderState(
+    provider: RepositoryProviderCoordinatesV1,
+    input: { readonly pullRequestNumber?: number, readonly commitSha?: string, readonly branchRef?: string },
+  ): CollabLiveProviderState {
+    const repo = `${provider.owner}/${provider.name}`
+    const run = this.hooks.runProvider ?? defaultProviderRunner
+    try {
+      if (input.pullRequestNumber !== undefined) {
+        const raw = run(['pr', 'view', String(input.pullRequestNumber), '--repo', repo, '--json', 'state,mergeCommit,mergedAt,headRefOid,baseRefName,headRefName,url'])
+        const parsed = JSON.parse(raw) as {
+          state?: string, mergeCommit?: { oid?: string } | null, mergedAt?: string | null,
+          headRefOid?: string, baseRefName?: string, headRefName?: string, url?: string,
+        }
+        return {
+          kind: 'LIVE_PROVIDER_STATE',
+          providerIdentity: providerRepositoryIdentity(provider),
+          observedAt: new Date().toISOString(),
+          ...(parsed.state === undefined ? {} : { state: parsed.state }),
+          ...(parsed.mergeCommit?.oid === undefined ? {} : { mergeCommit: parsed.mergeCommit.oid }),
+          ...(parsed.mergedAt === undefined || parsed.mergedAt === null ? {} : { mergedAt: parsed.mergedAt }),
+          ...(parsed.headRefOid === undefined ? {} : { headRefOid: parsed.headRefOid }),
+          ...(parsed.baseRefName === undefined ? {} : { baseRefName: parsed.baseRefName }),
+          ...(parsed.headRefName === undefined ? {} : { headRefName: parsed.headRefName }),
+          ...(parsed.url === undefined ? {} : { url: parsed.url }),
+        }
+      }
+      if (input.commitSha !== undefined) {
+        const raw = run(['api', `repos/${repo}/commits/${input.commitSha}`, '--jq', '{sha: .sha, url: .html_url}'])
+        const parsed = JSON.parse(raw) as { sha?: string, url?: string }
+        return {
+          kind: 'LIVE_PROVIDER_STATE',
+          providerIdentity: providerRepositoryIdentity(provider),
+          observedAt: new Date().toISOString(),
+          state: 'COMMIT_PRESENT',
+          ...(parsed.sha === undefined ? {} : { headRefOid: parsed.sha }),
+          ...(parsed.url === undefined ? {} : { url: parsed.url }),
+        }
+      }
+      if (input.branchRef !== undefined) {
+        const raw = run(['api', `repos/${repo}/branches/${input.branchRef}`, '--jq', '{name: .name, sha: .commit.sha}'])
+        const parsed = JSON.parse(raw) as { name?: string, sha?: string }
+        return {
+          kind: 'LIVE_PROVIDER_STATE',
+          providerIdentity: providerRepositoryIdentity(provider),
+          observedAt: new Date().toISOString(),
+          state: 'BRANCH_PRESENT',
+          ...(parsed.name === undefined ? {} : { headRefName: parsed.name }),
+          ...(parsed.sha === undefined ? {} : { headRefOid: parsed.sha }),
+        }
+      }
+      return { kind: 'LIVE_PROVIDER_STATE_UNAVAILABLE', reason: 'No PR number, commit or branch was named to look up.' }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message.split('\n')[0] : String(error)
+      return {
+        kind: 'LIVE_PROVIDER_STATE_UNAVAILABLE',
+        reason: `Live provider verification against ${providerRepositoryIdentity(provider)} is unavailable (${detail ?? 'provider call failed'}). The repository identity is canonical; its live state was not fetched and is not guessed.`,
+      }
+    }
+  }
+
+  /**
+   * §7 + repository identity: the stable RepositoryId a working-state
+   * observation is labelled with. The institutional binding of the joined
+   * Work Order is sufficient; AERA_COLLAB_REPOSITORY_ID may still select a
+   * bound repository (or, for a legacy unbound Work Order, stand alone as it
+   * always has) but is never the sole source of institutional identity and
+   * never overrides a conflicting binding silently.
+   */
+  private resolveWorkingStateIdentity(): { repositoryId?: RepositoryId, source: string, reason: string } {
+    const envId = this.config.repositoryId
+    const envValid = envId !== undefined && isRepositoryId(envId)
+    const workOrderId = this.observedWorkOrderId()
+    const bindings = workOrderId === null || this.config.storeDir === undefined
+      ? []
+      : resolveWorkOrderRepositories(this.requireStore(), workOrderId).repositories
+    const primary = bindings.find(row => row.role === 'PRIMARY')
+    if (envValid) {
+      if (bindings.length > 0 && !bindings.some(row => row.repositoryId === envId)) {
+        return {
+          source: 'CONFLICT',
+          reason: `AERA_COLLAB_REPOSITORY_ID names ${envId}, but ${workOrderId} is bound to ${bindings.map(row => row.repositoryId).join(', ')}; the conflict is reported, not resolved silently.`,
+        }
+      }
+      return { repositoryId: envId, source: bindings.length > 0 ? 'ENVIRONMENT_SELECTED_BINDING' : 'ENVIRONMENT_LEGACY', reason: '' }
+    }
+    if (envId !== undefined) {
+      return {
+        source: 'INVALID_ENVIRONMENT',
+        reason: 'AERA_COLLAB_REPOSITORY_ID is not a stable aera-repo:<slug> RepositoryId; a repository identity is never minted from a local path.',
+      }
+    }
+    if (primary !== undefined) return { repositoryId: primary.repositoryId, source: 'INSTITUTIONAL_BINDING', reason: '' }
+    if (bindings.length > 1) {
+      return {
+        source: 'AMBIGUOUS_BINDING',
+        reason: `${workOrderId} binds ${bindings.map(row => `${row.repositoryId} (${row.role})`).join(', ')} with no PRIMARY; set AERA_COLLAB_REPOSITORY_ID to one of them to observe it. Nothing is chosen silently.`,
+      }
+    }
+    if (bindings.length === 1 && bindings[0] !== undefined) {
+      return { repositoryId: bindings[0].repositoryId, source: 'INSTITUTIONAL_BINDING', reason: '' }
+    }
+    return {
+      source: 'NONE',
+      reason: workOrderId === null
+        ? 'No WorkContext is open and AERA_COLLAB_REPOSITORY_ID is not set; a repository identity is never minted from a local path.'
+        : `${workOrderId} has no canonical repository binding and AERA_COLLAB_REPOSITORY_ID is not set; a repository identity is never minted from a local path.`,
+    }
+  }
+
+  /** `undefined` when the workspace is verifiably a checkout of the identified repository. */
+  private workspaceIdentityMismatch(repositoryId: RepositoryId, workspaceRoot: string, remoteLines: readonly string[]): string | undefined {
+    if (this.config.storeDir === undefined) return undefined
+    const resource = this.requireStore().listRepositoryResources().find(row => row.repositoryId === repositoryId)
+    if (resource === undefined) return undefined // legacy env-only identity: unchanged behaviour
+    const observed = remoteLines
+      .map(line => line.split(/\s+/)[1])
+      .filter((url): url is string => url !== undefined)
+      .map(url => parseGitRemoteUrl(url))
+      .filter((coordinates): coordinates is RepositoryProviderCoordinatesV1 => coordinates !== undefined)
+    if (resource.provider !== undefined) {
+      const wanted = providerRepositoryKey(resource.provider)
+      if (observed.some(coordinates => providerRepositoryKey(coordinates) === wanted)) return undefined
+      return `The workspace at ${workspaceRoot} is not a checkout of ${repositoryId} (${providerRepositoryIdentity(resource.provider)}): its remotes are ${observed.length === 0 ? 'none' : observed.map(providerRepositoryIdentity).join(', ')}. The working state is not labelled with a repository it does not belong to.`
+    }
+    let real: string
+    try { real = realpathSync(workspaceRoot) } catch { real = workspaceRoot }
+    const known = resource.localCheckouts.some(row => {
+      try { return realpathSync(row.localPath) === real } catch { return row.localPath === real }
+    })
+    if (known) return undefined
+    return `The workspace at ${workspaceRoot} is not a verified checkout location of ${repositoryId} (no provider remote to match against). The working state is not labelled with a repository it does not belong to.`
   }
 
   availability(): CollabAvailability {
@@ -471,24 +775,32 @@ export class CollabWorkspaceService {
    * workspace; anything else is an explicit unavailable reason.
    */
   observeWorkingState(): { view?: CollabWorkingStateView, unavailableReason?: string, instance?: WorktreeInstanceV1 } {
-    const { repositoryId: repoId, workspaceRoot } = this.config
+    const { workspaceRoot } = this.config
     if (workspaceRoot === undefined) return { unavailableReason: 'No workspace root is open to observe.' }
-    if (repoId === undefined || !isRepositoryId(repoId)) {
-      return {
-        unavailableReason:
-          'AERA_COLLAB_REPOSITORY_ID is not set to a stable aera-repo:<slug> RepositoryId; a repository identity is never minted from a local path.',
-      }
-    }
-    let head: string, branch: string, dirty: boolean
+    const identity = this.resolveWorkingStateIdentity()
+    if (identity.repositoryId === undefined) return { unavailableReason: identity.reason }
+    const repoId = identity.repositoryId
+    let head: string, branch: string, dirty: boolean, remotes: string[]
     try {
       const git = (...args: string[]): string =>
         execFileSync('git', ['-C', workspaceRoot, ...args], { encoding: 'utf8', timeout: 10_000 }).trim()
       head = git('rev-parse', 'HEAD')
       branch = git('rev-parse', '--abbrev-ref', 'HEAD')
       dirty = git('status', '--porcelain').length > 0
+      remotes = git('remote', '-v').split('\n').map(line => line.trim()).filter(line => line.length > 0)
     } catch {
-      return { unavailableReason: `The workspace at ${workspaceRoot} is not an observable git working tree.` }
+      return {
+        unavailableReason:
+          `The workspace at ${workspaceRoot} is not an observable git working tree. Repository identity for the joined Work Order is ${repoId} (${identity.source}); it was not observed here.`,
+      }
     }
+    // The workspace must be a checkout OF the identified repository. A bound
+    // resource with provider coordinates is matched against the workspace's
+    // own remotes; a provider-less resource against its verified checkout
+    // locations. A workspace that matches neither is never labelled with the
+    // repository identity — that would be path-minted identity by another name.
+    const mismatch = this.workspaceIdentityMismatch(repoId, workspaceRoot, remotes)
+    if (mismatch !== undefined) return { unavailableReason: mismatch }
     const observedAt = new Date().toISOString()
     const base = {
       repositoryId: repoId,
