@@ -228,6 +228,21 @@ describe('the repository resource read plane', () => {
     await subject.closeAgentWorkContext()
   })
 
+  it('a cold process with no joined Work Order is offered the active owner-supplied orders and their bindings — listed, never chosen', async () => {
+    const subject = service()
+    const text = await subject.agentActiveWorkOrdersContext()
+    expect(text).toContain('No Work Order is joined in this Session.')
+    expect(text).toContain(`- ${OWNER_WO} — Repository identity test order`)
+    expect(text).toContain('aera-repo:test-stack (PRIMARY; github:test-owner/test-stack; branch dev)')
+    expect(text).not.toContain(LEGACY_WO) // not owner-supplied → not offered as active canonical work
+    expect(text).toContain('aera_collab_resolve_work_context(work_order_id)')
+    expect(text).toContain('ask rather than choosing')
+    expect(text).toContain('Never infer a Work Order or a repository from the workspace path or name.')
+    // a store-less service offers nothing rather than inventing orders
+    const unconfigured = new CollabWorkspaceService({ principalId: humanPrincipalId as string, principalName: 'Alyshia Daley' })
+    expect(await unconfigured.agentActiveWorkOrdersContext()).toBeUndefined()
+  })
+
   it('multi-repository ambiguity is returned, never silently resolved', async () => {
     const subject = service()
     await subject.openAgentWorkContext(OWNER_WO)

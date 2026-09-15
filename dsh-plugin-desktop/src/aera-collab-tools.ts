@@ -128,8 +128,15 @@ export function apply(ctx: Context, config: Config = {}): void {
       institutional = await service.resumeAgentWorkContextForNativeSession(String(agent.id))
     }
     const decision = await next()
-    if (decision.kind === 'reject' || institutional === undefined) return decision
-    const text = await service.agentInstitutionalContext()
+    if (decision.kind === 'reject') return decision
+    // WO-AERA-COLLAB-STABLE-REPOSITORY-RESOURCE-IDENTITY-001: a fresh Session
+    // in a process that holds no Work Order (cold launch, neutral workspace)
+    // receives the bounded list of ACTIVE owner-supplied Work Orders with
+    // their repository bindings — so it can resolve one explicitly through
+    // the tools — never a silently chosen order and never a workspace guess.
+    const text = institutional === undefined
+      ? await service.agentActiveWorkOrdersContext()
+      : await service.agentInstitutionalContext()
     if (text === undefined) return decision
     return {
       kind: 'enter',

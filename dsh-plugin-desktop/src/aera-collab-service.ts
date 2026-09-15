@@ -354,6 +354,39 @@ export class CollabWorkspaceService {
     ].join('\n')
   }
 
+  /**
+   * Bounded, non-authoritative orientation for a Session in a process that
+   * holds NO joined Work Order: the ACTIVE owner-supplied Work Orders the
+   * store knows, newest first, each with its repository bindings. It lists;
+   * it never selects. `undefined` when the store is unavailable or empty.
+   */
+  async agentActiveWorkOrdersContext(): Promise<string | undefined> {
+    if (this.config.storeDir === undefined) return undefined
+    const store = this.requireStore()
+    const active = store.listWorkOrders()
+      .filter(order => order.authorityClass === 'OWNER_SUPPLIED' && order.lifecycleStatus === 'ACTIVE')
+      .sort((left, right) => (left.registeredAt < right.registeredAt ? 1 : left.registeredAt > right.registeredAt ? -1 : 0))
+    if (active.length === 0) return undefined
+    const events = store.listEvents()
+    const lines = active.map((order) => {
+      const progress = events.filter(event =>
+        !isUnattributedChange(event.attribution) && event.attribution.workOrderId === order.workOrderId).length
+      const { repositories } = resolveWorkOrderRepositories(store, order.workOrderId)
+      const bindings = repositories.length === 0
+        ? 'no repository binding recorded'
+        : repositories.map(row =>
+          `${row.repositoryId} (${row.role}${row.providerIdentity === undefined ? '' : `; ${row.providerIdentity}`}${row.canonicalBranch === undefined ? '' : `; branch ${row.canonicalBranch}`})`).join('; ')
+      return `- ${order.workOrderId} — ${order.title}; registered ${order.registeredAt}; ${progress} recorded progress event(s); repositories: ${bindings}`
+    })
+    return [
+      'No Work Order is joined in this Session.',
+      `Active owner-supplied canonical Work Orders (${active.length}, newest first):`,
+      ...lines,
+      'Resolve one explicitly with aera_collab_resolve_work_context(work_order_id) before reasoning about its state; then use aera_collab_repository_resource for any repository, PR, commit or branch.',
+      'If more than one is active and the request does not identify which, ask rather than choosing. Never infer a Work Order or a repository from the workspace path or name.',
+    ].join('\n')
+  }
+
   // ------------------------------------------------------------------
   // Repository resource identity — WO-AERA-COLLAB-STABLE-REPOSITORY-RESOURCE-IDENTITY-001
   //
