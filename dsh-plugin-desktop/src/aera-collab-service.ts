@@ -51,6 +51,7 @@ import {
 import { buildProjection } from '@aera/evidentiary-work-graph'
 import type { EngineeringWorkGraphProjectionV1 } from '@aera/evidentiary-work-graph-contracts'
 import {
+  discoverRepositoryCandidate,
   isRepositoryId,
   parseGitRemoteUrl,
   providerRepositoryIdentity,
@@ -594,22 +595,41 @@ export class CollabWorkspaceService {
     if (this.config.storeDir === undefined) return undefined
     const resource = this.requireStore().listRepositoryResources().find(row => row.repositoryId === repositoryId)
     if (resource === undefined) return undefined // legacy env-only identity: unchanged behaviour
-    const observed = remoteLines
-      .map(line => line.split(/\s+/)[1])
-      .filter((url): url is string => url !== undefined)
-      .map(url => parseGitRemoteUrl(url))
-      .filter((coordinates): coordinates is RepositoryProviderCoordinatesV1 => coordinates !== undefined)
-    if (resource.provider !== undefined) {
-      const wanted = providerRepositoryKey(resource.provider)
-      if (observed.some(coordinates => providerRepositoryKey(coordinates) === wanted)) return undefined
-      return `The workspace at ${workspaceRoot} is not a checkout of ${repositoryId} (${providerRepositoryIdentity(resource.provider)}): its remotes are ${observed.length === 0 ? 'none' : observed.map(providerRepositoryIdentity).join(', ')}. The working state is not labelled with a repository it does not belong to.`
-    }
+    // Only `(fetch)` rows: `git remote -v` lists each remote twice.
+    const remotes = remoteLines
+      .filter(line => line.endsWith('(fetch)'))
+      .map(line => { const [name, url] = line.split(/\s+/); return { name: name ?? '', url: url ?? '' } })
+      .filter(remote => remote.name.length > 0 && remote.url.length > 0)
     let real: string
     try { real = realpathSync(workspaceRoot) } catch { real = workspaceRoot }
-    const known = resource.localCheckouts.some(row => {
+    const knownLocation = resource.localCheckouts.some(row => {
       try { return realpathSync(row.localPath) === real } catch { return row.localPath === real }
     })
-    if (known) return undefined
+    if (resource.provider !== undefined) {
+      const wanted = providerRepositoryKey(resource.provider)
+      // The workspace's remotes must identify ONE provider repository (or the
+      // caller-neutral `origin` must), and it must be the identified one. A
+      // checkout carrying several provider remotes (e.g. a Modulop checkout
+      // that also tracks Aera-Stack) is labelled only when it is a verified
+      // location of the resource or its `origin` is that repository — never
+      // because some secondary remote happens to match.
+      const discovery = discoverRepositoryCandidate({ remotes, localPath: workspaceRoot })
+      const observed = remotes
+        .map(remote => parseGitRemoteUrl(remote.url))
+        .filter((coordinates): coordinates is RepositoryProviderCoordinatesV1 => coordinates !== undefined)
+      const origin = remotes.find(remote => remote.name === 'origin')
+      const originCoordinates = origin === undefined ? undefined : parseGitRemoteUrl(origin.url)
+      const matches
+        = (discovery.kind === 'REPOSITORY_CANDIDATE' && providerRepositoryKey(discovery.provider) === wanted)
+          || (discovery.kind === 'AMBIGUOUS_PROVIDER_REMOTES'
+            && (knownLocation || (originCoordinates !== undefined && providerRepositoryKey(originCoordinates) === wanted)))
+      if (matches) return undefined
+      const observedText = observed.length === 0 ? 'none' : observed.map(providerRepositoryIdentity).join(', ')
+      return discovery.kind === 'AMBIGUOUS_PROVIDER_REMOTES'
+        ? `The workspace at ${workspaceRoot} carries several provider remotes (${observedText}) and is neither a verified checkout location of ${repositoryId} nor has it as origin; it is not labelled ${repositoryId} on the strength of a secondary remote.`
+        : `The workspace at ${workspaceRoot} is not a checkout of ${repositoryId} (${providerRepositoryIdentity(resource.provider)}): its remotes are ${observedText}. The working state is not labelled with a repository it does not belong to.`
+    }
+    if (knownLocation) return undefined
     return `The workspace at ${workspaceRoot} is not a verified checkout location of ${repositoryId} (no provider remote to match against). The working state is not labelled with a repository it does not belong to.`
   }
 

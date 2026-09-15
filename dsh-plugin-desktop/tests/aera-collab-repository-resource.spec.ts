@@ -157,6 +157,21 @@ describe('working state identity from the institutional binding (CASE 4)', () =>
     await subject.closeAgentWorkContext()
   })
 
+  it('a checkout with several provider remotes is not labelled on the strength of a secondary remote', async () => {
+    const dual = join(mkdtempSync(join(tmpdir(), 'aera-collab-dual-remote-')), 'nixsum-like')
+    seedRepo(dual, 'https://github.com/test-owner/test-modulop.git')
+    execFileSync('git', ['-C', dual, 'remote', 'rename', 'origin', 'modulop'])
+    execFileSync('git', ['-C', dual, 'remote', 'add', 'aera', 'https://github.com/test-owner/test-stack.git'])
+    const subject = service({ workspaceRoot: dual })
+    await subject.openAgentWorkContext(OWNER_WO)
+    const observed = subject.observeWorkingState()
+    expect(observed.view).toBeUndefined()
+    expect(observed.unavailableReason).toContain('several provider remotes')
+    expect(observed.unavailableReason).toContain('github:test-owner/test-stack')
+    expect(observed.unavailableReason).toContain('not labelled aera-repo:test-stack')
+    await subject.closeAgentWorkContext()
+  })
+
   it('a git-less neutral workspace reports the institutional identity and that it was not observed there', async () => {
     const subject = service({ workspaceRoot: plainDirectory })
     await subject.openAgentWorkContext(OWNER_WO)
