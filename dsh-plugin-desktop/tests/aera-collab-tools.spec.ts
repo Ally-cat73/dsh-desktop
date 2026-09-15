@@ -224,6 +224,7 @@ describe('§18 the packaged plugin registers all five collaboration tools', () =
       'aera_collab_find_evidence',
       'aera_collab_governing_decisions',
       'aera_collab_record',
+      'aera_collab_repository_resource',
       'aera_collab_resolve_work_context',
       'aera_collab_working_state',
     ])

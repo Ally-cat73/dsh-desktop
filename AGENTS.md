@@ -1,3 +1,5 @@
+> **CANONICAL AERA CODE DSH:** See `CANONICAL_AERA_CODE_DSH.md`. This repository is the ONLY current Aera Code product (productFamily AERA_CODE_DSH, status CANONICAL_ACTIVE). Legacy AERA IDE / pre-DSH Aera Code sources in aera-stack must never be substituted.
+
 # DSH Desktop repository rules
 
 This repository owns the desktop product around an unmodified DeepSeek Harness checkout.
