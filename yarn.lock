@@ -49,14 +49,14 @@ __metadata:
 
 "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=c9e51d&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=f63f0a&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/cis-contracts": "npm:0.1.0"
     "@aera/evidentiary-work-graph": "npm:0.1.0"
     "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
     "@aera/harness": "npm:0.1.0"
     "@aera/participation-contracts": "npm:0.1.0"
-  checksum: 10c0/8277b71081a71119dae7231cdbeaa0d3a9fd7b57ba4bf5a721a7e3e409abfe348f33a8e63501bb9912a283b8420115173bc32dce198fd3982ce513be6c008209
+  checksum: 10c0/f02075e16cef8f77d06fc95fa0d822b1a86a940426dac9d841ea5a0f3ee23eba178a90e4c87e29d9a8c0163cc270fd25563c03198d7326610e0621fd579fa145
   languageName: node
   linkType: hard
 
