@@ -228,6 +228,17 @@ export class CollabWorkspaceService {
   private agentClient: ParticipationCollaborationClient | null = null
   private agentSession: ParticipationSession | null = null
   private agentWorkOrderId: string | null = null
+  /**
+   * WO-AERA-COLLAB-INSTITUTIONAL-ORIENTATION-AND-WORKORDER-STATE-RECONCILIATION-001
+   * §19: which native Aera Code Session joined which Work Order IN THIS PROCESS.
+   *
+   * This service is a per-PROCESS singleton, but a joined Work Order belongs to
+   * a SESSION. Without this map, `resumeAgentWorkContextForNativeSession` used
+   * to return whatever the process last joined, so a brand-new Session opened in
+   * a warm app inherited a stale Work Order and was handed its context as if it
+   * had joined it. A Session now only resumes what that Session itself joined.
+   */
+  private readonly nativeSessionWorkOrders = new Map<string, string>()
 
   constructor(
     private readonly config: CollabWorkspaceConfig,
@@ -286,7 +297,9 @@ export class CollabWorkspaceService {
     }
     if (this.agentWorkOrderId !== input.workOrderId) {
       await this.closeAgentWorkContext()
-      await this.openAgentWorkContext(input.workOrderId)
+      await this.openAgentWorkContext(input.workOrderId, input.nativeSessionId)
+    } else {
+      this.nativeSessionWorkOrders.set(input.nativeSessionId, input.workOrderId)
     }
     if (!existed) {
       await this.agentRecordProgressNote(
@@ -307,19 +320,34 @@ export class CollabWorkspaceService {
     revision: number
   } | undefined> {
     if (this.config.storeDir === undefined) return undefined
-    if (this.agentWorkOrderId !== null) {
-      const current = this.requireStore().listWorkOrders()
-        .find(order => order.workOrderId === this.agentWorkOrderId)
-      return current === undefined ? undefined : {
-        workOrderId: current.workOrderId,
-        lifecycleStatus: current.lifecycleStatus ?? 'ACTIVE',
-        revision: current.revision ?? 1,
+    const store = this.requireStore()
+    // 1. This Session joined a Work Order earlier in this process.
+    const joined = this.nativeSessionWorkOrders.get(nativeSessionId)
+    if (joined !== undefined) {
+      const current = store.listWorkOrders().find(order => order.workOrderId === joined)
+      if (current !== undefined) {
+        if (this.agentWorkOrderId !== joined) {
+          await this.closeAgentWorkContext()
+          await this.openAgentWorkContext(joined, nativeSessionId)
+        }
+        return {
+          workOrderId: current.workOrderId,
+          lifecycleStatus: current.lifecycleStatus ?? 'ACTIVE',
+          revision: current.revision ?? 1,
+        }
       }
     }
-    const record = this.requireStore().listWorkOrders()
+    // 2. This Session is the one that ADMITTED a Work Order (durable evidence
+    //    of the join, surviving a process restart).
+    const record = store.listWorkOrders()
       .find(order => order.source?.nativeSessionId === nativeSessionId)
-    if (record === undefined) return undefined
-    await this.openAgentWorkContext(record.workOrderId)
+    if (record === undefined) {
+      // 3. A Session that joined nothing is UNJOINED, even in a warm process
+      //    that holds another Session's Work Order. Inheriting it was the
+      //    defect: a fresh Session receives institutional ORIENTATION instead.
+      return undefined
+    }
+    await this.openAgentWorkContext(record.workOrderId, nativeSessionId)
     return {
       workOrderId: record.workOrderId,
       lifecycleStatus: record.lifecycleStatus ?? 'ACTIVE',
@@ -356,36 +384,91 @@ export class CollabWorkspaceService {
   }
 
   /**
-   * Bounded, non-authoritative orientation for a Session in a process that
-   * holds NO joined Work Order: the ACTIVE owner-supplied Work Orders the
-   * store knows, newest first, each with its repository bindings. It lists;
-   * it never selects. `undefined` when the store is unavailable or empty.
+   * Bounded, non-authoritative INSTITUTIONAL ORIENTATION for a fresh, UNJOINED
+   * Session — WO-AERA-COLLAB-INSTITUTIONAL-ORIENTATION-AND-WORKORDER-STATE-RECONCILIATION-001.
+   *
+   * What changed, and why. The previous shape listed every OWNER_SUPPLIED +
+   * ACTIVE Work Order ordered by REGISTRATION TIME, and told the model to ask
+   * the owner which one they meant whenever more than one existed. Three things
+   * were wrong with that (§8, §9, §16, §17, §28):
+   *
+   *   - registration time is not recency. The order registered EARLIEST ranked
+   *     alongside the one worked on five minutes ago;
+   *   - a Work Order admitted in the MINIMAL shape carries no authorityClass and
+   *     no lifecycleStatus, so the two most recently worked orders were filtered
+   *     out of the owner's own orientation entirely;
+   *   - "multiple active orders, therefore ask" is not how human temporal intent
+   *     works. "What am I working on?" has a truthful answer.
+   *
+   * It is now the bounded recent frontier from durable institutional facts:
+   * what is resumable now, what was just completed, and the recent
+   * predecessors — ranked by the latest MEANINGFUL attributed activity, with
+   * effective lifecycle state from the append-only Work Order state series.
+   * Reads never move this ranking; only recorded work does.
+   *
+   * ORIENTATION ONLY. Nothing here joins a Work Order or grants any authority
+   * to write, merge or deploy: §7 keeps JOINED work and RECENT work separate.
+   * `undefined` when the store is unavailable or nothing has been worked on.
    */
-  async agentActiveWorkOrdersContext(): Promise<string | undefined> {
+  async agentOrientationContext(): Promise<string | undefined> {
     if (this.config.storeDir === undefined) return undefined
     const store = this.requireStore()
-    const active = store.listWorkOrders()
-      .filter(order => order.authorityClass === 'OWNER_SUPPLIED' && order.lifecycleStatus === 'ACTIVE')
-      .sort((left, right) => (left.registeredAt < right.registeredAt ? 1 : left.registeredAt > right.registeredAt ? -1 : 0))
-    if (active.length === 0) return undefined
-    const events = store.listEvents()
-    const lines = active.map((order) => {
-      const progress = events.filter(event =>
-        !isUnattributedChange(event.attribution) && event.attribution.workOrderId === order.workOrderId).length
-      const { repositories } = resolveWorkOrderRepositories(store, order.workOrderId)
+    if (typeof store.orientationFrontier !== 'function') return undefined
+    const frontier = store.orientationFrontier()
+    const describe = (entry: {
+      workOrderId: string
+      title: string
+      effectiveState: { lifecycleState: string, source: string, evidence?: string }
+      lastMeaningfulActivityAt?: string
+      meaningfulActivityCount: number
+    }): string => {
+      const { repositories } = resolveWorkOrderRepositories(store, entry.workOrderId)
       const bindings = repositories.length === 0
         ? 'no repository binding recorded'
         : repositories.map(row =>
           `${row.repositoryId} (${row.role}${row.providerIdentity === undefined ? '' : `; ${row.providerIdentity}`}${row.canonicalBranch === undefined ? '' : `; branch ${row.canonicalBranch}`})`).join('; ')
-      return `- ${order.workOrderId} — ${order.title}; registered ${order.registeredAt}; ${progress} recorded progress event(s); repositories: ${bindings}`
-    })
+      const state = entry.effectiveState.lifecycleState === 'UNRECORDED'
+        ? 'state not yet reconciled'
+        : `${entry.effectiveState.lifecycleState} (from ${entry.effectiveState.source === 'STATE_RECORD' ? 'a recorded state transition' : 'its admission'})`
+      return [
+        `- ${entry.workOrderId} — ${entry.title}`,
+        `  state: ${state}`,
+        `  last meaningful activity: ${entry.lastMeaningfulActivityAt ?? 'none recorded'}`
+          + `; ${entry.meaningfulActivityCount} recorded activity event(s)`,
+        entry.effectiveState.evidence === undefined ? undefined : `  closure evidence: ${entry.effectiveState.evidence}`,
+        `  repositories: ${bindings}`,
+      ].filter((line): line is string => line !== undefined).join('\n')
+    }
+    const sections: string[] = []
+    if (frontier.currentResumable.length > 0) {
+      sections.push(frontier.contemporaneous
+        ? 'Current / resumable work (two workstreams appear concurrently active; their latest recorded activity is indistinguishable, so neither is ranked above the other):'
+        : 'Current / resumable work (most recent meaningful activity first):')
+      sections.push(...frontier.currentResumable.map(describe))
+    }
+    if (frontier.recentlyCompleted.length > 0) {
+      sections.push('Recently completed (the last thing finished — recent, but no longer unfinished work):')
+      sections.push(...frontier.recentlyCompleted.map(describe))
+    }
+    if (frontier.recentPredecessors.length > 0) {
+      sections.push('Recent predecessors:')
+      sections.push(...frontier.recentPredecessors.map(describe))
+    }
+    if (sections.length === 0) return undefined
     return [
-      'No Work Order is joined in this Session.',
-      `Active owner-supplied canonical Work Orders (${active.length}, newest first):`,
-      ...lines,
-      'Resolve one explicitly with aera_collab_resolve_work_context(work_order_id) before reasoning about its state; then use aera_collab_repository_resource for any repository, PR, commit or branch.',
-      'If more than one is active and the request does not identify which, ask rather than choosing. Never infer a Work Order or a repository from the workspace path or name.',
+      'No Work Order is joined in this Session. The following is institutional ORIENTATION from the durable participation store — it reflects recorded work, not this conversation, and it grants no authority to write, merge or deploy anything.',
+      '',
+      ...sections,
+      '',
+      'Answer an orientation question ("what am I working on, where is it up to, what next?") directly from this frontier: name the most recent work, distinguish what was just COMPLETED from the unfinished work that remains resumable, and say what should legitimately happen next. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
+      'Before reasoning in detail about one of these, resolve it with aera_collab_resolve_work_context(work_order_id). For any PR, commit or branch, use aera_collab_repository_resource with the stable RepositoryIds above to read LIVE provider state — recorded evidence says what was true then, the provider says what is true now, and an old "PR opened" note must never be repeated as current advice once the PR is merged.',
+      'Never infer a Work Order or a repository from the workspace path or name.',
     ].join('\n')
+  }
+
+  /** @deprecated Retained for compatibility; prefer `agentOrientationContext`. */
+  async agentActiveWorkOrdersContext(): Promise<string | undefined> {
+    return this.agentOrientationContext()
   }
 
   // ------------------------------------------------------------------
@@ -938,7 +1021,7 @@ export class CollabWorkspaceService {
    * §4 group 1 — open the agent's WorkContext: durable AGENT principal via the
    * established owner, real ParticipationSession with the recorded delegation.
    */
-  async openAgentWorkContext(workOrderId: string): Promise<{
+  async openAgentWorkContext(workOrderId: string, nativeSessionId?: string): Promise<{
     sessionId: string
     principalId: string
     workOrderId: string
@@ -985,6 +1068,10 @@ export class CollabWorkspaceService {
     })
     this.agentClient = client
     this.agentWorkOrderId = workOrderId
+    // §19: a join belongs to the SESSION that made it, not to the process.
+    if (nativeSessionId !== undefined && nativeSessionId.trim() !== '') {
+      this.nativeSessionWorkOrders.set(nativeSessionId, workOrderId)
+    }
     const workOrder = await client.getWorkOrder()
     return {
       sessionId: this.agentSession.sessionId,

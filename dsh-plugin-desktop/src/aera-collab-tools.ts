@@ -110,7 +110,14 @@ export function apply(ctx: Context, config: Config = {}): void {
       resolveCollabConfig(process.env, process.env['AERA_COLLAB_WORKSPACE_ROOT']),
     )
 
+  /**
+   * The native Aera Code Session currently stepping. A tool call belongs to the
+   * Session that made it, so an explicit `resolve_work_context` join is recorded
+   * against THAT Session rather than the process at large (§19).
+   */
+  let currentNativeSessionId: string | undefined
   ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
+    currentNativeSessionId = String(agent.id)
     const hasOwnerInput = messages.some(message => message.source.kind === 'user')
     if (!hasOwnerInput) return next()
     const ownerMessage = messages.find(message => recogniseOwnerWorkOrder(message) !== undefined)
@@ -129,13 +136,18 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
     const decision = await next()
     if (decision.kind === 'reject') return decision
-    // WO-AERA-COLLAB-STABLE-REPOSITORY-RESOURCE-IDENTITY-001: a fresh Session
-    // in a process that holds no Work Order (cold launch, neutral workspace)
-    // receives the bounded list of ACTIVE owner-supplied Work Orders with
-    // their repository bindings — so it can resolve one explicitly through
-    // the tools — never a silently chosen order and never a workspace guess.
+    // Context precedence — §19 of
+    // WO-AERA-COLLAB-INSTITUTIONAL-ORIENTATION-AND-WORKORDER-STATE-RECONCILIATION-001:
+    //
+    //   EXPLICIT / JOINED SESSION  -> that Session's exact joined Work Order
+    //   FRESH UNJOINED SESSION     -> bounded institutional orientation frontier
+    //
+    // `institutional` is now defined only when THIS native Session admitted or
+    // joined a Work Order. A warm process holding another Session's joined order
+    // no longer leaks it here: that stale snapshot is exactly what told a fresh
+    // Desktop Session it was working on an assessment finished days earlier.
     const text = institutional === undefined
-      ? await service.agentActiveWorkOrdersContext()
+      ? await service.agentOrientationContext()
       : await service.agentInstitutionalContext()
     if (text === undefined) return decision
     return {
@@ -182,7 +194,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       render: renderJson,
     },
     async execute(args) {
-      return honest(() => service.openAgentWorkContext(args.work_order_id))
+      // The join is attributed to the Session that asked for it, so a later
+      // turn of THIS Session resumes it and no other Session inherits it.
+      return honest(() => service.openAgentWorkContext(args.work_order_id, currentNativeSessionId))
     },
   })), 'aera-collab-tools: resolve_work_context')
 
