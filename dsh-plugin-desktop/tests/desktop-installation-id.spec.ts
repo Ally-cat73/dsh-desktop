@@ -35,6 +35,131 @@ describe('Desktop installation identity', () => {
     expect(DESKTOP_INSTALLATION_ID_HEADER).toBe('X-DSH-Desktop-Installation-Id')
   })
 
+  // ---------------------------------------------------------------------
+  // Orphaned writer lock — the defect that put the product in Recovery Mode.
+  //
+  // `withFileLock` creates `<file>.lock` with `wx` and removes it in a
+  // `finally`. A process killed while holding it never runs that `finally`,
+  // so the lock outlives it. Desktop startup awaits the identity, so every
+  // later launch fell into Recovery Mode reporting that the identity "could
+  // not be persisted safely" — while a perfectly valid identity sat unread
+  // beside the orphan.
+  // ---------------------------------------------------------------------
+
+  it('reads an existing identity without taking the writer lock', async () => {
+    const root = await userData()
+    const statePath = desktopInstallationIdPath(root)
+    await mkdir(join(root, 'identity'), { recursive: true, mode: 0o700 })
+    await writeFile(statePath, `${FIRST}\n`, { mode: 0o600 })
+
+    // An orphaned lock from a killed writer, exactly as found on the owner's
+    // machine: an ordinary file naming a PID that is no longer running.
+    const lockPath = `${statePath}.lock`
+    await writeFile(lockPath, '1807\n', { mode: 0o600 })
+
+    // The identity is already persisted, so this is a pure read and must not
+    // block on, wait for, or disturb the lock at all.
+    const started = Date.now()
+    await expect(getOrCreateDesktopInstallationId(root, { randomUUID: () => SECOND }))
+      .resolves.toBe(FIRST)
+    expect(Date.now() - started).toBeLessThan(1000) // no 2s lock timeout
+    // The lock is not ours to remove on a read path.
+    await expect(lstat(lockPath)).resolves.toBeDefined()
+  })
+
+  it('reclaims an orphaned lock when it must create an identity, then succeeds', async () => {
+    const root = await userData()
+    const statePath = desktopInstallationIdPath(root)
+    await mkdir(join(root, 'identity'), { recursive: true, mode: 0o700 })
+    const lockPath = `${statePath}.lock`
+    await writeFile(lockPath, '1807\n', { mode: 0o600 })
+
+    const identity = await getOrCreateDesktopInstallationId(root, {
+      randomUUID: () => FIRST,
+      processIsAlive: () => false,
+      now: () => Date.now() + 60_000, // the lock is comfortably old
+    })
+    expect(identity).toBe(FIRST)
+    expect(await readFile(statePath, 'utf8')).toBe(`${FIRST}\n`)
+    await expect(lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('never steals a lock held by a LIVE process', async () => {
+    const root = await userData()
+    const statePath = desktopInstallationIdPath(root)
+    await mkdir(join(root, 'identity'), { recursive: true, mode: 0o700 })
+    const lockPath = `${statePath}.lock`
+    await writeFile(lockPath, `${process.pid}\n`, { mode: 0o600 })
+
+    await expect(getOrCreateDesktopInstallationId(root, {
+      randomUUID: () => FIRST,
+      processIsAlive: () => true,
+      now: () => Date.now() + 60_000,
+    })).rejects.toThrow('could not be persisted safely')
+    // A live writer's lock is left exactly where it was.
+    await expect(lstat(lockPath)).resolves.toBeDefined()
+  })
+
+  it('never steals a lock that is too young to judge', async () => {
+    const root = await userData()
+    const statePath = desktopInstallationIdPath(root)
+    await mkdir(join(root, 'identity'), { recursive: true, mode: 0o700 })
+    const lockPath = `${statePath}.lock`
+    await writeFile(lockPath, '1807\n', { mode: 0o600 })
+
+    await expect(getOrCreateDesktopInstallationId(root, {
+      randomUUID: () => FIRST,
+      processIsAlive: () => false, // dead, but the lock was just created
+    })).rejects.toThrow('could not be persisted safely')
+    await expect(lstat(lockPath)).resolves.toBeDefined()
+  })
+
+  it('never follows or removes a symlink planted at the lock path', async () => {
+    const root = await userData()
+    const statePath = desktopInstallationIdPath(root)
+    await mkdir(join(root, 'identity'), { recursive: true, mode: 0o700 })
+    const decoy = join(root, 'decoy')
+    await writeFile(decoy, 'precious\n', { mode: 0o600 })
+    await symlink(decoy, `${statePath}.lock`)
+
+    await expect(getOrCreateDesktopInstallationId(root, {
+      randomUUID: () => FIRST,
+      processIsAlive: () => false,
+      now: () => Date.now() + 60_000,
+    })).rejects.toThrow('could not be persisted safely')
+    // The symlink target is untouched.
+    expect(await readFile(decoy, 'utf8')).toBe('precious\n')
+  })
+
+  it('refuses a lock whose content is not a plain PID', async () => {
+    const root = await userData()
+    const statePath = desktopInstallationIdPath(root)
+    await mkdir(join(root, 'identity'), { recursive: true, mode: 0o700 })
+    const lockPath = `${statePath}.lock`
+    await writeFile(lockPath, 'not-a-pid\n', { mode: 0o600 })
+
+    await expect(getOrCreateDesktopInstallationId(root, {
+      randomUUID: () => FIRST,
+      processIsAlive: () => false,
+      now: () => Date.now() + 60_000,
+    })).rejects.toThrow('could not be persisted safely')
+    await expect(lstat(lockPath)).resolves.toBeDefined()
+  })
+
+  it('still fails closed when the state itself is unsafe, orphaned lock or not', async () => {
+    const root = await userData()
+    const statePath = desktopInstallationIdPath(root)
+    await mkdir(join(root, 'identity'), { recursive: true, mode: 0o700 })
+    await mkdir(statePath, { mode: 0o700 }) // a directory where the file belongs
+    await writeFile(`${statePath}.lock`, '1807\n', { mode: 0o600 })
+
+    await expect(getOrCreateDesktopInstallationId(root, {
+      randomUUID: () => FIRST,
+      processIsAlive: () => false,
+      now: () => Date.now() + 60_000,
+    })).rejects.toThrow('must be an ordinary file')
+  })
+
   it('creates one private stable identity below userData', async () => {
     const root = await userData()
     const first = await getOrCreateDesktopInstallationId(root, { randomUUID: () => FIRST })
