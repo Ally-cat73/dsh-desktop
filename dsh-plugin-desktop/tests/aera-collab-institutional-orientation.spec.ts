@@ -254,16 +254,19 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
     })
     await subject.openAgentWorkContext(COMPLETED_WO, FRESH_SESSION)
     // The recorded evidence still says what was true THEN.
-    const evidence = await subject.agentFindEvidence === undefined ? [] : []
-    void evidence
     const packet = await subject.agentContextPacket()
     expect(JSON.stringify(packet)).toContain('PR #593 opened')
     // The provider says what is true NOW, repository-qualified.
     const live = await subject.agentResolveRepositoryResource({ pullRequestNumber: 593 })
     expect(live.resolution).toBe('RESOLVED')
     expect(live.repository?.repositoryId).toBe('aera-repo:test-stack')
-    expect(live.liveState?.state).toBe('MERGED')
-    expect(live.liveState?.mergeCommit).toContain('206b26ee0')
+    const liveState = live.liveState
+    // Narrowed deliberately: an unavailable provider is a DIFFERENT shape that
+    // carries no state at all, and must never be read as though it did.
+    expect(liveState?.kind).toBe('LIVE_PROVIDER_STATE')
+    if (liveState?.kind !== 'LIVE_PROVIDER_STATE') throw new Error('expected live provider state')
+    expect(liveState.state).toBe('MERGED')
+    expect(liveState.mergeCommit).toContain('206b26ee0')
     await subject.closeAgentWorkContext()
   })
 
