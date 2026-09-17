@@ -17,6 +17,7 @@ import { showDesktopMessageBox } from './desktop-dialog-window.ts'
 import { packagedDependencyPath } from './packaged-runtime-path.ts'
 import { ElectronShellGeneration } from './electron-shell-generation.ts'
 import { electronPlatformStrategy, type ElectronPlatformStrategy } from './electron-platform.ts'
+import { contributedNativeMenuItems, desktopApplicationMenuItems } from './native-menu.ts'
 import type {
   DesktopNotification,
   DesktopLocale,
@@ -522,31 +523,11 @@ export class ElectronDesktopRuntime implements DesktopRuntime {
   }
 
   private contributedTrayItems(group: DesktopTrayItemGroup): Electron.MenuItemConstructorOptions[] {
-    return [...this.trayItems.values()]
-      .filter(item => item.group === group)
-      .sort((left, right) => left.order - right.order)
-      .map((item): Electron.MenuItemConstructorOptions => {
-        const common = {
-          label: item.label(),
-          enabled: item.enabled?.() ?? true,
-        }
-        if (item.submenu !== undefined) {
-          return {
-            ...common,
-            submenu: item.submenu().map(command => ({
-              label: command.label(),
-              enabled: command.enabled?.() ?? true,
-              ...(command.type === undefined ? {} : { type: command.type }),
-              ...(command.checked === undefined ? {} : { checked: command.checked() }),
-              click: this.trayCommand(() => command.invoke()),
-            })),
-          }
-        }
-        return {
-          ...common,
-          click: this.trayCommand(() => item.invoke()),
-        }
-      })
+    return contributedNativeMenuItems(
+      [...this.trayItems.values()],
+      group,
+      invoke => this.trayCommand(invoke),
+    )
   }
 
   /** Contain asynchronous contribution failures outside Electron menu callbacks. */
@@ -854,12 +835,9 @@ export class ElectronDesktopRuntime implements DesktopRuntime {
 
   /** Keep the app menu renderer-free by reusing trusted native tray contributions. */
   private buildApplicationMenuItems(): Electron.MenuItemConstructorOptions[] {
-    const tools = this.contributedTrayItems('tools')
-    const profiles = this.contributedTrayItems('profiles')
-    const items: Electron.MenuItemConstructorOptions[] = []
-    if (tools.length > 0) items.push(...tools)
-    if (tools.length > 0 && profiles.length > 0) items.push({ type: 'separator' })
-    if (profiles.length > 0) items.push(...profiles)
-    return items
+    return desktopApplicationMenuItems(
+      [...this.trayItems.values()],
+      invoke => this.trayCommand(invoke),
+    )
   }
 }
