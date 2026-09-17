@@ -46,8 +46,26 @@ import {
   resolveRepositoryReference,
   resolveWorkContext,
   resolveWorkOrderRepositories,
+  deriveCodeCompareSummary,
+  deriveCodeTopology,
+  projectCodeCollabSurface,
+  type CodeCollabSurfaceV1,
   type RepositoryReferenceResolution,
 } from '@aera/participation-runtime'
+import {
+  DISCUSSION_NOTE,
+  buildRail,
+  toActivityRowView,
+  toCheckpointRowView,
+  toCompareView,
+  toLineRowView,
+  toParticipantRowView,
+  type CollabCodeView,
+  type CollabCompareView,
+  type CollabLineRowView,
+  type CollabLiveProviderStateView,
+} from './aera-collab-code-view.ts'
+import type { CodeTopologyV1 } from '@aera/participation-contracts'
 import { buildProjection } from '@aera/evidentiary-work-graph'
 import type { EngineeringWorkGraphProjectionV1 } from '@aera/evidentiary-work-graph-contracts'
 import {
@@ -903,6 +921,233 @@ export class CollabWorkspaceService {
         : { workingStateUnavailableReason: observed.unavailableReason }),
       ...(workOrderNode?.label === undefined ? {} : { workOrderLabel: workOrderNode.label }),
     })
+  }
+
+  /**
+   * The read-first Code Collab view — WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001.
+   *
+   * Assembled from the SAME joined context the compact Context view uses: one
+   * service, one store, one session, one authority stamp. Collab is a
+   * viewpoint over the work, not a second collaboration universe (§6).
+   *
+   * ## What a "line" is here, stated honestly
+   *
+   * This slice has no write path (§25), so nothing in the product can yet MINT
+   * a durable `CodeWorkingLineV1`. The surface therefore shows:
+   *
+   *   - every durable Working Line the store holds (none until the writing
+   *     slice ships), and
+   *   - the line OBSERVED from this checkout, marked `OBSERVED` and carrying a
+   *     note saying no durable record has been minted for it.
+   *
+   * An observed line deliberately carries **no** `codeWorkingLineId`. Minting
+   * one from the repository, the Work Order and the branch would be deriving
+   * institutional identity from a location, which CWL-1 exists to refuse. An
+   * honest absence beats an invented id.
+   */
+  async collabView(input: { readonly compareLineIndex?: number } = {}): Promise<CollabCodeView> {
+    const { workOrderId } = this.requireJoined()
+    const store = this.requireStore()
+    const context = await this.contextView()
+    const observed = this.observeWorkingState()
+
+    const { repositories } = resolveWorkOrderRepositories(store, workOrderId)
+    const surface: CodeCollabSurfaceV1 = projectCodeCollabSurface({ store, workOrderId })
+
+    const lines: CollabLineRowView[] = []
+    let topology: CodeTopologyV1 | undefined
+    let workspaceRoot: string | undefined
+
+    if (observed.view === undefined) {
+      lines.length = 0
+    } else {
+      workspaceRoot = observed.view.localPath
+      const targetRef = this.integrationTargetRef(observed.view.repositoryId)
+      /*
+       * `expectedTargetRevision` — the seed of target-movement detection. The
+       * durable seed is `WorktreeInstanceV1.expectedBase`; where the worktree
+       * carries none, the observed merge base is used and the surface says so
+       * through the topology facts rather than pretending a recorded
+       * expectation exists.
+       */
+      const expected = observed.instance?.expectedBase
+        ?? this.observedMergeBase(observed.view.localPath, observed.view.branchRef, targetRef)
+        ?? observed.view.headRevision
+      try {
+        topology = await deriveCodeTopology({
+          repositoryRoot: observed.view.localPath,
+          branchRef: observed.view.branchRef,
+          targetRef,
+          expectedTargetRevision: expected,
+          targetName: 'Integration',
+          lineIsMine: true,
+        })
+      } catch {
+        topology = undefined
+      }
+      lines.push(toLineRowView({
+        label: `This checkout · ${observed.view.branchRef}`,
+        participant: this.config.principalName ?? 'You',
+        ...(topology === undefined ? {} : { topology }),
+        topologyUnavailableReason:
+          'This checkout’s position against Integration could not be read.',
+        checkpointCount: 0,
+        provenance: 'OBSERVED',
+        provenanceNote:
+          'Observed from this checkout. No durable Working Line record has been minted for it — minting arrives with the writing slice.',
+      }))
+    }
+
+    const lineLabelsById = new Map<string, string>()
+    for (const projection of surface.lines) {
+      const label = projection.line.label ?? projection.line.codeWorkingLineId
+      lineLabelsById.set(projection.line.codeWorkingLineId, label)
+      lines.push(toLineRowView({
+        label,
+        participant: projection.participantDisplayName ?? 'Participant unresolved',
+        ...(projection.topology === undefined ? {} : { topology: projection.topology }),
+        checkpointCount: projection.checkpoints.length,
+        codeWorkingLineId: projection.line.codeWorkingLineId,
+        provenance: 'DURABLE',
+      }))
+    }
+
+    let compare: CollabCompareView | undefined
+    if (
+      input.compareLineIndex !== undefined
+      && workspaceRoot !== undefined
+      && topology !== undefined
+      && topology.state !== 'UNRESOLVED'
+      && topology.facts.lineRevision !== undefined
+      && topology.facts.targetRevision !== undefined
+    ) {
+      const summary = await deriveCodeCompareSummary({
+        repositoryRoot: workspaceRoot,
+        from: { kind: 'REVISION', revision: topology.facts.lineRevision },
+        to: { kind: 'REVISION', revision: topology.facts.targetRevision },
+        fromRevision: topology.facts.lineRevision,
+        toRevision: topology.facts.targetRevision,
+        topology,
+      })
+      compare = toCompareView({
+        summary,
+        fromName: lines[input.compareLineIndex]?.label ?? 'My Working Line',
+        toName: 'Accepted integration — Integration',
+      })
+    }
+
+    const liveProviderState = this.collabLiveProviderState()
+
+    return {
+      workOrderId: context.workOrderId,
+      ...(context.workOrderLabel === undefined ? {} : { workOrderTitle: context.workOrderLabel }),
+      repositories: repositories.map(repository => `${repository.displayName} (${repository.role})`),
+      authorityMode: context.authorityMode,
+      authorityModeNote: context.authorityModeNote,
+      assembledAt: context.assembledAt,
+      participants: surface.participants.map(row => toParticipantRowView(row, lineLabelsById)),
+      lines,
+      ...(lines.length === 0
+        ? {
+            linesEmptyReason:
+              observed.unavailableReason
+              ?? 'No Working Lines have been opened on this Work Order yet, and no checkout is open to observe.',
+          }
+        : {}),
+      rail: buildRail({
+        activity: surface.activity.length,
+        checkpoints: surface.checkpoints.length,
+        changedFiles: compare?.files.length ?? 0,
+        evidence: context.evidence.length,
+        archived: surface.archivedLineIds.length,
+      }),
+      activity: surface.activity.map(toActivityRowView),
+      checkpoints: surface.checkpoints.map(toCheckpointRowView),
+      ...(surface.checkpoints.length === 0
+        ? {
+            checkpointsEmptyReason:
+              'No checkpoints have been named on this Work Order yet. The truthful underlying state is the head of each line’s branch, shown above.',
+          }
+        : {}),
+      evidence: context.evidence.map(node => ({
+        label: node.label,
+        status: node.status,
+        ...(node.sourcePath === undefined ? {} : { technical: node.sourcePath }),
+      })),
+      ...(liveProviderState === undefined ? {} : { liveProviderState }),
+      discussionNote: DISCUSSION_NOTE,
+      archivedCount: surface.archivedLineIds.length,
+      ...(compare === undefined ? {} : { compare }),
+      projectedAt: surface.projectedAt,
+    }
+  }
+
+  /**
+   * The integration target ref for the observed repository: the resource's
+   * recorded canonical branch where one exists, never a guess from a naming
+   * convention. Falls back to the local `HEAD` of `origin` only when the
+   * resource records nothing, and that fallback is visible in the topology
+   * facts.
+   */
+  private integrationTargetRef(repositoryId: string): string {
+    const store = this.requireStore()
+    const resource = store.listRepositoryResources().find(entry => entry.repositoryId === repositoryId)
+    const branch = resource?.canonicalBranch
+    if (branch === undefined || branch.trim() === '') return 'origin/HEAD'
+    // Prefer the remote-tracking ref: the local branch may be stale or absent,
+    // and "where Integration is" means where the shared line is, not where a
+    // local copy of it happens to sit.
+    return `origin/${branch}`
+  }
+
+  /** Read-only merge base observation, used only as a last-resort seed. */
+  private observedMergeBase(root: string, branchRef: string, targetRef: string): string | undefined {
+    try {
+      return execFileSync('git', ['-C', root, 'merge-base', branchRef, targetRef], {
+        encoding: 'utf8', timeout: 10_000,
+      }).trim()
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * §27 — live provider state, resolved through the EXISTING repository-
+   * resource architecture, and presented beside (never merged into) what the
+   * historical evidence recorded. Historical evidence says what was true then;
+   * the provider says what is true now.
+   */
+  private collabLiveProviderState(): CollabLiveProviderStateView | undefined {
+    const { workOrderId } = this.requireJoined()
+    const store = this.requireStore()
+    try {
+      const resolution: RepositoryReferenceResolution = resolveRepositoryReference(store, {
+        workOrderId,
+        role: 'PRIMARY',
+      })
+      if (resolution.kind !== 'RESOLVED' || resolution.reference === undefined) {
+        return { unavailableReason: resolution.kind === 'RESOLVED'
+          ? 'No pull request or commit reference is bound to this Work Order yet.'
+          : resolution.reason }
+      }
+      if (resolution.reference.kind !== 'PROVIDER_RESOLVED') {
+        const recorded = resolution.reference.kind === 'PROVIDER_IDENTITY_UNAVAILABLE'
+          ? `Recorded reference: ${resolution.reference.reference}`
+          : `Recorded reference in ${resolution.reference.referenceRepositoryId}`
+        return { recorded, unavailableReason: resolution.reference.reason }
+      }
+      const live = this.liveProviderState(resolution.reference.provider, {})
+      return {
+        recorded: `Recorded at submission: ${String(resolution.reference.reference)}`,
+        ...(live === undefined
+          ? { unavailableReason: 'Live provider state was not read.' }
+          : live.kind === 'LIVE_PROVIDER_STATE_UNAVAILABLE'
+            ? { unavailableReason: live.reason }
+            : { live: `Now: ${JSON.stringify(live)} (read ${new Date().toISOString()})` }),
+      }
+    } catch (cause) {
+      return { unavailableReason: cause instanceof Error ? cause.message : String(cause) }
+    }
   }
 
   /**

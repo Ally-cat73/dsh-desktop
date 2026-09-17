@@ -1,0 +1,430 @@
+/**
+ * Aera Code Collab view model — WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001.
+ *
+ * Pure mapping from the runtime's deterministic facts to what the native
+ * Collab view presents. No electron import, no file IO, no git call, no model
+ * call — testable in isolation, exactly like `aera-collab-view.ts`, whose four
+ * honesty rules this module inherits unchanged:
+ *
+ * - §8  no fabricated presence — "Last active" / "Ended" / "Status unavailable";
+ * - §10 a closed status vocabulary, nothing inferred from recency;
+ * - §11 the authority stamp verbatim;
+ * - §12 unreleased actions stay visibly unavailable, with the reason said.
+ *
+ * ## The Notes grammar this surface deliberately shares
+ *
+ * The owner-accepted Notes Collab surface answers "what state am I looking
+ * at" ONCE, on the identity line; discloses the second Compare operand WHERE
+ * the act began; labels FROM and TO explicitly and spells out the direction;
+ * keeps a counted rail that is SHUT by default; and puts every raw id behind
+ * one explicit "Technical details" request. All five are reproduced here in
+ * Code's vocabulary. One Aera collaboration language, two resource-native
+ * surfaces.
+ *
+ * ## §38 — what never appears on a default row
+ *
+ * Commit shas, refs, merge bases, `rev-list` counts, event ids, node ids,
+ * principal ids, `WorkOrderStateRecord` internals and ParticipationSession
+ * details. Every one of them is carried in a `technical` member and rendered
+ * only when the reader opens Technical details.
+ *
+ * **This includes the participant row's principal id, which the shipping
+ * Work Context panel renders inline today.** Moving it behind disclosure is a
+ * deliberate §38 change to a shipping surface, recorded in BUILD_NOTES (D-4).
+ */
+
+import type {
+  CodeActivityRowV1,
+  CodeCheckpointRowV1,
+  CodeParticipantRowV1,
+} from '@aera/participation-runtime'
+import {
+  codeCompareDirectionSentence,
+  codeTextualConflictSummary,
+  isTextuallyConflicting,
+  type CodeCompareSummaryV1,
+  type CodeFileChangeV1,
+  type CodeStructuralDeltaV1,
+  type CodeTopologyV1,
+} from '@aera/participation-contracts'
+
+/** The two views of one window. A view is a projection, never a second app. */
+export const COLLAB_VIEWS = ['CONTEXT', 'COLLAB'] as const
+export type CollabViewName = (typeof COLLAB_VIEWS)[number]
+
+/** The rail. One open at a time; shut by default. */
+export const COLLAB_RAIL_SECTIONS = [
+  'ACTIVITY',
+  'CHECKPOINTS',
+  'CHANGED_FILES',
+  'EVIDENCE',
+  'DISCUSSION',
+  'ARCHIVED',
+] as const
+export type CollabRailSection = (typeof COLLAB_RAIL_SECTIONS)[number]
+
+export const COLLAB_RAIL_LABELS: Readonly<Record<CollabRailSection, string>> = {
+  ACTIVITY: 'Activity',
+  CHECKPOINTS: 'Checkpoints',
+  CHANGED_FILES: 'Changed files',
+  EVIDENCE: 'Evidence',
+  DISCUSSION: 'Discussion',
+  ARCHIVED: 'Archived',
+}
+
+export interface CollabRailTabView {
+  readonly section: CollabRailSection
+  readonly label: string
+  /** Counts live on the rail. They never appear in a primary row. */
+  readonly count: number
+}
+
+/**
+ * One Working Line row: label, participant, ONE topology sentence, a
+ * separately-labelled conflict sentence where Git says so, and the Git
+ * arithmetic behind a disclosure level.
+ */
+export interface CollabLineRowView {
+  /** Opaque durable id, or absent for a line observed from a checkout. */
+  readonly codeWorkingLineId?: string
+  readonly label: string
+  readonly participant: string
+  /** The frozen §3.3 sentence. Never a sha, never a count of commits. */
+  readonly topologySentence: string
+  readonly topologyState: string
+  /**
+   * The additive textual-conflict fact, separately labelled. Absent when Git
+   * merges cleanly. NEVER folded into `topologySentence`.
+   */
+  readonly conflictSentence?: string
+  readonly dirtyMarker?: string
+  readonly checkpointCount: number
+  readonly compareAvailable: boolean
+  /**
+   * Why this row exists. `DURABLE` is a minted Working Line record;
+   * `OBSERVED` is this checkout, which has no durable line yet — stated, never
+   * dressed up as one.
+   */
+  readonly provenance: 'DURABLE' | 'OBSERVED'
+  readonly provenanceNote?: string
+  /** Disclosure level 5. */
+  readonly technical: readonly string[]
+}
+
+export interface CollabCompareOperandView {
+  readonly side: 'FROM' | 'TO'
+  readonly name: string
+}
+
+export interface CollabChangedFileRowView {
+  /** The WORD, never colour alone. */
+  readonly kindWord: 'Added' | 'Removed' | 'Renamed' | 'Modified'
+  readonly path: string
+  readonly previousPath?: string
+  readonly counts?: string
+  readonly bothLines: boolean
+  readonly conflicted: boolean
+  readonly structuralDelta: readonly string[]
+  /** An accessible name repeating every fact the eye gets. */
+  readonly accessibleName: string
+}
+
+export interface CollabCompareView {
+  readonly heading: 'Read-only comparison of two states'
+  readonly banner: string
+  readonly from: CollabCompareOperandView
+  readonly to: CollabCompareOperandView
+  readonly directionSentence: string
+  readonly headline: string
+  readonly files: readonly CollabChangedFileRowView[]
+  readonly unrepresentable: readonly string[]
+  readonly structuralDeltaNote?: string
+  readonly technical: readonly string[]
+  readonly computedAt: string
+}
+
+export interface CollabLiveProviderStateView {
+  /** What the historical evidence recorded, and when. Never presented as now. */
+  readonly recorded?: string
+  /** What the provider says right now, with the moment it was read. */
+  readonly live?: string
+  readonly unavailableReason?: string
+}
+
+export interface CollabCodeView {
+  readonly workOrderId: string
+  readonly workOrderTitle?: string
+  readonly repositories: readonly string[]
+  readonly authorityMode: string
+  readonly authorityModeNote: string
+  readonly assembledAt: string
+  readonly participants: readonly CollabParticipantRowView[]
+  readonly lines: readonly CollabLineRowView[]
+  readonly linesEmptyReason?: string
+  readonly rail: readonly CollabRailTabView[]
+  readonly activity: readonly CollabActivityRowView[]
+  readonly checkpoints: readonly CollabCheckpointRowView[]
+  readonly checkpointsEmptyReason?: string
+  readonly evidence: readonly { readonly label: string; readonly status: string; readonly technical?: string }[]
+  readonly liveProviderState?: CollabLiveProviderStateView
+  readonly discussionNote: string
+  readonly archivedCount: number
+  readonly compare?: CollabCompareView
+  readonly projectedAt: string
+}
+
+export interface CollabParticipantRowView {
+  readonly displayName: string
+  readonly principalKind: 'HUMAN' | 'AGENT' | 'SERVICE'
+  readonly statusLine: string
+  readonly lineLabels: readonly string[]
+  /** §38 (D-4): the principal id lives HERE, behind Technical details. */
+  readonly technical: readonly string[]
+}
+
+export interface CollabActivityRowView {
+  readonly actor: string
+  readonly summary: string
+  readonly when: string
+  readonly detail?: string
+  readonly technical?: string
+}
+
+export interface CollabCheckpointRowView {
+  readonly name: string
+  readonly origin: string
+  readonly who: string
+  readonly when: string
+  /** CP-5: stated, never implied. */
+  readonly verifiabilityNote?: string
+  readonly summary?: string
+  readonly technical: string
+}
+
+/** The one place a topology reading becomes two sentences and a disclosure. */
+export function toLineRowView(input: {
+  readonly label: string
+  readonly participant: string
+  readonly topology?: CodeTopologyV1
+  readonly topologyUnavailableReason?: string
+  readonly checkpointCount: number
+  readonly codeWorkingLineId?: string
+  readonly provenance: 'DURABLE' | 'OBSERVED'
+  readonly provenanceNote?: string
+}): CollabLineRowView {
+  const topology = input.topology
+  const technical: string[] = []
+  if (topology !== undefined) {
+    const facts = topology.facts
+    if (facts.lineRevision !== undefined) technical.push(`line ${facts.lineRevision}`)
+    if (facts.targetRevision !== undefined) technical.push(`target ${facts.targetRevision}`)
+    technical.push(`expected target ${facts.expectedTargetRevision}`)
+    if (facts.mergeBase !== undefined) technical.push(`merge base ${facts.mergeBase}`)
+    if (facts.aheadCount !== undefined) technical.push(`ahead ${String(facts.aheadCount)}`)
+    if (facts.behindCount !== undefined) technical.push(`behind ${String(facts.behindCount)}`)
+    if (facts.overlappingPaths.length > 0) {
+      technical.push(`changed on both: ${facts.overlappingPaths.join(', ')}`)
+    }
+    if (topology.unresolvedCommand !== undefined) {
+      technical.push(`failing command: ${topology.unresolvedCommand}`)
+    }
+    technical.push(`observed ${facts.observedAt}`)
+  }
+  if (input.codeWorkingLineId !== undefined) technical.push(input.codeWorkingLineId)
+
+  const conflict = topology === undefined ? undefined : codeTextualConflictSummary(topology)
+  return {
+    ...(input.codeWorkingLineId === undefined ? {} : { codeWorkingLineId: input.codeWorkingLineId }),
+    label: input.label,
+    participant: input.participant,
+    topologySentence: topology?.humanSummary
+      ?? input.topologyUnavailableReason
+      ?? 'This Working Line’s position could not be read.',
+    topologyState: topology?.state ?? 'UNREADABLE',
+    ...(conflict === undefined ? {} : { conflictSentence: conflict }),
+    ...(topology?.facts.dirtyState === 'DIRTY' ? { dirtyMarker: 'Uncommitted changes in this checkout' } : {}),
+    checkpointCount: input.checkpointCount,
+    // Compare needs two readable revisions. An UNRESOLVED reading has none, so
+    // the action is absent rather than offered and then refused.
+    compareAvailable: topology !== undefined && topology.state !== 'UNRESOLVED',
+    provenance: input.provenance,
+    ...(input.provenanceNote === undefined ? {} : { provenanceNote: input.provenanceNote }),
+    technical,
+  }
+}
+
+const KIND_WORD = {
+  ADDED: 'Added', REMOVED: 'Removed', RENAMED: 'Renamed', MODIFIED: 'Modified',
+} as const
+
+export function toCompareView(input: {
+  readonly summary: CodeCompareSummaryV1
+  readonly fromName: string
+  readonly toName: string
+}): CollabCompareView {
+  const { summary } = input
+  const totals = summary.totals
+  const fileCount = summary.files.length
+  const plural = (count: number, singular: string): string =>
+    `${String(count)} ${count === 1 ? singular : `${singular}s`}`
+
+  const headlineParts = [
+    plural(fileCount, 'file'),
+    `+${String(totals.linesAdded)} / −${String(totals.linesRemoved)}`,
+  ]
+  if (totals.filesChangedOnBothLines > 0) {
+    headlineParts.push(`${plural(totals.filesChangedOnBothLines, 'file')} changed on both lines`)
+  }
+  if (summary.topology !== undefined) {
+    headlineParts.push(
+      isTextuallyConflicting(summary.topology)
+        ? 'Git cannot merge automatically'
+        : 'clean textual merge',
+    )
+  }
+
+  const files: CollabChangedFileRowView[] = summary.files.map((file: CodeFileChangeV1) => {
+    const kindWord = KIND_WORD[file.kind]
+    const counts = file.linesAdded === undefined
+      ? undefined
+      : `+${String(file.linesAdded)} −${String(file.linesRemoved ?? 0)}`
+    const structural = (file.structuralDelta ?? []).map(describeStructuralDelta)
+    const marks = [
+      file.changedOnBothLines ? 'changed on both lines' : undefined,
+      file.textuallyConflicted ? 'Git cannot merge this file automatically' : undefined,
+    ].filter((mark): mark is string => mark !== undefined)
+    return {
+      kindWord,
+      path: file.path,
+      ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
+      ...(counts === undefined ? {} : { counts }),
+      bothLines: file.changedOnBothLines,
+      conflicted: file.textuallyConflicted,
+      structuralDelta: structural,
+      accessibleName: [
+        kindWord,
+        file.previousPath === undefined ? file.path : `${file.previousPath} to ${file.path}`,
+        counts,
+        ...marks,
+      ].filter((part): part is string => part !== undefined && part !== '').join(' — '),
+    }
+  })
+
+  const technical = [
+    `from ${summary.fromRevision}`,
+    `to ${summary.toRevision}`,
+    ...(summary.mergeBase === undefined ? [] : [`merge base ${summary.mergeBase}`]),
+    `computed ${summary.computedAt}`,
+    'This reading is not canonical authority (isCanonical: false).',
+  ]
+
+  const structuralNote = summary.structuralDeltaAvailable
+    ? summary.structuralDeltaUnsupported.length === 0
+      ? undefined
+      : `Structural delta could not cover ${plural(summary.structuralDeltaUnsupported.length, 'file')}; the file facts above are complete.`
+    : 'Structural delta is unavailable in this build; the file facts above are complete.'
+
+  return {
+    heading: 'Read-only comparison of two states',
+    banner: `Compare ${input.fromName} with ${input.toName}`,
+    from: { side: 'FROM', name: input.fromName },
+    to: { side: 'TO', name: input.toName },
+    directionSentence: codeCompareDirectionSentence(input.fromName, input.toName),
+    headline: headlineParts.join(' · '),
+    files,
+    unrepresentable: summary.unrepresentable.map((entry: { humanSummary: string }) => entry.humanSummary),
+    ...(structuralNote === undefined ? {} : { structuralDeltaNote: structuralNote }),
+    technical,
+    computedAt: summary.computedAt,
+  }
+}
+
+function describeStructuralDelta(delta: CodeStructuralDeltaV1): string {
+  const word: Record<string, string> = {
+    FUNCTION_ADDED: 'Function added', FUNCTION_REMOVED: 'Function removed',
+    FUNCTION_SIGNATURE_CHANGED: 'Signature changed', CLASS_ADDED: 'Class added',
+    CLASS_REMOVED: 'Class removed', INTERFACE_ADDED: 'Interface added',
+    INTERFACE_REMOVED: 'Interface removed', INTERFACE_CHANGED: 'Interface changed',
+    METHOD_ADDED: 'Method added', METHOD_REMOVED: 'Method removed',
+    IMPORT_ADDED: 'Import added', IMPORT_REMOVED: 'Import removed',
+    EXPORT_ADDED: 'Export added', EXPORT_REMOVED: 'Export removed',
+  }
+  return `${word[delta.kind] ?? delta.kind}: ${delta.name}`
+}
+
+export function toParticipantRowView(
+  row: CodeParticipantRowV1,
+  lineLabelsById: ReadonlyMap<string, string>,
+): CollabParticipantRowView {
+  return {
+    displayName: row.displayName,
+    principalKind: row.principalKind,
+    statusLine: row.statusLine,
+    lineLabels: row.codeWorkingLineIds
+      .map((id) => lineLabelsById.get(id))
+      .filter((label): label is string => label !== undefined),
+    technical: [
+      row.principalId,
+      `${String(row.meaningfulActivityCount)} meaningful attributed acts`,
+    ],
+  }
+}
+
+export function toActivityRowView(row: CodeActivityRowV1): CollabActivityRowView {
+  return {
+    actor: row.actor,
+    summary: row.summary,
+    when: row.at,
+    ...(row.detail === undefined ? {} : { detail: row.detail }),
+    ...(row.technical === undefined ? {} : { technical: row.technical }),
+  }
+}
+
+const ORIGIN_WORD: Record<string, string> = {
+  MANUAL_CHECKPOINT: 'Named checkpoint',
+  LINE_CREATED: 'Working Line opened',
+  CONTINUED_FROM_CHECKPOINT: 'Continued from a checkpoint',
+  SUBMISSION: 'Submitted',
+  ACCEPTANCE: 'Accepted',
+  REBASE: 'Rebased',
+  RESTORE: 'Restored',
+  INTEGRATION: 'Brought changes in',
+}
+
+export function toCheckpointRowView(row: CodeCheckpointRowV1): CollabCheckpointRowView {
+  return {
+    name: row.label,
+    origin: ORIGIN_WORD[row.origin] ?? row.origin,
+    who: row.createdBy,
+    when: row.createdAt,
+    // CP-5: the weakest arm says so on every row that uses it.
+    ...(row.verifiable ? {} : { verifiabilityNote: 'Not digest-verifiable — a tested working state' }),
+    ...(row.summary === undefined ? {} : { summary: row.summary }),
+    technical: `${row.checkpointId} · sequence ${String(row.lineSequence)} · ${String(row.evidenceCount)} evidence`,
+  }
+}
+
+/** Rail tabs with their counts. The count is the only announcement a section makes. */
+export function buildRail(counts: {
+  readonly activity: number
+  readonly checkpoints: number
+  readonly changedFiles: number
+  readonly evidence: number
+  readonly archived: number
+}): readonly CollabRailTabView[] {
+  return [
+    { section: 'ACTIVITY', label: COLLAB_RAIL_LABELS.ACTIVITY, count: counts.activity },
+    { section: 'CHECKPOINTS', label: COLLAB_RAIL_LABELS.CHECKPOINTS, count: counts.checkpoints },
+    { section: 'CHANGED_FILES', label: COLLAB_RAIL_LABELS.CHANGED_FILES, count: counts.changedFiles },
+    { section: 'EVIDENCE', label: COLLAB_RAIL_LABELS.EVIDENCE, count: counts.evidence },
+    { section: 'DISCUSSION', label: COLLAB_RAIL_LABELS.DISCUSSION, count: 0 },
+    { section: 'ARCHIVED', label: COLLAB_RAIL_LABELS.ARCHIVED, count: counts.archived },
+  ]
+}
+
+/**
+ * §18: discussion is never history authority. The entry point exists; the
+ * surface says why nothing is listed rather than drawing an empty box.
+ */
+export const DISCUSSION_NOTE =
+  'Discussion is recorded against durable resources and never advances a Work Order’s state — talking about work is not doing it. No discussion surface is released in this slice.'
