@@ -27,6 +27,7 @@ import {
   type AeraCollabApi,
   type CollabChangedFileRow,
   type CollabLineRow,
+  type CollabNodeRef,
   type CollabSurfaceView,
 } from './aera-collab-api.ts'
 import type { AeraCollabLocaleKey } from './aera-collab-locales.ts'
@@ -187,6 +188,32 @@ function Section({ title, count, reason, children, defaultOpen = false }: {
   )
 }
 
+/** One group of Work Context references. */
+function ContextGroup({ title, rows, t }: {
+  readonly title: string
+  readonly rows: readonly CollabNodeRef[]
+  readonly t: Translate
+}) {
+  if (rows.length === 0) return null
+  return (
+    <div className="aera-collab-context-group">
+      <h5 className="aera-collab-context-title">{title}</h5>
+      <ul className="aera-collab-context-rows">
+        {rows.map(row => (
+          <li key={row.nodeId} className="aera-collab-context-row">
+            <span className="aera-collab-context-label">{row.label}</span>
+            <span className="aera-collab-context-status">{row.status}</span>
+            {row.sourcePath === undefined
+              ? null
+              : <span className="aera-collab-context-source">{row.sourcePath}</span>}
+          </li>
+        ))}
+      </ul>
+      <span className="aera-collab-context-note">{t('contextNote')}</span>
+    </div>
+  )
+}
+
 /** The whole read-first surface, inline. */
 export function AeraCollabSurface({ api, workOrderId, t }: {
   readonly api: Pick<AeraCollabApi, 'view'>
@@ -265,6 +292,26 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
           {`${surface.authorityMode} — ${surface.authorityModeNote}`}
         </p>
       </header>
+
+      {/*
+        * D4: CONTEXT restored. The Work Context packet is what the compact
+        * CONTEXT view showed, and dropping it when the surface moved inline
+        * would have quietly removed a whole section of the frozen composition.
+        */}
+      {surface.context === undefined
+        ? null
+        : (
+            <Section title={t('context')}>
+              <ContextGroup title={t('currentCanonicalState')} rows={surface.context.currentCanonicalState} t={t} />
+              <ContextGroup title={t('governingDecisions')} rows={surface.context.governingDecisions} t={t} />
+              <ContextGroup title={t('knownResiduals')} rows={surface.context.knownResiduals} t={t} />
+              {surface.context.currentCanonicalState.length === 0
+                && surface.context.governingDecisions.length === 0
+                && surface.context.knownResiduals.length === 0
+                ? <p className="aera-collab-status">{t('contextEmpty')}</p>
+                : null}
+            </Section>
+          )}
 
       <Section title={t('participants')} {...railCount('PARTICIPANTS')} defaultOpen>
         <ul className="aera-collab-participants">

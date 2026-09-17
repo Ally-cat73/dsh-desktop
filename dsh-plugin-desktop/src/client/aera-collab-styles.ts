@@ -247,6 +247,65 @@ const CSS = `
   font-family: var(--dsw-font-mono, ui-monospace, monospace);
   word-break: break-all;
 }
+.aera-collab-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 24px;
+  background: rgba(0, 0, 0, 0.42);
+  pointer-events: auto;
+  z-index: 40;
+}
+.aera-collab-overlay-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(100%, 760px);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 18px 20px 24px;
+  border: 1px solid var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.3));
+  border-radius: 14px;
+  background: var(--dsw-alias-background-primary, #202124);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.aera-collab-overlay-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.aera-collab-overlay-title { margin: 0; font-size: 16px; font-weight: 600; }
+.aera-collab-overlay-close {
+  border: 1px solid var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.35));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+.aera-collab-overlay-body { display: flex; flex-direction: column; gap: 12px; }
+.aera-collab-overlay-body .aera-collab-panel,
+.aera-collab-overlay-body .aera-collab-surface { padding-bottom: 0; }
+.aera-collab-context-group { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.aera-collab-context-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-secondary);
+}
+.aera-collab-context-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.aera-collab-context-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 12px; }
+.aera-collab-context-status { font-size: 11px; color: var(--dsw-alias-label-secondary); letter-spacing: 0.03em; }
+.aera-collab-context-source {
+  font-family: var(--dsw-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-all;
+}
+.aera-collab-context-note { font-size: 11px; color: var(--dsw-alias-label-secondary); }
 `
 
 /** Install one scoped stylesheet; tolerate headless Client boot. */

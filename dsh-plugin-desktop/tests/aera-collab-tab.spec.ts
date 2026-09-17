@@ -19,6 +19,7 @@ import {
   AERA_COLLAB_VIEW_ORDER,
   applyAeraCollabEntryPoints,
 } from '../src/client/aera-collab-panel.ts'
+import { createAeraCollabEntryController } from '../src/client/aera-collab-entry-controller.ts'
 import type { AeraCollabApi } from '../src/client/aera-collab-api.ts'
 
 interface Registration {
@@ -45,6 +46,7 @@ function upstreamTab(packageName: string): { id: string, order: number } {
 function harness(api: Partial<AeraCollabApi> = {}) {
   const registrations: Registration[] = []
   const injected: string[] = []
+  const controller = createAeraCollabEntryController()
   const ctx = {
     locale: {
       bind: () => (key: string) => key,
@@ -72,8 +74,8 @@ function harness(api: Partial<AeraCollabApi> = {}) {
     view: vi.fn(async () => ({ unavailableReason: 'no store in this harness' })),
     openCollab: vi.fn(async () => {}),
     ...api,
-  })
-  return { registrations, injected }
+  }, controller)
+  return { registrations, injected, controller }
 }
 
 describe('Collab in the default shell', () => {
@@ -130,6 +132,53 @@ describe('Collab in the default shell', () => {
     expect(action).toBeDefined()
     expect(action?.options.id).toBe('aera-collab')
     expect(() => action?.options.inject?.()).not.toThrow()
+  })
+
+  it('never makes the cold-start path a typed WorkOrderId', () => {
+    const { registrations, injected, controller } = harness()
+    const action = registrations.find(entry => entry.options.name === 'sidebar.footer.action')
+    const overlay = registrations.find(entry => entry.options.name === 'shell.overlay')
+
+    /*
+     * D2. With no Session there is no tab strip, so the sidebar is the ONLY way
+     * in — and it must not open the native window on an empty id field. It
+     * drives a shell-level picker instead, hosted in `shell.overlay`, which
+     * `dsh-client-ui-layout` declares as scope:'root' and renders with no
+     * Session.
+     */
+    expect(injected).toContain('shell.overlay')
+    expect(overlay).toBeDefined()
+    expect(overlay?.options.id).toBe('aera-collab-picker')
+
+    const sidebarFace = action?.options.inject?.() as { controller?: unknown, api?: unknown }
+    // The sidebar action is handed no API at all: it cannot open a window, and
+    // it cannot fetch. All it can do is open the picker.
+    expect(sidebarFace.controller).toBeDefined()
+    expect(sidebarFace.api).toBeUndefined()
+
+    const overlayFace = overlay?.options.inject?.() as { controller?: unknown, api?: unknown }
+    expect(overlayFace.controller).toBe(sidebarFace.controller)
+    expect(overlayFace.api).toBeDefined()
+
+    // The overlay is closed until something opens it, so it never sits over the
+    // product uninvited.
+    expect(controller.isOpen()).toBe(false)
+    controller.toggle()
+    expect(controller.isOpen()).toBe(true)
+    controller.close()
+    expect(controller.isOpen()).toBe(false)
+  })
+
+  it('opens no window from the cold-start path', () => {
+    const openCollab = vi.fn(async () => {})
+    const { registrations } = harness({ openCollab })
+    const action = registrations.find(entry => entry.options.name === 'sidebar.footer.action')
+    const face = action?.options.inject?.() as { controller: { open: () => void } }
+
+    face.controller.open()
+
+    // Opening the picker joins nothing and launches nothing.
+    expect(openCollab).not.toHaveBeenCalled()
   })
 
   it('opens the Collab view when the reader asks, and not before', async () => {

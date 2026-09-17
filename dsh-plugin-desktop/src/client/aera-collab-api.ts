@@ -134,6 +134,21 @@ export interface CollabActivityRow {
   readonly technical?: string
 }
 
+/** One referenced node in the Work Context packet. */
+export interface CollabNodeRef {
+  readonly nodeId: string
+  readonly label: string
+  readonly sourcePath?: string
+  readonly status: string
+}
+
+/** The Work Context packet, shown as the CONTEXT section. */
+export interface CollabContextBlock {
+  readonly currentCanonicalState: readonly CollabNodeRef[]
+  readonly governingDecisions: readonly CollabNodeRef[]
+  readonly knownResiduals: readonly CollabNodeRef[]
+}
+
 /** The complete read-first Collab surface for one Work Order. */
 export interface CollabSurfaceView {
   readonly workOrderId: string
@@ -159,6 +174,7 @@ export interface CollabSurfaceView {
   readonly archivedCount: number
   readonly compare?: CollabCompare
   readonly compareUnavailableReason?: string
+  readonly context?: CollabContextBlock
   readonly projectedAt: string
 }
 
@@ -298,6 +314,29 @@ function textList(value: unknown, label: string): readonly string[] {
 /** A list of disclosure lines, under the generous technical bound. */
 function technicalList(value: unknown, label: string): readonly string[] {
   return Object.freeze(list(value, label).map(entry => technicalText(entry, label)))
+}
+
+/** Validate one CONTEXT node reference. */
+function parseNodeRef(value: unknown): CollabNodeRef {
+  if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid context node')
+  const sourcePath = optionalText(value.sourcePath, 'source path')
+  return Object.freeze({
+    nodeId: text(value.nodeId, 'node id'),
+    label: text(value.label, 'label'),
+    ...(sourcePath === undefined ? {} : { sourcePath }),
+    status: text(value.status, 'status'),
+  })
+}
+
+/** Validate the Work Context packet shown as the CONTEXT section. */
+function parseContextBlock(value: Record<string, unknown>): CollabContextBlock {
+  const rows = (key: string): readonly CollabNodeRef[] =>
+    Object.freeze(list(value[key] ?? [], key).map(parseNodeRef))
+  return Object.freeze({
+    currentCanonicalState: rows('currentCanonicalState'),
+    governingDecisions: rows('governingDecisions'),
+    knownResiduals: rows('knownResiduals'),
+  })
 }
 
 /**
@@ -450,6 +489,7 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           }),
         }
       : {}),
+    ...(isObject(value.context) ? { context: parseContextBlock(value.context) } : {}),
     discussionNote: text(value.discussionNote, 'discussion note'),
     archivedCount: typeof value.archivedCount === 'number' ? value.archivedCount : 0,
     ...(compare === undefined ? {} : { compare }),

@@ -46,6 +46,15 @@ export const zh = {
   filesShown: '已显示文件',
   projectedAt: '投影时间',
   openInWindow: '在独立窗口中打开',
+  closePicker: '返回当前工作',
+  overlayTitle: '协作',
+  closeOverlay: '关闭',
+  context: '工作背景',
+  currentCanonicalState: '当前权威状态',
+  governingDecisions: '约束性决定',
+  knownResiduals: '已知遗留项',
+  contextNote: '记录的状态；此处不授予任何权限。',
+  contextEmpty: '此 Work Order 尚未记录工作背景条目。',
 }
 
 export type AeraCollabLocaleKey = keyof typeof zh
@@ -96,4 +105,13 @@ export const en: Record<AeraCollabLocaleKey, string> = {
   filesShown: 'Files shown',
   projectedAt: 'Projected at',
   openInWindow: 'Open in a separate window',
+  closePicker: 'Back to current work',
+  overlayTitle: 'Collab',
+  closeOverlay: 'Close',
+  context: 'Context',
+  currentCanonicalState: 'Current canonical state',
+  governingDecisions: 'Governing decisions',
+  knownResiduals: 'Known residuals',
+  contextNote: 'Recorded state. Nothing here grants authority.',
+  contextEmpty: 'No Work Context entries are recorded for this Work Order.',
 }

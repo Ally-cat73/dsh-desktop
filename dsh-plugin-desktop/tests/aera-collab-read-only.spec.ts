@@ -126,6 +126,37 @@ describe('the Collab surface read path', () => {
     expect(digest(store)).toBe(before)
   }, 180_000)
 
+  it('composes the CONTEXT packet alongside the surface, joining nothing', async ({ skip }) => {
+    const env = environment()
+    if (env === undefined || store === undefined) return skip()
+
+    const service = new CollabWorkspaceService(
+      resolveCollabConfig({ ...env, AERA_COLLAB_STORE_DIR: store }, env.AERA_COLLAB_WORKSPACE_ROOT),
+    )
+    const before = digest(store)
+
+    // D4: the route composes these two joinless projections, so the inline
+    // surface can show the CONTEXT section the compact view used to carry.
+    const [collab, context] = await Promise.all([
+      service.collabView({ workOrderId: WORK_ORDER }),
+      service.contextView(WORK_ORDER),
+    ])
+    const wire: unknown = JSON.parse(JSON.stringify({
+      ...collab,
+      context: {
+        currentCanonicalState: context.currentCanonicalState,
+        governingDecisions: context.governingDecisions,
+        knownResiduals: context.knownResiduals,
+      },
+    }))
+    const parsed = parseCollabSurface(wire)
+
+    expect(context.workOrderId).toBe(WORK_ORDER)
+    expect('context' in parsed ? parsed.context : undefined).toBeDefined()
+    expect(service.isJoined()).toBe(false)
+    expect(digest(store)).toBe(before)
+  }, 120_000)
+
   it('refuses to read a Work Order that does not exist, rather than inventing one', async ({ skip }) => {
     const env = environment()
     if (env === undefined || store === undefined) return skip()

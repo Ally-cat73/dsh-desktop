@@ -1,22 +1,24 @@
 /**
  * The always-present way into Collab, in the sidebar footer.
  *
- * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, owner entry-point direction.
+ * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, review finding D2.
  *
  * The conversation tab strip is `scope: 'session'`, so it exists only where a
  * Session is open. `sidebar.footer.action` is `scope: 'root'` and renders with
- * no Session at all — which is what makes Collab reachable from a cold start,
- * before the reader has opened anything. Activating it opens the Collab
- * surface on the picker, so no one ever has to know a WorkOrderId.
+ * no Session at all — which makes this the ONLY cold-start path, and therefore
+ * the one that must not ask anyone to type a WorkOrderId.
+ *
+ * It used to open the native window on an empty id field. It now opens the
+ * shell-level picker, landing on search with ACTIVE work already listed.
  */
 
-import { useCallback, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AeraCollabApi } from './aera-collab-api.ts'
+import type { AeraCollabEntryController } from './aera-collab-entry-controller.ts'
 
-/** Registration-side business face for the sidebar Collab action. */
+/** Registration-side capabilities for the sidebar Collab action. */
 export interface AeraCollabSidebarActionInjected {
-  readonly api: Pick<AeraCollabApi, 'openCollab'>
+  readonly controller: AeraCollabEntryController
 }
 
 /** Renderer-composed props for the sidebar Collab action. */
@@ -25,36 +27,23 @@ export type AeraCollabSidebarActionProps =
   & PropsLocale<'aera.collab'>
   & InjectFace<AeraCollabSidebarActionInjected>
 
-/** Open Collab from the sidebar, with no Session and no WorkOrderId required. */
-export function AeraCollabSidebarAction({ api, t }: AeraCollabSidebarActionProps) {
-  const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState(false)
-
-  const onOpen = useCallback(() => {
-    setBusy(true)
-    setFailed(false)
-    void (async () => {
-      try {
-        await api.openCollab()
-      } catch {
-        setFailed(true)
-      } finally {
-        setBusy(false)
-      }
-    })()
-  }, [api])
-
+/** Open the Collab picker from the sidebar, with no Session and no id typed. */
+export function AeraCollabSidebarAction({ controller, t }: AeraCollabSidebarActionProps) {
+  const open = useSyncExternalStore(
+    controller.subscribe,
+    controller.isOpen,
+    controller.isOpen,
+  )
   return (
     <div className="aera-collab-sidebar-action">
       <button
         type="button"
         className="aera-collab-sidebar-button"
-        disabled={busy}
-        onClick={onOpen}
+        aria-expanded={open}
+        onClick={() => { controller.toggle() }}
       >
-        {busy ? t('openingCollab') : t('nav')}
+        {t('nav')}
       </button>
-      {failed ? <p className="aera-collab-error" role="alert">{t('openCollabError')}</p> : null}
     </div>
   )
 }

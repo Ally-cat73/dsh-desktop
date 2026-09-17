@@ -31,8 +31,14 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import { AeraCollabOverlay } from './AeraCollabOverlay.tsx'
 import { AeraCollabPanel } from './AeraCollabPanel.tsx'
 import { AeraCollabSidebarAction } from './AeraCollabSidebarAction.tsx'
+import {
+  createAeraCollabEntryController,
+  type AeraCollabEntryController,
+} from './aera-collab-entry-controller.ts'
 import { createAeraCollabApi, type AeraCollabApi } from './aera-collab-api.ts'
 import { en, zh, type AeraCollabLocaleKey } from './aera-collab-locales.ts'
 import { installAeraCollabStyles } from './aera-collab-styles.ts'
@@ -62,6 +68,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export function applyAeraCollabEntryPoints(
   ctx: ClientContext,
   api: AeraCollabApi = createAeraCollabApi(),
+  controller: AeraCollabEntryController = createAeraCollabEntryController(),
 ): void {
   const t = ctx.locale.bind(AERA_COLLAB_LOCALE_NAMESPACE)
 
@@ -92,6 +99,19 @@ export function applyAeraCollabEntryPoints(
     id: 'aera-collab',
     order: 10,
     locale: AERA_COLLAB_LOCALE_NAMESPACE,
-    inject: () => ({ api }),
+    inject: () => ({ controller }),
   }, AeraCollabSidebarAction))
+  /*
+   * The cold-start surface (D2). `shell.overlay` is declared by
+   * `dsh-client-ui-layout` as `{ kind: 'list', scope: 'root' }` and rendered by
+   * AppFrame's overlay layer, so it exists with no Session — which is exactly
+   * the case the sidebar has to serve. It renders nothing until opened.
+   */
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'aera-collab-picker',
+    order: 10,
+    locale: AERA_COLLAB_LOCALE_NAMESPACE,
+    inject: () => ({ api, controller }),
+  }, AeraCollabOverlay))
 }

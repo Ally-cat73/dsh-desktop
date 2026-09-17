@@ -119,7 +119,26 @@ export function apply(ctx: Context): void {
           req,
           res,
           rendererOrigin,
-          async input => service.collabView(input),
+          async (input) => {
+            /*
+             * D4: the CONTEXT section restored to the inline surface. The
+             * Collab view and the Work Context packet are two projections of
+             * the same joinless read, composed here rather than folded into
+             * the frozen `CollabCodeView` model.
+             */
+            const [collab, context] = await Promise.all([
+              service.collabView(input),
+              service.contextView(input.workOrderId),
+            ])
+            return {
+              ...collab,
+              context: {
+                currentCanonicalState: context.currentCanonicalState,
+                governingDecisions: context.governingDecisions,
+                knownResiduals: context.knownResiduals,
+              },
+            }
+          },
           reportError,
         )
       },
