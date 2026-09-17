@@ -20,7 +20,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from './runtime.ts'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createDesktopCollabHostSeam } from './aera-collab-seam.ts'
-import { AERA_WORK_CONTEXT_OPEN_PATH, handleAeraWorkContextOpenRequest } from './aera-collab-route.ts'
+import {
+  AERA_COLLAB_DIRECTORY_PATH,
+  AERA_COLLAB_RESOLVE_PATH,
+  AERA_WORK_CONTEXT_OPEN_PATH,
+  handleAeraCollabDirectoryRequest,
+  handleAeraCollabResolveRequest,
+  handleAeraWorkContextOpenRequest,
+} from './aera-collab-route.ts'
 import { CollabWorkspaceService, resolveCollabConfig } from './aera-collab-service.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
@@ -43,6 +50,11 @@ export function apply(ctx: Context): void {
   )
   const window = new WorkContextWindow({ service, seam })
   const rendererOrigin = `http://127.0.0.1:${String(ctx.webServer.port)}`
+  const reportError = (operation: string, cause: unknown): void => {
+    ctx.logger.error(
+      `aera-collab: failed to ${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+  }
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',
@@ -51,15 +63,50 @@ export function apply(ctx: Context): void {
         req,
         res,
         rendererOrigin,
-        () => { window.open() },
-        (operation, cause) => {
-          ctx.logger.error(
-            `aera-collab: failed to ${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
-          )
-        },
+        (selection) => { window.openSelection(selection) },
+        reportError,
       ),
     }),
     'aera-collab: work context open route',
+  )
+  /*
+   * READ ROUTES (WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, owner entry-point
+   * direction). They let the ordinary product shell offer a Collab tab and a
+   * Collab picker without handing the renderer a store path or any write
+   * capability. Both project the durable store and join nothing: joining writes
+   * `sessions.json`, which is why it stays behind the POST above.
+   */
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_COLLAB_DIRECTORY_PATH,
+      handler: (req, res) => {
+        handleAeraCollabDirectoryRequest(
+          req,
+          res,
+          rendererOrigin,
+          query => service.collabDirectory({ query }),
+          reportError,
+        )
+      },
+    }),
+    'aera-collab: collab directory read route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_COLLAB_RESOLVE_PATH,
+      handler: (req, res) => {
+        handleAeraCollabResolveRequest(
+          req,
+          res,
+          rendererOrigin,
+          () => service.resolveDefaultWorkOrder(),
+          reportError,
+        )
+      },
+    }),
+    'aera-collab: workspace Work Order resolve route',
   )
   ctx.effect(() => {
     /*

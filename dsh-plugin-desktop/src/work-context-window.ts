@@ -123,6 +123,30 @@ export class WorkContextWindow {
 
   constructor(private readonly options: WorkContextWindowOptions) {}
 
+  /**
+   * Open the window on a selection made in the ordinary product shell.
+   *
+   * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, owner entry-point direction.
+   * The Collab tab and the Collab picker both arrive here. An absent selection
+   * opens the window as it is — the original tray behaviour, unchanged.
+   *
+   * Opening the named Work Order JOINS it, which writes a session record. That
+   * is why this is reached only by an explicit POST and only from an explicit
+   * act by the reader: a view is never joined just because a tab was rendered.
+   *
+   * @param selection - the chosen Work Order and view, both optional.
+   */
+  openSelection(selection: {
+    readonly workOrderId?: string
+    readonly view?: 'CONTEXT' | 'COLLAB'
+  }): void {
+    const { workOrderId, view } = selection
+    if (view !== undefined) this.openView(view)
+    else this.open()
+    if (workOrderId === undefined) return
+    void this.handleAction({ action: 'open', workOrderId })
+  }
+
   /** Open the window with a view preselected. Repeated opens focus the same instance. */
   openView(view: 'CONTEXT' | 'COLLAB'): void {
     this.view = view
