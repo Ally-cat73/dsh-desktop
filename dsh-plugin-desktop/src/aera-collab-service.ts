@@ -654,10 +654,10 @@ export class CollabWorkspaceService {
    * always has) but is never the sole source of institutional identity and
    * never overrides a conflicting binding silently.
    */
-  private resolveWorkingStateIdentity(): { repositoryId?: RepositoryId, source: string, reason: string } {
+  private resolveWorkingStateIdentity(explicitWorkOrderId?: string): { repositoryId?: RepositoryId, source: string, reason: string } {
     const envId = this.config.repositoryId
     const envValid = envId !== undefined && isRepositoryId(envId)
-    const workOrderId = this.observedWorkOrderId()
+    const workOrderId = explicitWorkOrderId ?? this.observedWorkOrderId()
     const bindings = workOrderId === null || this.config.storeDir === undefined
       ? []
       : resolveWorkOrderRepositories(this.requireStore(), workOrderId).repositories
@@ -969,6 +969,33 @@ export class CollabWorkspaceService {
     return this.client !== null && this.session !== null
   }
 
+  /**
+   * Which Work Order a READ is about.
+   *
+   * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, owner entry-point direction.
+   * A read-first surface should not have to write to be read. Naming the order
+   * explicitly projects it without joining; omitting the name keeps the
+   * original behaviour, where the joined context is the subject. Joining still
+   * writes a session record, so it remains something the reader asks for.
+   */
+  private viewWorkOrderId(explicit?: string): string {
+    if (explicit === undefined) return this.requireJoined().workOrderId
+    const trimmed = explicit.trim()
+    if (trimmed === '') {
+      throw new CollabHonestError('WORK_ORDER_NOT_FOUND', 'No Work Order was named, and none is joined.')
+    }
+    const known = this.requireStore().listWorkOrders().some(order => order.workOrderId === trimmed)
+      || this.mergedNavigator().findWorkOrders(trimmed)
+        .some(node => node.kind === 'WORK_ORDER' && (node as { workOrderId?: string }).workOrderId === trimmed)
+    if (!known) {
+      throw new CollabHonestError(
+        'WORK_ORDER_NOT_FOUND',
+        `No canonical Work Order ${trimmed} exists in the graph projection or the durable store. Reading does not create one.`,
+      )
+    }
+    return trimmed
+  }
+
   private requireJoined(): { client: ParticipationCollaborationClient, session: ParticipationSession, workOrderId: string } {
     if (this.client === null || this.session === null || this.workOrderId === null) {
       throw new CollabHonestError('NOT_JOINED', 'No WorkContext is open. Open a Work Order by its WorkOrderId first.')
@@ -977,8 +1004,8 @@ export class CollabWorkspaceService {
   }
 
   /** Resolve the current shared context into the presentation view model. */
-  async contextView(): Promise<CollabContextView> {
-    const { workOrderId } = this.requireJoined()
+  async contextView(explicitWorkOrderId?: string): Promise<CollabContextView> {
+    const workOrderId = this.viewWorkOrderId(explicitWorkOrderId)
     // Refresh the merged navigator so writes through the canonical owners are
     // reflected in the (rebuildable) projection before presentation (§9). The
     // packet is resolved through the SAME canonical resolution path every
@@ -1013,7 +1040,7 @@ export class CollabWorkspaceService {
     collect(packet.evidence)
     collect(packet.knownResiduals)
 
-    const observed = this.observeWorkingState()
+    const observed = this.observeWorkingState(workOrderId)
     const workOrderNode = navigator
       .findWorkOrders(workOrderId)
       .find(node => node.kind === 'WORK_ORDER')
@@ -1052,11 +1079,14 @@ export class CollabWorkspaceService {
    * institutional identity from a location, which CWL-1 exists to refuse. An
    * honest absence beats an invented id.
    */
-  async collabView(input: { readonly compareLineIndex?: number } = {}): Promise<CollabCodeView> {
-    const { workOrderId } = this.requireJoined()
+  async collabView(input: {
+    readonly compareLineIndex?: number
+    readonly workOrderId?: string
+  } = {}): Promise<CollabCodeView> {
+    const workOrderId = this.viewWorkOrderId(input.workOrderId)
     const store = this.requireStore()
-    const context = await this.contextView()
-    const observed = this.observeWorkingState()
+    const context = await this.contextView(workOrderId)
+    const observed = this.observeWorkingState(workOrderId)
 
     const { repositories } = resolveWorkOrderRepositories(store, workOrderId)
     const surface: CodeCollabSurfaceV1 = projectCodeCollabSurface({ store, workOrderId })
@@ -1171,7 +1201,7 @@ export class CollabWorkspaceService {
       }
     }
 
-    const liveProviderState = this.collabLiveProviderState()
+    const liveProviderState = this.collabLiveProviderState(workOrderId)
 
     return {
       workOrderId: context.workOrderId,
@@ -1260,8 +1290,8 @@ export class CollabWorkspaceService {
    * historical evidence recorded. Historical evidence says what was true then;
    * the provider says what is true now.
    */
-  private collabLiveProviderState(): CollabLiveProviderStateView | undefined {
-    const { workOrderId } = this.requireJoined()
+  private collabLiveProviderState(explicitWorkOrderId?: string): CollabLiveProviderStateView | undefined {
+    const workOrderId = this.viewWorkOrderId(explicitWorkOrderId)
     const store = this.requireStore()
     try {
       const resolution: RepositoryReferenceResolution = resolveRepositoryReference(store, {
@@ -1298,10 +1328,10 @@ export class CollabWorkspaceService {
    * RepositoryId (env; never minted from a path) and a git-custodied
    * workspace; anything else is an explicit unavailable reason.
    */
-  observeWorkingState(): { view?: CollabWorkingStateView, unavailableReason?: string, instance?: WorktreeInstanceV1 } {
+  observeWorkingState(explicitWorkOrderId?: string): { view?: CollabWorkingStateView, unavailableReason?: string, instance?: WorktreeInstanceV1 } {
     const { workspaceRoot } = this.config
     if (workspaceRoot === undefined) return { unavailableReason: 'No workspace root is open to observe.' }
-    const identity = this.resolveWorkingStateIdentity()
+    const identity = this.resolveWorkingStateIdentity(explicitWorkOrderId)
     if (identity.repositoryId === undefined) return { unavailableReason: identity.reason }
     const repoId = identity.repositoryId
     let head: string, branch: string, dirty: boolean, remotes: string[]

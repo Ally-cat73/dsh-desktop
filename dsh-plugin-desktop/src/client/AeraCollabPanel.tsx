@@ -25,6 +25,7 @@ import type {
   CollabDirectoryRowView,
   CollabResolutionView,
 } from './aera-collab-api.ts'
+import { AeraCollabSurface } from './AeraCollabSurface.tsx'
 
 /** Registration-side business face for the Collab panel. */
 export interface AeraCollabPanelInjected {
@@ -131,6 +132,13 @@ export function AeraCollabPanel({ api, t }: AeraCollabPanelProps) {
     void loadDirectory(next.trim(), generation)
   }, [loadDirectory])
 
+  const onSelect = useCallback((workOrderId: string) => {
+    // Choosing from the picker changes what THIS panel shows. It does not
+    // launch anything, and it joins nothing.
+    setResolution(current => ({ source: current?.source ?? 'NONE', workOrderId }))
+    setPicking(false)
+  }, [])
+
   const onOpen = useCallback((workOrderId?: string) => {
     setBusy(true)
     setOpenFailed(false)
@@ -175,24 +183,33 @@ export function AeraCollabPanel({ api, t }: AeraCollabPanelProps) {
               <div className="aera-collab-actions">
                 <button
                   type="button"
+                  className="aera-collab-change"
+                  onClick={() => { setPicking(current => !current) }}
+                >
+                  {t('changeWorkOrder')}
+                </button>
+                {/*
+                  * The separate window is kept as a secondary affordance, not
+                  * the way in: the surface itself now renders here, under the
+                  * tab the reader already has open.
+                  */}
+                <button
+                  type="button"
                   className="aera-collab-open"
                   disabled={busy}
                   onClick={() => { onOpen(resolved) }}
                 >
-                  {busy ? t('openingCollab') : t('openCollab')}
-                </button>
-                <button
-                  type="button"
-                  className="aera-collab-change"
-                  onClick={() => { setPicking(true) }}
-                >
-                  {t('changeWorkOrder')}
+                  {busy ? t('openingCollab') : t('openInWindow')}
                 </button>
               </div>
             </header>
           )}
 
       {openFailed ? <p className="aera-collab-error" role="alert">{t('openCollabError')}</p> : null}
+
+      {resolved === undefined
+        ? null
+        : <AeraCollabSurface api={api} workOrderId={resolved} t={t} />}
 
       {showPicker
         ? (
@@ -239,7 +256,7 @@ export function AeraCollabPanel({ api, t }: AeraCollabPanelProps) {
                                   row={row}
                                   t={t}
                                   busy={busy}
-                                  onOpen={onOpen}
+                                  onOpen={onSelect}
                                 />
                               ))}
                             </ul>

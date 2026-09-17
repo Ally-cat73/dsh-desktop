@@ -32,6 +32,9 @@ export const AERA_COLLAB_DIRECTORY_PATH = '/desktop/aera/collab/directory'
 /** Private loopback path naming the Work Order this workspace is about. */
 export const AERA_COLLAB_RESOLVE_PATH = '/desktop/aera/collab/resolve'
 
+/** Private loopback path projecting one Work Order's Collab surface. */
+export const AERA_COLLAB_VIEW_PATH = '/desktop/aera/collab/view'
+
 /** The two views the native window can be opened onto. */
 export type AeraWorkContextView = 'CONTEXT' | 'COLLAB'
 
@@ -186,6 +189,81 @@ export function handleAeraCollabDirectoryRequest(
       totalWorkOrders: 0,
       truncated: false,
       emptyReason: cause instanceof Error ? cause.message : 'The durable participation store is unavailable.',
+    })
+  }
+}
+
+/** Parse the bounded parameters of a Collab surface read. */
+export function parseCollabViewQuery(url: string | undefined): {
+  readonly workOrderId?: string
+  readonly compareLineIndex?: number
+} | undefined {
+  if (url === undefined) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(url, 'http://127.0.0.1')
+  } catch {
+    return undefined
+  }
+  const keys = [...parsed.searchParams.keys()].sort()
+  for (const key of keys) if (key !== 'workOrderId' && key !== 'compareLineIndex') return undefined
+  const workOrderId = parsed.searchParams.get('workOrderId')?.trim()
+  if (workOrderId !== undefined && (workOrderId === '' || workOrderId.length > MAX_WORK_ORDER_ID_LENGTH)) {
+    return undefined
+  }
+  const rawIndex = parsed.searchParams.get('compareLineIndex')
+  if (rawIndex === null) {
+    return workOrderId === undefined ? {} : { workOrderId }
+  }
+  if (!/^\d{1,3}$/.test(rawIndex)) return undefined
+  return {
+    ...(workOrderId === undefined ? {} : { workOrderId }),
+    compareLineIndex: Number.parseInt(rawIndex, 10),
+  }
+}
+
+/**
+ * Handle one GET projecting a Work Order's Collab surface.
+ *
+ * Read-only in the strict sense, and deliberately so: a read-first surface
+ * should not have to write in order to be read. Naming the order projects it
+ * WITHOUT joining, so no session record is minted by looking. Joining remains
+ * the explicit POST above.
+ */
+export async function handleAeraCollabViewRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  expectedOrigin: string,
+  readView: (input: {
+    readonly workOrderId?: string
+    readonly compareLineIndex?: number
+  }) => Promise<unknown>,
+  reportError: (operation: string, cause: unknown) => void,
+): Promise<void> {
+  if (req.method !== 'GET') {
+    res.statusCode = 405
+    res.setHeader('allow', 'GET')
+    res.end()
+    return
+  }
+  if (!isSameOriginLoopbackRequest(req, expectedOrigin, false)) {
+    res.statusCode = 403
+    res.end()
+    return
+  }
+  const query = parseCollabViewQuery(req.url)
+  if (query === undefined) {
+    writeJson(res, 400, { error: 'A Collab read carries an optional WorkOrderId and compare line; nothing else is accepted.' })
+    return
+  }
+  try {
+    writeJson(res, 200, await readView(query))
+  } catch (cause) {
+    // An honest unavailable state is an answer the surface can draw. A blank
+    // panel that does not say why is not.
+    reportError('read the Aera Collab surface', cause)
+    writeJson(res, 200, {
+      unavailableReason: cause instanceof Error ? cause.message : 'The Collab surface could not be read.',
     })
   }
 }

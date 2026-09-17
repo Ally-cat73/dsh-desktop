@@ -23,9 +23,11 @@ import { createDesktopCollabHostSeam } from './aera-collab-seam.ts'
 import {
   AERA_COLLAB_DIRECTORY_PATH,
   AERA_COLLAB_RESOLVE_PATH,
+  AERA_COLLAB_VIEW_PATH,
   AERA_WORK_CONTEXT_OPEN_PATH,
   handleAeraCollabDirectoryRequest,
   handleAeraCollabResolveRequest,
+  handleAeraCollabViewRequest,
   handleAeraWorkContextOpenRequest,
 } from './aera-collab-route.ts'
 import { CollabWorkspaceService, resolveCollabConfig } from './aera-collab-service.ts'
@@ -107,6 +109,22 @@ export function apply(ctx: Context): void {
       },
     }),
     'aera-collab: workspace Work Order resolve route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_COLLAB_VIEW_PATH,
+      handler: (req, res) => {
+        void handleAeraCollabViewRequest(
+          req,
+          res,
+          rendererOrigin,
+          async input => service.collabView(input),
+          reportError,
+        )
+      },
+    }),
+    'aera-collab: collab surface read route',
   )
   ctx.effect(() => {
     /*

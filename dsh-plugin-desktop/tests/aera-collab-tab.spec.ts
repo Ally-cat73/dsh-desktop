@@ -69,6 +69,7 @@ function harness(api: Partial<AeraCollabApi> = {}) {
       query: '', listing: 'ACTIVE' as const, rows: [], totalWorkOrders: 0, truncated: false,
     })),
     resolve: vi.fn(async () => ({ source: 'NONE' as const })),
+    view: vi.fn(async () => ({ unavailableReason: 'no store in this harness' })),
     openCollab: vi.fn(async () => {}),
     ...api,
   })
