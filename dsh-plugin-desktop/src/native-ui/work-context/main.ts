@@ -61,7 +61,13 @@ interface Availability { readonly store: string, readonly projection: string, re
  * derives a sentence, a count or a state. All record content is rendered via
  * `textContent`.
  */
-interface RailTabView { readonly section: string, readonly label: string, readonly count: number }
+interface RailTabView {
+  readonly section: string
+  readonly label: string
+  /** Absent means NOT COMPUTED, never "none". */
+  readonly count?: number
+  readonly countUnavailableReason?: string
+}
 interface LineRowView {
   readonly codeWorkingLineId?: string
   readonly label: string
@@ -133,6 +139,7 @@ interface CollabCodeView {
   readonly discussionNote: string
   readonly archivedCount: number
   readonly compare?: CompareView
+  readonly compareUnavailableReason?: string
   readonly projectedAt: string
 }
 
@@ -365,7 +372,16 @@ function railPanel(collab: CollabCodeView): HTMLElement {
   for (const tab of collab.rail) {
     const button = el('button', openRailSection === tab.section ? 'active' : '', tab.label)
     button.setAttribute('aria-expanded', String(openRailSection === tab.section))
-    if (tab.count > 0) button.append(el('span', 'status', String(tab.count)))
+    /*
+     * A badge appears only where a count was actually computed. An absent
+     * count renders NOTHING rather than `0`, because `0` is a claim that the
+     * section is empty and this surface does not make claims it cannot support.
+     */
+    if (tab.count !== undefined && tab.count > 0) button.append(el('span', 'status', String(tab.count)))
+    if (tab.countUnavailableReason !== undefined) {
+      button.setAttribute('title', tab.countUnavailableReason)
+      button.setAttribute('aria-description', tab.countUnavailableReason)
+    }
     button.addEventListener('click', () => {
       openRailSection = openRailSection === tab.section ? null : tab.section
       act('refresh')
@@ -410,8 +426,12 @@ function railPanel(collab: CollabCodeView): HTMLElement {
       break
     }
     case 'CHANGED_FILES': {
+      /*
+       * The reason the rail carries no number is SAID here, in words, rather
+       * than left as an unexplained absence.
+       */
       body.append(el('div', 'muted', collab.compare === undefined
-        ? 'Open Compare on a Working Line to see which files differ between it and the accepted integration state.'
+        ? 'Not computed until Compare is opened. Open Compare on a Working Line to see which files differ between it and the accepted integration state.'
         : `${String(collab.compare.files.length)} files differ. The inventory is in the comparison above.`))
       break
     }
@@ -501,6 +521,14 @@ function renderCollab(collab: CollabCodeView): HTMLElement {
   body.append(people)
 
   const right = el('div', 'collab-right')
+  // §12 house rule: an unavailable action says why, in a live region.
+  if (collab.compareUnavailableReason !== undefined) {
+    const refusal = el('div', 'panel')
+    const line = el('div', 'warn', collab.compareUnavailableReason)
+    line.setAttribute('role', 'status')
+    refusal.append(line)
+    right.append(refusal)
+  }
   if (collab.compare !== undefined) {
     right.append(comparePanel(collab.compare))
   } else {

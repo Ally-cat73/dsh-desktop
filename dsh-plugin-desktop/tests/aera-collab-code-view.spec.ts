@@ -7,8 +7,10 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  CHANGED_FILES_NOT_COMPUTED,
   COLLAB_RAIL_SECTIONS,
   COLLAB_VIEWS,
+  DISCUSSION_NOT_RELEASED,
   DISCUSSION_NOTE,
   buildRail,
   toActivityRowView,
@@ -149,6 +151,35 @@ describe('the Working Line row — §12, §13, §38', () => {
     expect(row.provenance).toBe('OBSERVED')
     expect(row.codeWorkingLineId).toBeUndefined()
     expect(row.provenanceNote).toContain('No durable Working Line record has been minted')
+  })
+
+  it('a DURABLE Working Line row never offers Compare in this slice (review finding 2)', () => {
+    /*
+     * Every Compare fact in this slice comes from the OBSERVED checkout. A
+     * durable row is an institutional record this slice cannot observe, so
+     * offering Compare on it could only produce another line's diff under this
+     * line's name. Never offered, rather than offered and then refused.
+     */
+    const durable = toLineRowView({
+      label: "Opus child's line",
+      participant: 'Opus 5',
+      topology: topology(),                 // a perfectly readable topology
+      checkpointCount: 4,
+      provenance: 'DURABLE',
+      codeWorkingLineId: 'aera:code_working_line:1111',
+    })
+    expect(durable.topologyState).toBe('BEHIND')
+    expect(durable.compareAvailable).toBe(false)
+
+    // The observed row, with the same topology, DOES offer it.
+    const observed = toLineRowView({
+      label: 'This checkout · codex/wo-x',
+      participant: 'Alyshia Daley',
+      topology: topology(),
+      checkpointCount: 0,
+      provenance: 'OBSERVED',
+    })
+    expect(observed.compareAvailable).toBe(true)
   })
 
   it('states an unreadable topology rather than drawing a state', () => {
@@ -322,6 +353,28 @@ describe('participants, activity, checkpoints and the rail', () => {
     ])
     expect(rail.find((tab) => tab.section === 'ACTIVITY')?.count).toBe(12)
     expect(rail.find((tab) => tab.section === 'ARCHIVED')?.count).toBe(1)
+    expect(rail.find((tab) => tab.section === 'CHANGED_FILES')?.count).toBe(3)
+  })
+
+  it('an uncomputed count is ABSENT with a stated reason — never a zero that means "unknown"', () => {
+    // No Compare has been opened, so there is no changed-file count to give.
+    const rail = buildRail({ activity: 4, checkpoints: 0, evidence: 4, archived: 0 })
+    const changed = rail.find((tab) => tab.section === 'CHANGED_FILES')
+
+    expect(changed?.count).toBeUndefined()
+    expect(changed?.countUnavailableReason).toBe(CHANGED_FILES_NOT_COMPUTED)
+    expect(changed?.countUnavailableReason).toContain('Not computed until Compare is opened')
+
+    // Discussion has no surface yet, so it has no count either — `0` would
+    // claim nobody has said anything.
+    const discussion = rail.find((tab) => tab.section === 'DISCUSSION')
+    expect(discussion?.count).toBeUndefined()
+    expect(discussion?.countUnavailableReason).toBe(DISCUSSION_NOT_RELEASED)
+
+    // A genuine zero is still a zero: nothing is archived, and that IS known.
+    const archived = rail.find((tab) => tab.section === 'ARCHIVED')
+    expect(archived?.count).toBe(0)
+    expect(archived?.countUnavailableReason).toBeUndefined()
   })
 
   it('discussion is offered as an entry point and never as history authority', () => {

@@ -233,3 +233,47 @@ describe('§10 source-access confinement (remit B adversarial review, carried ov
     )
   })
 })
+
+/**
+ * Review finding 2 — Compare is offered for the OBSERVED line only.
+ *
+ * Every Compare fact this slice produces is derived from the checkout the
+ * window can observe. A durable Working Line row is an institutional record
+ * whose checkout this slice cannot observe, so answering a Compare request for
+ * one could only put that row's name on the observed line's diff. The service
+ * refuses, and says why, rather than returning the wrong comparison.
+ */
+describe('collabView — Compare is only ever the observed line', () => {
+  it('refuses a Compare for a row that is not the observed checkout, with a stated reason', async () => {
+    const service = new CollabWorkspaceService(config())
+    await service.openWorkContext(TEST_WO)
+
+    // Index 9 is past the end of the (at most one-row) line list.
+    const view = await service.collabView({ compareLineIndex: 9 })
+    expect(view.compare).toBeUndefined()
+    expect(view.compareUnavailableReason).toBeDefined()
+    // It is SAID, never silently dropped.
+    expect(view.compareUnavailableReason).toMatch(/no longer on this surface|cannot observe|could not be read/)
+  })
+
+  it('never reports a changed-file count before a Compare has been computed', async () => {
+    const service = new CollabWorkspaceService(config())
+    await service.openWorkContext(TEST_WO)
+
+    const view = await service.collabView()
+    const changed = view.rail.find((tab) => tab.section === 'CHANGED_FILES')
+    // ABSENT, not zero: `0` would claim nothing changed.
+    expect(changed?.count).toBeUndefined()
+    expect(changed?.countUnavailableReason).toContain('Not computed until Compare is opened')
+  })
+
+  it('every line row it offers Compare on is an observed row', async () => {
+    const service = new CollabWorkspaceService(config())
+    await service.openWorkContext(TEST_WO)
+
+    const view = await service.collabView()
+    for (const line of view.lines) {
+      if (line.compareAvailable) expect(line.provenance).toBe('OBSERVED')
+    }
+  })
+})
