@@ -1012,28 +1012,56 @@ export class CollabWorkspaceService {
       }))
     }
 
+    /*
+     * COMPARE IS ONLY EVER THE OBSERVED LINE — finding 2 of the independent
+     * review, fixed at both layers.
+     *
+     * Every fact below comes from `topology`, which is an observation of THIS
+     * checkout. The earlier code took the FROM label from
+     * `lines[compareLineIndex]`, so a durable Working Line row at that index
+     * would have put its own name on the observed checkout's diff. It was
+     * unreachable in practice — the projection passes no durable lines yet —
+     * but a latent mislabel in a surface whose entire claim is truthful
+     * attribution is not something to leave sitting there.
+     *
+     * The guard is now explicit and the name is taken from the row that
+     * actually produced the facts. A request for any other row is refused with
+     * a stated reason rather than answered with the wrong diff.
+     */
     let compare: CollabCompareView | undefined
-    if (
-      input.compareLineIndex !== undefined
-      && workspaceRoot !== undefined
-      && topology !== undefined
-      && topology.state !== 'UNRESOLVED'
-      && topology.facts.lineRevision !== undefined
-      && topology.facts.targetRevision !== undefined
-    ) {
-      const summary = await deriveCodeCompareSummary({
-        repositoryRoot: workspaceRoot,
-        from: { kind: 'REVISION', revision: topology.facts.lineRevision },
-        to: { kind: 'REVISION', revision: topology.facts.targetRevision },
-        fromRevision: topology.facts.lineRevision,
-        toRevision: topology.facts.targetRevision,
-        topology,
-      })
-      compare = toCompareView({
-        summary,
-        fromName: lines[input.compareLineIndex]?.label ?? 'My Working Line',
-        toName: 'Accepted integration — Integration',
-      })
+    let compareUnavailableReason: string | undefined
+    if (input.compareLineIndex !== undefined) {
+      const requested = lines[input.compareLineIndex]
+      if (requested === undefined) {
+        compareUnavailableReason = 'That Working Line is no longer on this surface.'
+      } else if (requested.provenance !== 'OBSERVED') {
+        compareUnavailableReason =
+          `Compare is only available for the checkout this window can observe. \`${requested.label}\` is a durable Working Line record, and this slice cannot observe its checkout.`
+      } else if (
+        workspaceRoot === undefined
+        || topology === undefined
+        || topology.state === 'UNRESOLVED'
+        || topology.facts.lineRevision === undefined
+        || topology.facts.targetRevision === undefined
+      ) {
+        compareUnavailableReason =
+          'These two states cannot be compared: this Working Line’s position could not be read.'
+      } else {
+        const summary = await deriveCodeCompareSummary({
+          repositoryRoot: workspaceRoot,
+          from: { kind: 'REVISION', revision: topology.facts.lineRevision },
+          to: { kind: 'REVISION', revision: topology.facts.targetRevision },
+          fromRevision: topology.facts.lineRevision,
+          toRevision: topology.facts.targetRevision,
+          topology,
+        })
+        compare = toCompareView({
+          summary,
+          // The name of the row the facts actually came from.
+          fromName: requested.label,
+          toName: 'Accepted integration — Integration',
+        })
+      }
     }
 
     const liveProviderState = this.collabLiveProviderState()
@@ -1057,7 +1085,14 @@ export class CollabWorkspaceService {
       rail: buildRail({
         activity: surface.activity.length,
         checkpoints: surface.checkpoints.length,
-        changedFiles: compare?.files.length ?? 0,
+        /*
+         * ABSENT, not zero, until a Compare has actually been computed —
+         * finding 4 of the independent review. The changed-file inventory is
+         * the diff between a line and its target; until that diff is computed
+         * there is no count, and a `0` badge would tell the reader that
+         * nothing changed.
+         */
+        ...(compare === undefined ? {} : { changedFiles: compare.files.length }),
         evidence: context.evidence.length,
         archived: surface.archivedLineIds.length,
       }),
@@ -1078,6 +1113,7 @@ export class CollabWorkspaceService {
       discussionNote: DISCUSSION_NOTE,
       archivedCount: surface.archivedLineIds.length,
       ...(compare === undefined ? {} : { compare }),
+      ...(compareUnavailableReason === undefined ? {} : { compareUnavailableReason }),
       projectedAt: surface.projectedAt,
     }
   }

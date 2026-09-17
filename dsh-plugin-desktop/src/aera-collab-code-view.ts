@@ -75,8 +75,17 @@ export const COLLAB_RAIL_LABELS: Readonly<Record<CollabRailSection, string>> = {
 export interface CollabRailTabView {
   readonly section: CollabRailSection
   readonly label: string
-  /** Counts live on the rail. They never appear in a primary row. */
-  readonly count: number
+  /**
+   * Counts live on the rail; they never appear in a primary row.
+   *
+   * ABSENT means "not computed", never "none" — finding 4 of the independent
+   * review. A badge reading `0` over a section that simply has not been
+   * computed yet tells the reader something false, and this surface's whole
+   * claim is that it does not do that. When it is absent the section states
+   * why in words.
+   */
+  readonly count?: number
+  readonly countUnavailableReason?: string
 }
 
 /**
@@ -170,6 +179,8 @@ export interface CollabCodeView {
   readonly discussionNote: string
   readonly archivedCount: number
   readonly compare?: CollabCompareView
+  /** Why a requested Compare was refused. Said, never silently dropped. */
+  readonly compareUnavailableReason?: string
   readonly projectedAt: string
 }
 
@@ -233,6 +244,21 @@ export function toLineRowView(input: {
   if (input.codeWorkingLineId !== undefined) technical.push(input.codeWorkingLineId)
 
   const conflict = topology === undefined ? undefined : codeTextualConflictSummary(topology)
+  /*
+   * COMPARE IS OFFERED ONLY FOR THE OBSERVED LINE — finding 2 of the
+   * independent review.
+   *
+   * Every Compare fact in this slice is derived from the observed checkout.
+   * A durable Working Line row is an institutional record; this slice cannot
+   * observe its checkout, so labelling a comparison with that row's name while
+   * the facts came from the observed line would attach one line's name to
+   * another line's diff. The Notes grammar's rule applies: never offered and
+   * then refused — a durable row simply does not carry the action until the
+   * slice that can observe it ships.
+   */
+  const compareAvailable = input.provenance === 'OBSERVED'
+    && topology !== undefined
+    && topology.state !== 'UNRESOLVED'
   return {
     ...(input.codeWorkingLineId === undefined ? {} : { codeWorkingLineId: input.codeWorkingLineId }),
     label: input.label,
@@ -244,9 +270,7 @@ export function toLineRowView(input: {
     ...(conflict === undefined ? {} : { conflictSentence: conflict }),
     ...(topology?.facts.dirtyState === 'DIRTY' ? { dirtyMarker: 'Uncommitted changes in this checkout' } : {}),
     checkpointCount: input.checkpointCount,
-    // Compare needs two readable revisions. An UNRESOLVED reading has none, so
-    // the action is absent rather than offered and then refused.
-    compareAvailable: topology !== undefined && topology.state !== 'UNRESOLVED',
+    compareAvailable,
     provenance: input.provenance,
     ...(input.provenanceNote === undefined ? {} : { provenanceNote: input.provenanceNote }),
     technical,
@@ -405,19 +429,36 @@ export function toCheckpointRowView(row: CodeCheckpointRowV1): CollabCheckpointR
 }
 
 /** Rail tabs with their counts. The count is the only announcement a section makes. */
+export const CHANGED_FILES_NOT_COMPUTED =
+  'Not computed until Compare is opened.'
+export const DISCUSSION_NOT_RELEASED =
+  'No discussion surface is released in this slice.'
+
 export function buildRail(counts: {
   readonly activity: number
   readonly checkpoints: number
-  readonly changedFiles: number
+  /** Absent until a Compare has been computed — never defaulted to zero. */
+  readonly changedFiles?: number
   readonly evidence: number
   readonly archived: number
 }): readonly CollabRailTabView[] {
   return [
     { section: 'ACTIVITY', label: COLLAB_RAIL_LABELS.ACTIVITY, count: counts.activity },
     { section: 'CHECKPOINTS', label: COLLAB_RAIL_LABELS.CHECKPOINTS, count: counts.checkpoints },
-    { section: 'CHANGED_FILES', label: COLLAB_RAIL_LABELS.CHANGED_FILES, count: counts.changedFiles },
+    counts.changedFiles === undefined
+      ? {
+          section: 'CHANGED_FILES',
+          label: COLLAB_RAIL_LABELS.CHANGED_FILES,
+          countUnavailableReason: CHANGED_FILES_NOT_COMPUTED,
+        }
+      : { section: 'CHANGED_FILES', label: COLLAB_RAIL_LABELS.CHANGED_FILES, count: counts.changedFiles },
     { section: 'EVIDENCE', label: COLLAB_RAIL_LABELS.EVIDENCE, count: counts.evidence },
-    { section: 'DISCUSSION', label: COLLAB_RAIL_LABELS.DISCUSSION, count: 0 },
+    /*
+     * Discussion has no count because no discussion surface exists yet. `0`
+     * would read as "nobody has said anything", which is a claim about the
+     * collaboration rather than about this build.
+     */
+    { section: 'DISCUSSION', label: COLLAB_RAIL_LABELS.DISCUSSION, countUnavailableReason: DISCUSSION_NOT_RELEASED },
     { section: 'ARCHIVED', label: COLLAB_RAIL_LABELS.ARCHIVED, count: counts.archived },
   ]
 }
