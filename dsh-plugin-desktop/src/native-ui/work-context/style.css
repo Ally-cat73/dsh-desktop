@@ -40,3 +40,61 @@ li { margin: 3px 0; }
 a.src { color: var(--accent); cursor: pointer; text-decoration: underline; }
 .stamp { font-family: ui-monospace, monospace; }
 #notice { min-height: 18px; margin-top: 8px; }
+
+/* --- Read-first Collab view (WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001) --- */
+
+/* Disclosure level 5. Never open by default; nothing needed to read the state. */
+.technical { display: block; margin: 4px 0 2px; }
+.technical-toggle {
+  background: none; border: none; padding: 0; font-size: 11px;
+  color: var(--muted); text-decoration: underline; cursor: pointer;
+}
+.technical-toggle:hover { color: var(--accent); border-color: transparent; }
+.technical-body { margin: 4px 0 0 10px; font-size: 11px; border-left: 1px solid var(--border); padding-left: 8px; }
+
+.view-switch { margin: 0 0 8px; }
+.view-switch button.active { border-color: var(--accent); color: var(--text); }
+
+/* Two columns that collapse to one on a narrow window. */
+.collab-body { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.collab-body > .panel { flex: 1 1 220px; min-width: 200px; }
+.collab-right { flex: 3 1 420px; min-width: 300px; }
+.collab-right > .panel { margin-top: 8px; }
+
+.line-row { border-top: 1px solid var(--border); padding: 8px 0; }
+.line-row:first-of-type { border-top: none; }
+.line-label { font-weight: 600; }
+/* The topology sentence is the product: it gets the emphasis, not the counts. */
+.topology { margin: 4px 0; }
+/*
+ * The textual-conflict fact. Dual-coded three ways so it survives greyscale
+ * and a screen reader: the WORD in the sentence, the leading glyph, and the
+ * left bar. It is deliberately NOT the same channel as anything advisory —
+ * nothing advisory exists in this slice.
+ */
+.conflict { color: var(--warn); border-left: 2px solid var(--warn); padding-left: 6px; margin: 4px 0; }
+.status.conflict { color: var(--warn); border-color: var(--warn); }
+
+.compare-banner { font-weight: 600; margin: 6px 0; }
+.operands { align-items: stretch; }
+.operand { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; flex: 1 1 180px; }
+.arrow { align-self: center; color: var(--muted); }
+.headline { margin: 8px 0; }
+ul.files { list-style: none; padding-left: 0; }
+.file-row { border-top: 1px solid var(--border); padding: 6px 0; }
+.kind {
+  display: inline-block; min-width: 72px; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+}
+.path { word-break: break-all; }
+.counts { margin-left: 8px; font-size: 11px; }
+.structural { font-size: 11px; margin-left: 72px; }
+
+.rail { gap: 6px; }
+.rail button.active { border-color: var(--accent); color: var(--text); }
+.rail-body { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.activity-row, .participant-row { border-top: 1px solid var(--border); padding: 6px 0; }
+.activity-row:first-child, .participant-row:first-of-type { border-top: none; }
+.actor { font-weight: 600; }
+.when { font-size: 11px; }
+.live { margin-top: 10px; }

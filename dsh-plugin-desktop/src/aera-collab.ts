@@ -62,16 +62,34 @@ export function apply(ctx: Context): void {
     'aera-collab: work context open route',
   )
   ctx.effect(() => {
-    const registration = ctx.desktopRuntime.registerTrayItem({
+    /*
+     * TWO ENTRY POINTS, ONE WINDOW (WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001,
+     * owner decision OD-7 default (c), controller-approved).
+     *
+     * The compact Context view and the read-first Collab view are two
+     * renderings of ONE joined Work Context: one service, one store, one
+     * session, one authority stamp, one set of honesty rules. A second window
+     * would have had to re-decide those rules, and §32 forbids a second Collab
+     * host. The tray is used because it is the shipping product's only entry to
+     * institutional surfaces — §7 forbids redesigning the Aera Code shell.
+     */
+    const workContext = ctx.desktopRuntime.registerTrayItem({
       group: 'tools',
       order: 20,
       label: () => 'Aera: Work Context',
-      invoke: () => { window.open() },
+      invoke: () => { window.openView('CONTEXT') },
+    })
+    const collab = ctx.desktopRuntime.registerTrayItem({
+      group: 'tools',
+      order: 21,
+      label: () => 'Aera: Collab',
+      invoke: () => { window.openView('COLLAB') },
     })
     return () => {
-      registration.dispose()
+      workContext.dispose()
+      collab.dispose()
       window.close()
       void service.closeWorkContext().catch(() => {})
     }
-  }, 'aera-collab: work context tray command')
+  }, 'aera-collab: work context and collab tray commands')
 }

@@ -35,6 +35,11 @@ const WORK_CONTEXT_DOCUMENT = fileURLToPath(new URL('./native-ui/work-context.ht
 export type WorkContextAction =
   | { readonly action: 'open', readonly workOrderId: string }
   | { readonly action: 'refresh' }
+  /** Switch between the compact Context view and the read-first Collab view. */
+  | { readonly action: 'view', readonly view: 'CONTEXT' | 'COLLAB' }
+  /** Open the one Compare path: my Working Line vs the accepted integration target. */
+  | { readonly action: 'compare', readonly line: string }
+  | { readonly action: 'close-compare' }
   | { readonly action: 'note', readonly text: string }
   | { readonly action: 'evidence', readonly nodeId: string, readonly summary: string }
   | { readonly action: 'open-source', readonly path: string }
@@ -57,7 +62,19 @@ export function parseWorkContextAction(href: string): WorkContextAction | undefi
   switch (action) {
     case 'refresh':
     case 'close-context':
+    case 'close-compare':
       return keys.length === 0 ? { action } : undefined
+    case 'view': {
+      if (keys.join(',') !== 'view') return undefined
+      const view = one('view')
+      return view === 'CONTEXT' || view === 'COLLAB' ? { action, view } : undefined
+    }
+    case 'compare': {
+      if (keys.join(',') !== 'line') return undefined
+      const line = one('line')
+      // A line index, and nothing else: the page never names a path or a ref.
+      return line !== undefined && /^\d{1,3}$/.test(line) ? { action, line } : undefined
+    }
     case 'open': {
       if (keys.join(',') !== 'workOrderId') return undefined
       const workOrderId = one('workOrderId')
@@ -94,8 +111,30 @@ export class WorkContextWindow {
   private window: BrowserWindow | undefined
   private busy = false
   private disposed = false
+  /**
+   * Which of the two views is on screen, and whether a Compare is open.
+   *
+   * RENDERER state, deliberately: a view is a projection over durable work
+   * (§28). Closing the window, or switching the view, never closes the
+   * collaboration and never touches the store.
+   */
+  private view: 'CONTEXT' | 'COLLAB' = 'CONTEXT'
+  private compareLineIndex: number | undefined
 
   constructor(private readonly options: WorkContextWindowOptions) {}
+
+  /** Open the window with a view preselected. Repeated opens focus the same instance. */
+  openView(view: 'CONTEXT' | 'COLLAB'): void {
+    this.view = view
+    this.compareLineIndex = undefined
+    const existing = this.window
+    if (existing !== undefined && !existing.isDestroyed()) {
+      revealApplication(existing)
+      void this.pushState()
+      return
+    }
+    this.open()
+  }
 
   open(): void {
     const existing = this.window
@@ -188,16 +227,24 @@ export class WorkContextWindow {
       await this.dispatch({
         kind: 'idle',
         availability,
+        activeView: this.view,
         ...(notice === undefined ? {} : { notice }),
       })
       return
     }
     try {
       const view = await service.contextView()
+      const collab = this.view === 'COLLAB'
+        ? await service.collabView(
+            this.compareLineIndex === undefined ? {} : { compareLineIndex: this.compareLineIndex },
+          )
+        : undefined
       await this.dispatch({
         kind: 'context',
         availability,
         view,
+        activeView: this.view,
+        ...(collab === undefined ? {} : { collab }),
         ...(notice === undefined ? {} : { notice }),
       })
     } catch (cause) {
@@ -225,6 +272,25 @@ export class WorkContextWindow {
           break
         }
         case 'refresh': {
+          await this.pushState()
+          break
+        }
+        case 'view': {
+          this.view = action.view
+          this.compareLineIndex = undefined
+          await this.pushState()
+          break
+        }
+        case 'compare': {
+          // Compare is a READ. Nothing here writes, and the service has no
+          // mutating git path to reach.
+          this.compareLineIndex = Number.parseInt(action.line, 10)
+          await this.dispatch({ kind: 'busy', message: 'Comparing these states…' })
+          await this.pushState()
+          break
+        }
+        case 'close-compare': {
+          this.compareLineIndex = undefined
           await this.pushState()
           break
         }
