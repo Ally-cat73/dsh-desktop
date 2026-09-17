@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { applyAdvancedShell } from './advanced-shell.ts'
 import { applyAeraBrand } from './aera-brand.tsx'
 import { startRendererBootReporter } from './boot-health.ts'
+import { applyAeraCollabEntryPoints } from './aera-collab-panel.ts'
 import { applyDesktopSettings } from './desktop-settings.ts'
 import { installDesktopDirectoryPickerBridge, requestDesktopDirectoryValidation } from './directory-picker.ts'
 import { parseDesktopClientEnvironment } from './environment.ts'
@@ -91,6 +92,12 @@ export function apply(ctx: ClientContext): void {
     'dsh-plugin-desktop: native window geometry service',
   )
   const desktopSettings = applyDesktopSettings(ctx, environment)
+  /*
+   * The owner-visible way into Collab (WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001).
+   * Registered unconditionally and before any mode-specific shell, so the tab
+   * and the sidebar action exist in every presentation the desktop can render.
+   */
+  applyAeraCollabEntryPoints(ctx)
   ctx.effect(
     () => startRendererBootReporter(ctx.loader),
     'dsh-plugin-desktop: renderer boot health report',

@@ -1,0 +1,150 @@
+/**
+ * The Collab panel — Aera Code's owner-visible way into collaboration.
+ *
+ * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001.
+ *
+ * It sits beside Chat and Trajectory because that is where a person looks for
+ * another view of the work in front of them. Owner acceptance failed once on a
+ * build where the Collab route existed and no affordance reached it, so this
+ * panel is deliberately unconditional: it renders whenever the tab strip
+ * renders, and it NEVER throws and never removes itself. When nothing can be
+ * resolved it opens on the picker and says what is missing — an empty panel
+ * that explains itself is honest; a tab that vanishes is not.
+ *
+ * Read-first, exactly as the surface it leads to: resolving the workspace and
+ * reading the directory touch nothing.
+ *
+ * Review finding D3: choosing a different Work Order REPLACES the surface with
+ * the picker rather than appending it underneath. Appended below a long
+ * surface, the control looked like it did nothing at all.
+ */
+
+import { useCallback, useEffect, useState } from 'react'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { AeraCollabApi, CollabResolutionView } from './aera-collab-api.ts'
+import { AeraCollabPicker } from './AeraCollabPicker.tsx'
+import { AeraCollabSurface } from './AeraCollabSurface.tsx'
+
+/** Registration-side capabilities for the Collab panel. */
+export interface AeraCollabPanelInjected {
+  readonly api: AeraCollabApi
+}
+
+/** Renderer-composed props for the Collab conversation view. */
+export type AeraCollabPanelProps =
+  PropsRuntime<'conversation.view'>
+  & PropsLocale<'aera.collab'>
+  & InjectFace<AeraCollabPanelInjected>
+
+/** The Collab entry panel: the work this checkout is about, or a way to choose. */
+export function AeraCollabPanel({ api, t }: AeraCollabPanelProps) {
+  const [resolution, setResolution] = useState<CollabResolutionView>()
+  const [chosen, setChosen] = useState<string>()
+  const [picking, setPicking] = useState(false)
+  const [resolving, setResolving] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [openFailed, setOpenFailed] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      try {
+        const resolved = await api.resolve()
+        if (!live) return
+        setResolution(resolved)
+        // Nothing to show but the picker? Then open on it, rather than making
+        // the reader discover a second click.
+        if (resolved.workOrderId === undefined) setPicking(true)
+      } catch {
+        if (!live) return
+        setResolution({ source: 'NONE' })
+        setPicking(true)
+      } finally {
+        if (live) setResolving(false)
+      }
+    })()
+    return () => { live = false }
+  }, [api])
+
+  const onChoose = useCallback((workOrderId: string) => {
+    setChosen(workOrderId)
+    setPicking(false)
+  }, [])
+
+  const onOpenWindow = useCallback((workOrderId: string) => {
+    setBusy(true)
+    setOpenFailed(false)
+    void (async () => {
+      try {
+        await api.openCollab(workOrderId)
+      } catch {
+        setOpenFailed(true)
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }, [api])
+
+  const workOrderId = chosen ?? resolution?.workOrderId
+  const showPicker = picking || workOrderId === undefined
+
+  if (resolving) return <p className="aera-collab-status">{t('loading')}</p>
+
+  return (
+    <section className="aera-collab-panel" aria-label={t('tab')}>
+      {workOrderId === undefined
+        ? (
+            <header className="aera-collab-header">
+              <h2 className="aera-collab-title">{t('unresolvedTitle')}</h2>
+              {/*
+                * The reason the workspace resolved to nothing is shown, not
+                * swallowed. "No Work Order" and "I could not tell" are
+                * different facts and the reader is entitled to know which.
+                */}
+              {resolution?.reason === undefined
+                ? null
+                : <p className="aera-collab-reason">{resolution.reason}</p>}
+            </header>
+          )
+        : (
+            <header className="aera-collab-header">
+              <h2 className="aera-collab-title">{t('resolvedTitle')}</h2>
+              <p className="aera-collab-intro">{t('resolvedIntro')}</p>
+              <p className="aera-collab-resolved-id">{workOrderId}</p>
+              {chosen === undefined && resolution?.repositoryId !== undefined
+                ? <p className="aera-collab-resolved-repository">{resolution.repositoryId}</p>
+                : null}
+              <div className="aera-collab-actions">
+                <button
+                  type="button"
+                  className="aera-collab-change"
+                  aria-expanded={showPicker}
+                  onClick={() => { setPicking(current => !current) }}
+                >
+                  {showPicker ? t('closePicker') : t('changeWorkOrder')}
+                </button>
+                <button
+                  type="button"
+                  className="aera-collab-open"
+                  disabled={busy}
+                  onClick={() => { onOpenWindow(workOrderId) }}
+                >
+                  {busy ? t('openingCollab') : t('openInWindow')}
+                </button>
+              </div>
+            </header>
+          )}
+
+      {openFailed ? <p className="aera-collab-error" role="alert">{t('openCollabError')}</p> : null}
+
+      {/*
+        * D3: the picker REPLACES the surface. Showing both stacked put the
+        * picker below a surface tall enough that "Choose a different Work
+        * Order" looked inert.
+        */}
+      {showPicker
+        ? <AeraCollabPicker api={api} t={t} onChoose={onChoose} />
+        : <AeraCollabSurface api={api} workOrderId={workOrderId} t={t} />}
+    </section>
+  )
+}

@@ -1,6 +1,7 @@
 /** Localized macOS application menu owned by the Electron platform adapter. */
 
 import type { MenuItemConstructorOptions } from 'electron'
+import type { DesktopTrayItem, DesktopTrayItemGroup } from './runtime.ts'
 
 /** Languages supported by the native shell menu. */
 export type NativeMenuLocale = 'en' | 'zh-CN'
@@ -27,6 +28,7 @@ interface NativeMenuLabels {
   readonly services: string
   readonly showAll: string
   readonly toggleDevTools: string
+  readonly tools: string
   readonly toggleFullScreen: string
   readonly undo: string
   readonly view: string
@@ -60,6 +62,7 @@ const LABELS: Readonly<Record<NativeMenuLocale, NativeMenuLabels>> = {
     services: 'Services',
     showAll: 'Show All',
     toggleDevTools: 'Developer Tools',
+    tools: 'Tools',
     toggleFullScreen: 'Enter Full Screen',
     undo: 'Undo',
     view: 'View',
@@ -91,6 +94,7 @@ const LABELS: Readonly<Record<NativeMenuLocale, NativeMenuLabels>> = {
     services: '服务',
     showAll: '全部显示',
     toggleDevTools: '开发者工具',
+    tools: '工具',
     toggleFullScreen: '进入全屏幕',
     undo: '撤销',
     view: '显示',
@@ -118,7 +122,81 @@ export function nativeMenuLocale(preferredLanguages: readonly string[]): NativeM
   return 'en'
 }
 
-/** Build the complete macOS menu without relying on Electron's English default. */
+/**
+ * Project Host tray contributions of one group into native menu items.
+ *
+ * Shared by the tray and by the application menu bar so that the two can never
+ * drift: a command contributed to the tray is by construction also present in
+ * the menu bar, which is the affordance the user can always see.
+ *
+ * @param items - every registered contribution, in registration order.
+ * @param group - the section to project.
+ * @param wrap - contains asynchronous failures outside Electron callbacks.
+ */
+export function contributedNativeMenuItems(
+  items: readonly DesktopTrayItem[],
+  group: DesktopTrayItemGroup,
+  wrap: (invoke: () => void | Promise<void>) => () => void,
+): MenuItemConstructorOptions[] {
+  return [...items]
+    .filter(item => item.group === group)
+    .sort((left, right) => left.order - right.order)
+    .map((item): MenuItemConstructorOptions => {
+      const common = {
+        label: item.label(),
+        enabled: item.enabled?.() ?? true,
+      }
+      if (item.submenu !== undefined) {
+        return {
+          ...common,
+          submenu: item.submenu().map(command => ({
+            label: command.label(),
+            enabled: command.enabled?.() ?? true,
+            ...(command.type === undefined ? {} : { type: command.type }),
+            ...(command.checked === undefined ? {} : { checked: command.checked() }),
+            click: wrap(() => command.invoke()),
+          })),
+        }
+      }
+      return {
+        ...common,
+        click: wrap(() => item.invoke()),
+      }
+    })
+}
+
+/**
+ * Build the menu-bar contributions from the same native commands as the tray.
+ *
+ * Keeps the menu renderer-free: every item here is a trusted Host contribution.
+ */
+export function desktopApplicationMenuItems(
+  items: readonly DesktopTrayItem[],
+  wrap: (invoke: () => void | Promise<void>) => () => void,
+): MenuItemConstructorOptions[] {
+  const tools = contributedNativeMenuItems(items, 'tools', wrap)
+  const profiles = contributedNativeMenuItems(items, 'profiles', wrap)
+  const built: MenuItemConstructorOptions[] = []
+  if (tools.length > 0) built.push(...tools)
+  if (tools.length > 0 && profiles.length > 0) built.push({ type: 'separator' })
+  if (profiles.length > 0) built.push(...profiles)
+  return built
+}
+
+/**
+ * Build the complete macOS menu without relying on Electron's English default.
+ *
+ * Host-contributed native commands (`additions`) are carried by a dedicated
+ * TOP-LEVEL menu-bar menu rather than only by the tray. A macOS status item is
+ * not a discoverable affordance: on a saturated menu bar the system lays the
+ * item out off-screen, and the user is given no indication that the command
+ * exists at all. A feature reachable only from the tray is therefore not
+ * shipped. The menu bar is always visible, so the top-level menu is the
+ * product's guaranteed entry point; the tray remains a convenience.
+ *
+ * The same commands are ALSO kept in the application submenu so that no
+ * previously-reachable command loses a path.
+ */
 export function macApplicationMenuTemplate(
   appName: string,
   locale: NativeMenuLocale,
@@ -128,6 +206,11 @@ export function macApplicationMenuTemplate(
   const nativeAdditions = additions.length === 0
     ? [{ type: 'separator' as const }]
     : [{ type: 'separator' as const }, ...additions, { type: 'separator' as const }]
+  // An empty menu bar menu would be a dead affordance; contribute one only
+  // when a Host plugin actually registered a command.
+  const toolsMenu: MenuItemConstructorOptions[] = additions.length === 0
+    ? []
+    : [{ label: label.tools, submenu: [...additions] }]
   return [
     {
       label: appName,
@@ -143,6 +226,7 @@ export function macApplicationMenuTemplate(
         { label: `${label.quit} ${appName}`, role: 'quit' },
       ],
     },
+    ...toolsMenu,
     {
       label: label.file,
       submenu: [{ label: label.closeWindow, role: 'close' }],
