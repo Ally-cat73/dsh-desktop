@@ -55,6 +55,10 @@ export const zh = {
   knownResiduals: '已知遗留项',
   contextNote: '记录的状态；此处不授予任何权限。',
   contextEmpty: '此 Work Order 尚未记录工作背景条目。',
+  showMore: '展开全文',
+  showLess: '收起',
+  computedAt: '比较生成于',
+  assembledAt: '组装于',
 }
 
 export type AeraCollabLocaleKey = keyof typeof zh
@@ -114,4 +118,8 @@ export const en: Record<AeraCollabLocaleKey, string> = {
   knownResiduals: 'Known residuals',
   contextNote: 'Recorded state. Nothing here grants authority.',
   contextEmpty: 'No Work Context entries are recorded for this Work Order.',
+  showMore: 'Show the whole note',
+  showLess: 'Show less',
+  computedAt: 'Comparison computed',
+  assembledAt: 'Assembled',
 }

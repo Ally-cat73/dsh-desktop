@@ -25,14 +25,31 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   MAX_RENDERED_FILES,
   type AeraCollabApi,
+  type CollabActivityRow,
   type CollabChangedFileRow,
   type CollabLineRow,
   type CollabNodeRef,
   type CollabSurfaceView,
 } from './aera-collab-api.ts'
 import type { AeraCollabLocaleKey } from './aera-collab-locales.ts'
+import { displayTime, splitCounts } from './aera-collab-format.ts'
 
 type Translate = (key: AeraCollabLocaleKey) => string
+
+/**
+ * A recorded instant, readable, with the exact value on the element.
+ *
+ * Owner feedback: data without provenance cannot be checked. Every fact the
+ * surface draws that has a recorded time now shows it.
+ */
+function Recorded({ value, className = 'aera-collab-when' }: {
+  readonly value: string | undefined
+  readonly className?: string
+}) {
+  const shown = displayTime(value)
+  if (shown === undefined) return null
+  return <time className={className} dateTime={shown.exact} title={shown.exact}>{shown.label}</time>
+}
 
 /** A disclosure block: the reader asks for detail, it is never forced on them. */
 function Technical({ lines, label }: { readonly lines: readonly string[], readonly label: string }) {
@@ -47,17 +64,46 @@ function Technical({ lines, label }: { readonly lines: readonly string[], readon
   )
 }
 
-/** One changed file, carrying its kind as a WORD and never colour alone. */
+/**
+ * One changed file: kind, path, and its line counts in a fixed right column.
+ *
+ * Owner feedback asked for the counts aligned in one column on the right rather
+ * than scattered along each line, and for added and removed to read green and
+ * red. Colour is an addition, never the carrier: the kind is still a WORD, the
+ * counts are still signed, and `accessibleName` still repeats every fact — a
+ * reader who cannot see colour loses nothing.
+ */
 function ChangedFile({ file }: { readonly file: CollabChangedFileRow }) {
+  const counts = splitCounts(file.counts)
+  const kindClass = `aera-collab-file-kind aera-collab-kind-${file.kindWord.toLowerCase()}`
   return (
     <li className="aera-collab-file" aria-label={file.accessibleName}>
-      <span className="aera-collab-file-kind">{file.kindWord}</span>
+      <span className={kindClass}>{file.kindWord}</span>
       <span className="aera-collab-file-path">
-        {file.previousPath === undefined ? file.path : `${file.previousPath} → ${file.path}`}
+        {file.previousPath === undefined
+          ? file.path
+          : (
+              <>
+                <span className="aera-collab-file-previous">{file.previousPath}</span>
+                <span className="aera-collab-file-arrow" aria-hidden="true">→</span>
+                {file.path}
+              </>
+            )}
+        {file.conflicted ? <span className="aera-collab-file-flag aera-collab-flag-conflict">Conflicted</span> : null}
+        {file.bothLines ? <span className="aera-collab-file-flag">Changed on both</span> : null}
       </span>
-      {file.counts === undefined ? null : <span className="aera-collab-file-counts">{file.counts}</span>}
-      {file.conflicted ? <span className="aera-collab-file-flag">Conflicted</span> : null}
-      {file.bothLines ? <span className="aera-collab-file-flag">Changed on both</span> : null}
+      <span className="aera-collab-file-counts">
+        {counts === undefined
+          ? null
+          : counts.raw !== undefined
+            ? <span className="aera-collab-count-raw">{counts.raw}</span>
+            : (
+                <>
+                  <span className="aera-collab-count-added">{`+${counts.added ?? '0'}`}</span>
+                  <span className="aera-collab-count-removed">{`−${counts.removed ?? '0'}`}</span>
+                </>
+              )}
+      </span>
     </li>
   )
 }
@@ -87,13 +133,21 @@ function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView,
       <ul className="aera-collab-files">
         {shown.map(file => <ChangedFile key={`${file.kindWord}:${file.path}`} file={file} />)}
       </ul>
-      {compare.files.length > shown.length
-        ? (
-            <p className="aera-collab-status">
-              {`${t('filesShown')}: ${String(shown.length)} / ${String(compare.files.length)}`}
-            </p>
-          )
-        : null}
+      {/*
+        * Owner feedback: "files shown, but it didn't mean no provenance on the
+        * data. It should always be timestamped on everything." A count of rows
+        * on screen out of rows computed says nothing about WHEN they were
+        * computed, and without that a stale comparison is indistinguishable
+        * from a wrong one.
+        */}
+      <p className="aera-collab-compare-provenance">
+        {compare.files.length > shown.length
+          ? `${t('filesShown')}: ${String(shown.length)} / ${String(compare.files.length)}`
+          : `${t('filesShown')}: ${String(compare.files.length)}`}
+        <span className="aera-collab-provenance-sep" aria-hidden="true">·</span>
+        {`${t('computedAt')} `}
+        <Recorded value={compare.computedAt} className="aera-collab-when" />
+      </p>
       {compare.structuralDeltaNote === undefined
         ? null
         : <p className="aera-collab-status">{compare.structuralDeltaNote}</p>}
@@ -160,6 +214,59 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
             </div>
           )
         : null}
+    </li>
+  )
+}
+
+/** Notes longer than this are clamped until the reader asks for the rest. */
+const ACTIVITY_CLAMP_CHARS = 420
+
+/**
+ * One recorded act.
+ *
+ * Owner feedback on the first inline surface: *"that just looks like a wall of
+ * light… you can't even read it… it's very hard to differentiate what's
+ * actually going on."* These entries are progress notes written by the
+ * participants, and some run to several hundred words, so the previous layout —
+ * actor, note and time all inline in one wrapping flex row at 12px — ran them
+ * together into exactly that.
+ *
+ * Now each act is a block: who and when on their own line, then the note as
+ * prose at a readable size and measure, clamped until asked to open. Attribution
+ * and time are never the thing that gets squeezed out.
+ */
+function ActivityRow({ row, t }: {
+  readonly row: CollabActivityRow
+  readonly t: Translate
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const long = row.summary.length > ACTIVITY_CLAMP_CHARS
+  const shown = long && !expanded
+    ? `${row.summary.slice(0, ACTIVITY_CLAMP_CHARS).trimEnd()}…`
+    : row.summary
+  return (
+    <li className="aera-collab-activity-row">
+      <div className="aera-collab-activity-head">
+        <span className="aera-collab-activity-actor">{row.actor}</span>
+        <Recorded value={row.when} className="aera-collab-activity-when" />
+      </div>
+      <p className="aera-collab-activity-summary">{shown}</p>
+      {long
+        ? (
+            <button
+              type="button"
+              className="aera-collab-activity-more"
+              aria-expanded={expanded}
+              onClick={() => { setExpanded(current => !current) }}
+            >
+              {expanded ? t('showLess') : t('showMore')}
+            </button>
+          )
+        : null}
+      {row.detail === undefined ? null : <p className="aera-collab-activity-detail">{row.detail}</p>}
+      {row.technical === undefined
+        ? null
+        : <Technical lines={[row.technical]} label={t('technicalDetails')} />}
     </li>
   )
 }
@@ -291,6 +398,10 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
         <p className="aera-collab-surface-authority">
           {`${surface.authorityMode} — ${surface.authorityModeNote}`}
         </p>
+        <p className="aera-collab-surface-provenance">
+          {`${t('assembledAt')} `}
+          <Recorded value={surface.assembledAt} className="aera-collab-when" />
+        </p>
       </header>
 
       {/*
@@ -352,11 +463,7 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
       <Section title={t('activity')} {...railCount('ACTIVITY')}>
         <ul className="aera-collab-activity">
           {surface.activity.map(row => (
-            <li key={`${row.when}:${row.summary}`} className="aera-collab-activity-row">
-              <span className="aera-collab-activity-actor">{row.actor}</span>
-              <span className="aera-collab-activity-summary">{row.summary}</span>
-              <span className="aera-collab-activity-when">{row.when}</span>
-            </li>
+            <ActivityRow key={`${row.when}:${row.summary.slice(0, 64)}`} row={row} t={t} />
           ))}
         </ul>
       </Section>
@@ -367,7 +474,10 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
           : (
               <ul className="aera-collab-checkpoints">
                 {surface.checkpoints.map(row => (
-                  <li key={`${row.label}:${row.when ?? ''}`}>{row.label}</li>
+                  <li key={`${row.label}:${row.when ?? ''}`} className="aera-collab-checkpoint-row">
+                    <span className="aera-collab-checkpoint-label">{row.label}</span>
+                    <Recorded value={row.when} />
+                  </li>
                 ))}
               </ul>
             )}
@@ -408,7 +518,10 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
             </Section>
           )}
 
-      <p className="aera-collab-total">{`${t('projectedAt')}: ${surface.projectedAt}`}</p>
+      <p className="aera-collab-total">
+        {`${t('projectedAt')} `}
+        <Recorded value={surface.projectedAt} className="aera-collab-when" />
+      </p>
     </div>
   )
 }

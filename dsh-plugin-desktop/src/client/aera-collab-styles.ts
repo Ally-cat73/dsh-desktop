@@ -219,11 +219,7 @@ const CSS = `
   padding: 6px 8px;
 }
 .aera-collab-unrepresentable { font-size: 11px; color: var(--dsw-alias-label-secondary); }
-.aera-collab-file { display: flex; gap: 8px; align-items: baseline; font-size: 11px; }
-.aera-collab-file-kind { font-weight: 600; min-width: 68px; }
-.aera-collab-file-path { font-family: var(--dsw-font-mono, ui-monospace, monospace); word-break: break-all; }
-.aera-collab-file-counts,
-.aera-collab-file-flag { color: var(--dsw-alias-label-secondary); }
+
 .aera-collab-participant { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 12px; }
 .aera-collab-participant-name { font-weight: 600; }
 .aera-collab-participant-kind {
@@ -236,8 +232,7 @@ const CSS = `
 .aera-collab-participant-status,
 .aera-collab-activity-when,
 .aera-collab-evidence-status { font-size: 11px; color: var(--dsw-alias-label-secondary); }
-.aera-collab-activity-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 12px; }
-.aera-collab-activity-actor { font-weight: 600; }
+
 .aera-collab-technical { font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .aera-collab-technical > summary { cursor: pointer; }
 .aera-collab-technical ul {
@@ -306,6 +301,152 @@ const CSS = `
   word-break: break-all;
 }
 .aera-collab-context-note { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+/*
+ * Owner feedback on the first inline surface: the activity notes read as "a
+ * wall of light… you can't even read it", and the changed-file counts were
+ * "all over the place" rather than in one column. Sizes below are set for
+ * reading prose, not for fitting the most rows on screen.
+ */
+
+/* --- recorded instants: never the thing that gets squeezed out ----------- */
+.aera-collab-when {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+.aera-collab-surface-provenance,
+.aera-collab-compare-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+.aera-collab-provenance-sep { opacity: 0.5; }
+
+/* --- activity: one act per block, prose at a readable measure ------------ */
+.aera-collab-activity { gap: 10px; }
+.aera-collab-activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.2));
+  border-radius: 10px;
+  background: var(--dsw-alias-fill-secondary, rgba(127, 127, 127, 0.05));
+}
+.aera-collab-activity-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.aera-collab-activity-actor { font-size: 12px; font-weight: 600; }
+.aera-collab-activity-when { flex: none; }
+.aera-collab-activity-summary {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.aera-collab-activity-detail {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--dsw-alias-label-secondary);
+}
+.aera-collab-activity-more {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-link, #7aa2f7);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* --- changed files: kind, path, and counts in one aligned column --------- */
+.aera-collab-file {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) 104px;
+  gap: 12px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.aera-collab-file-kind { font-weight: 600; letter-spacing: 0.01em; }
+.aera-collab-kind-added { color: var(--dsw-alias-label-success, #4fb06d); }
+.aera-collab-kind-removed { color: var(--dsw-alias-label-error, #e5534b); }
+.aera-collab-kind-modified { color: var(--dsw-alias-label-warning, #d9a441); }
+.aera-collab-kind-renamed { color: var(--dsw-alias-label-link, #7aa2f7); }
+.aera-collab-file-path {
+  font-family: var(--dsw-font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.aera-collab-file-previous { opacity: 0.65; }
+.aera-collab-file-arrow { opacity: 0.65; padding: 0 5px; }
+.aera-collab-file-flag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--dsw-alias-fill-primary, rgba(127, 127, 127, 0.16));
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.aera-collab-flag-conflict {
+  background: rgba(229, 83, 75, 0.16);
+  color: var(--dsw-alias-label-error, #e5534b);
+}
+/* One column, right-aligned, tabular figures, so every row lines up. */
+.aera-collab-file-counts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  font-family: var(--dsw-font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.aera-collab-count-added { color: var(--dsw-alias-label-success, #4fb06d); }
+.aera-collab-count-removed { color: var(--dsw-alias-label-error, #e5534b); }
+.aera-collab-count-raw { color: var(--dsw-alias-label-secondary); }
+
+/* --- the rest, sized for reading ---------------------------------------- */
+.aera-collab-files { max-height: 420px; }
+.aera-collab-checkpoint-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+.aera-collab-participant { font-size: 12.5px; line-height: 1.6; }
+.aera-collab-participant-status { font-size: 11.5px; }
+.aera-collab-line-topology { font-size: 12.5px; line-height: 1.7; }
+.aera-collab-line-conflict { font-size: 12.5px; line-height: 1.7; }
+.aera-collab-status { font-size: 12px; line-height: 1.7; }
+.aera-collab-section > summary { font-size: 12px; }
+@media (max-width: 720px) {
+  /* Below this the three-column file row stops helping; keep the counts on
+     their own line rather than crushing the path. */
+  .aera-collab-file { grid-template-columns: 82px minmax(0, 1fr); }
+  .aera-collab-file-counts { grid-column: 1 / -1; justify-content: flex-start; }
+}
 `
 
 /** Install one scoped stylesheet; tolerate headless Client boot. */
