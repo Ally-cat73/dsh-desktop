@@ -197,17 +197,40 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
                 * relationships (§11). Absent on an OBSERVED row, which has no
                 * recorded lineage to show.
                 */}
+              {/*
+                * `role="note"` + `aria-label` is not decoration. A bare <p> is
+                * invisible to the macOS accessibility API, so the lineage and
+                * the integration target — the two facts §41 and §11 exist to
+                * put in front of the reader — could be SEEN but not HEARD, and
+                * could not be mechanically observed either (§64). A screen
+                * reader user would have been told this line's name and its
+                * provenance would have been silent.
+                */}
               {line.lineageSentence === undefined
                 ? null
-                : <p className="aera-collab-line-lineage">{line.lineageSentence}</p>}
+                : (
+                    <p className="aera-collab-line-lineage" role="note" aria-label={line.lineageSentence}>
+                      {line.lineageSentence}
+                    </p>
+                  )}
               {line.integrationTargetSentence === undefined
                 ? null
-                : <p className="aera-collab-line-target">{line.integrationTargetSentence}</p>}
-              <p className="aera-collab-line-topology">{line.topologySentence}</p>
+                : (
+                    <p className="aera-collab-line-target" role="note" aria-label={line.integrationTargetSentence}>
+                      {line.integrationTargetSentence}
+                    </p>
+                  )}
+              <p className="aera-collab-line-topology" role="note" aria-label={line.topologySentence}>
+                {line.topologySentence}
+              </p>
               {line.latestCheckpoint === undefined
                 ? null
                 : (
-                    <p className="aera-collab-line-checkpoint">
+                    <p
+                      className="aera-collab-line-checkpoint"
+                      role="note"
+                      aria-label={`${t('latestCheckpoint')}: ${line.latestCheckpoint}`}
+                    >
                       {`${t('latestCheckpoint')}: ${line.latestCheckpoint}`}
                     </p>
                   )}
@@ -228,7 +251,9 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
                 ? null
                 : (
                     <div className="aera-collab-corrected">
-                      <p className="aera-collab-corrected-note">{line.attributionNote}</p>
+                      <p className="aera-collab-corrected-note" role="note" aria-label={line.attributionNote}>
+                        {line.attributionNote}
+                      </p>
                       {line.attributionOriginalClaim === undefined
                         ? null
                         : (
