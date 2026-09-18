@@ -441,6 +441,171 @@ const CSS = `
 .aera-collab-line-conflict { font-size: 12.5px; line-height: 1.7; }
 .aera-collab-status { font-size: 12px; line-height: 1.7; }
 .aera-collab-section > summary { font-size: 12px; }
+
+/*
+ * WO-AERA-COLLAB-DURABLE-...-CHECKPOINTS-001 §41-§46.
+ *
+ * Every rule here does one job: make the institutional facts legible without
+ * changing the ratified composition. The owner's original complaint about the
+ * first surface was "a wall of light… you can't even read it", so the new
+ * material is blocked, spaced and given a readable measure rather than being
+ * added as more inline spans in an already dense row.
+ */
+
+/* §41: lineage and target as two quiet, separate lines under the label. */
+.aera-collab-line-lineage,
+.aera-collab-line-target,
+.aera-collab-line-checkpoint {
+  font-size: 12px;
+  line-height: 1.7;
+  opacity: 0.88;
+  margin: 2px 0 0;
+}
+.aera-collab-line-lifecycle {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+/* §42: a checkpoint is a card, not a one-line log entry. */
+.aera-collab-checkpoint-row { display: block; padding: 8px 0; }
+.aera-collab-checkpoint-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.aera-collab-checkpoint-label { font-weight: 600; font-size: 12.5px; }
+.aera-collab-checkpoint-origin,
+.aera-collab-checkpoint-who { font-size: 11.5px; opacity: 0.8; }
+.aera-collab-checkpoint-summary {
+  font-size: 12.5px;
+  line-height: 1.7;
+  max-width: 70ch;
+  margin: 4px 0 0;
+}
+
+/* §43: a block reads as one unit; its members keep their own rhythm. */
+.aera-collab-blocks { list-style: none; margin: 0; padding: 0; }
+.aera-collab-block { margin: 0 0 6px; }
+.aera-collab-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+.aera-collab-block-title { font-weight: 600; font-size: 12.5px; }
+.aera-collab-block-range,
+.aera-collab-block-participants { font-size: 11.5px; opacity: 0.8; }
+.aera-collab-block-count {
+  font-size: 11px;
+  opacity: 0.85;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+}
+.aera-collab-raw-activity > summary,
+.aera-collab-evidence-raw > summary { font-size: 11.5px; opacity: 0.8; cursor: pointer; }
+
+/* §46: the CLASS leads the card, so the kind of claim reads first. */
+.aera-collab-evidence-cards { list-style: none; margin: 0; padding: 0; }
+.aera-collab-evidence-card { padding: 8px 0; }
+.aera-collab-evidence-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.aera-collab-evidence-class {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.aera-collab-evidence-outcome { font-size: 11px; font-weight: 600; }
+.aera-collab-evidence-subject {
+  font-size: 12.5px;
+  line-height: 1.7;
+  max-width: 70ch;
+  margin: 3px 0 0;
+}
+.aera-collab-evidence-actor {
+  display: flex;
+  gap: 8px;
+  font-size: 11.5px;
+  opacity: 0.8;
+  margin: 2px 0 0;
+}
+/* An interpretation must never be mistaken for an observation at a glance. */
+.aera-collab-evidence-analytical {
+  font-size: 11.5px;
+  line-height: 1.7;
+  max-width: 70ch;
+  opacity: 0.9;
+  margin: 4px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid currentColor;
+}
+
+/* §44/§45: a decision opens into its context. */
+.aera-collab-decisions,
+.aera-collab-discussions { list-style: none; margin: 0; padding: 0; }
+.aera-collab-decision { margin: 0 0 6px; }
+.aera-collab-decision-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+.aera-collab-decision-subject { font-weight: 600; font-size: 12.5px; }
+.aera-collab-decision-selected { font-size: 12px; }
+.aera-collab-decision-status {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.aera-collab-decision-actors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11.5px;
+  opacity: 0.85;
+  margin: 4px 0 0;
+}
+.aera-collab-decision-rationale,
+.aera-collab-decision-superseded {
+  font-size: 12.5px;
+  line-height: 1.7;
+  max-width: 70ch;
+  margin: 6px 0 0;
+}
+.aera-collab-decision-facts { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+.aera-collab-decision-facts-label {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.aera-collab-decision-facts ul { margin: 2px 0 0; padding-left: 18px; max-width: 70ch; }
+/* §21, quiet but always present. */
+.aera-collab-decision-not-a-fact {
+  font-size: 11.5px;
+  line-height: 1.7;
+  max-width: 70ch;
+  opacity: 0.8;
+  margin: 8px 0 0;
+  font-style: italic;
+}
+.aera-collab-discussion { padding: 6px 0; font-size: 12.5px; line-height: 1.7; }
+.aera-collab-discussion-subject { font-weight: 600; }
+.aera-collab-discussion-count { font-size: 11.5px; opacity: 0.8; margin-left: 8px; }
+.aera-collab-discussion-entry { max-width: 70ch; margin: 4px 0 0; opacity: 0.9; }
+.aera-collab-participant-contribution { font-size: 11.5px; opacity: 0.9; }
+
 @media (max-width: 720px) {
   /* Below this the three-column file row stops helping; keep the counts on
      their own line rather than crushing the path. */

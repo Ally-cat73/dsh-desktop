@@ -78,6 +78,12 @@ export interface CollabLineRow {
   readonly compareAvailable: boolean
   readonly provenance: string
   readonly provenanceNote?: string
+  /** §41: the parent/origin trail, one sentence. */
+  readonly lineageSentence?: string
+  /** §11: where the line is going — a separate relationship. */
+  readonly integrationTargetSentence?: string
+  readonly latestCheckpoint?: string
+  readonly lifecycleWord?: string
   readonly technical: readonly string[]
 }
 
@@ -122,6 +128,8 @@ export interface CollabParticipantRow {
   readonly principalKind: string
   readonly statusLine: string
   readonly lineLabels: readonly string[]
+  /** §32: contribution counted by governance leg, not by who typed the event. */
+  readonly contributionSentence?: string
   readonly technical: readonly string[]
 }
 
@@ -132,6 +140,82 @@ export interface CollabActivityRow {
   readonly when: string
   readonly detail?: string
   readonly technical?: string
+}
+
+/**
+ * One checkpoint card.
+ *
+ * This mirrors `CollabCheckpointRowView` member for member. It previously
+ * declared `{ label, when, detail }`, which no producer ever sent: the service
+ * emits `name` / `origin` / `who` / `when`. The mismatch was invisible because
+ * the read-first slice could never have a checkpoint to draw, and would have
+ * thrown on the first real one — durable checkpoints now exist, so the wire
+ * shape is corrected to the one actually sent.
+ */
+export interface CollabCheckpointRow {
+  readonly name: string
+  readonly origin: string
+  readonly who: string
+  readonly when: string
+  /** CP-5: stated, never implied. */
+  readonly verifiabilityNote?: string
+  readonly summary?: string
+  readonly technical: string
+}
+
+/** §46: one typed evidence card. */
+export interface CollabEvidenceCard {
+  readonly classWord: string
+  readonly subject: string
+  readonly outcome?: string
+  readonly actor: string
+  readonly when: string
+  readonly analyticalNote?: string
+  readonly factualNote?: string
+  readonly body?: string
+  readonly technical: readonly string[]
+}
+
+/** §43: one deterministic grouping of acts. */
+export interface CollabActivityBlock {
+  readonly title: string
+  readonly from: string
+  readonly to: string
+  readonly participants: readonly string[]
+  readonly counts: readonly string[]
+  readonly legacyNote?: string
+  readonly members: readonly CollabActivityRow[]
+  readonly technical: readonly string[]
+}
+
+/** §44 / §45: a decision with the context that explains it. */
+export interface CollabDecision {
+  readonly subject: string
+  readonly decidedBy: string
+  readonly recordedBy: string
+  readonly authorisedBy?: string
+  readonly verifiedBy?: string
+  readonly when: string
+  readonly selectedOption: string
+  readonly rationale?: string
+  readonly alternatives: readonly string[]
+  readonly evidence: readonly string[]
+  readonly discussions: readonly string[]
+  readonly authorisedEffects: readonly string[]
+  readonly resultingEffects: readonly string[]
+  readonly statusWord: string
+  readonly supersededByNote?: string
+  readonly notAFactNote: string
+  readonly technical: readonly string[]
+}
+
+export interface CollabDiscussion {
+  readonly subject: string
+  readonly entryCount: number
+  readonly participants: readonly string[]
+  readonly updatedAt: string
+  readonly latestEntry?: string
+  readonly technical: readonly string[]
 }
 
 /** One referenced node in the Work Context packet. */
@@ -162,7 +246,7 @@ export interface CollabSurfaceView {
   readonly linesEmptyReason?: string
   readonly rail: readonly CollabRailTab[]
   readonly activity: readonly CollabActivityRow[]
-  readonly checkpoints: readonly { readonly label: string, readonly when?: string, readonly detail?: string }[]
+  readonly checkpoints: readonly CollabCheckpointRow[]
   readonly checkpointsEmptyReason?: string
   readonly evidence: readonly { readonly label: string, readonly status: string, readonly technical?: string }[]
   readonly liveProviderState?: {
@@ -170,6 +254,11 @@ export interface CollabSurfaceView {
     readonly live?: string
     readonly unavailableReason?: string
   }
+  readonly evidenceCards: readonly CollabEvidenceCard[]
+  readonly activityBlocks: readonly CollabActivityBlock[]
+  readonly decisions: readonly CollabDecision[]
+  readonly discussions: readonly CollabDiscussion[]
+  readonly discussionsDecisionsEmptyReason?: string
   readonly discussionNote: string
   readonly archivedCount: number
   readonly compare?: CollabCompare
@@ -409,6 +498,8 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
         principalKind: text(row.principalKind, 'kind'),
         statusLine: text(row.statusLine, 'status'),
         lineLabels: textList(row.lineLabels ?? [], 'line labels'),
+        ...(optionalText(row.contributionSentence, 'contribution') === undefined
+          ? {} : { contributionSentence: text(row.contributionSentence, 'contribution') }),
         technical: technicalList(row.technical ?? [], 'technical'),
       })
     })),
@@ -430,6 +521,14 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
         compareAvailable: row.compareAvailable === true,
         provenance: text(row.provenance, 'provenance'),
         ...(provenanceNote === undefined ? {} : { provenanceNote }),
+        ...(optionalText(row.lineageSentence, 'lineage') === undefined
+          ? {} : { lineageSentence: text(row.lineageSentence, 'lineage') }),
+        ...(optionalText(row.integrationTargetSentence, 'target') === undefined
+          ? {} : { integrationTargetSentence: text(row.integrationTargetSentence, 'target') }),
+        ...(optionalText(row.latestCheckpoint, 'checkpoint') === undefined
+          ? {} : { latestCheckpoint: text(row.latestCheckpoint, 'checkpoint') }),
+        ...(optionalText(row.lifecycleWord, 'lifecycle') === undefined
+          ? {} : { lifecycleWord: text(row.lifecycleWord, 'lifecycle') }),
         technical: technicalList(row.technical ?? [], 'technical'),
       })
     })),
@@ -457,14 +556,18 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
         ...(technical === undefined ? {} : { technical }),
       })
     })),
-    checkpoints: Object.freeze(list(value.checkpoints ?? [], 'checkpoints').map(row => {
+    checkpoints: Object.freeze(list(value.checkpoints ?? [], 'checkpoints').map((row): CollabCheckpointRow => {
       if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid checkpoint row')
-      const when = optionalText(row.when, 'when')
-      const detail = optionalText(row.detail, 'detail')
       return Object.freeze({
-        label: text(row.label, 'label'),
-        ...(when === undefined ? {} : { when }),
-        ...(detail === undefined ? {} : { detail }),
+        name: text(row.name, 'name'),
+        origin: text(row.origin, 'origin'),
+        who: text(row.who, 'who'),
+        when: text(row.when, 'when'),
+        ...(optionalText(row.verifiabilityNote, 'note') === undefined
+          ? {} : { verifiabilityNote: technicalText(row.verifiabilityNote, 'note') }),
+        ...(optionalText(row.summary, 'summary') === undefined
+          ? {} : { summary: technicalText(row.summary, 'summary') }),
+        technical: technicalText(row.technical, 'technical'),
       })
     })),
     ...(checkpointsEmptyReason === undefined ? {} : { checkpointsEmptyReason }),
@@ -477,6 +580,88 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
         ...(technical === undefined ? {} : { technical }),
       })
     })),
+    evidenceCards: Object.freeze(list(value.evidenceCards ?? [], 'evidence cards').map((row): CollabEvidenceCard => {
+      if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid evidence card')
+      return Object.freeze({
+        classWord: text(row.classWord, 'class'),
+        subject: text(row.subject, 'subject'),
+        ...(optionalText(row.outcome, 'outcome') === undefined ? {} : { outcome: text(row.outcome, 'outcome') }),
+        actor: text(row.actor, 'actor'),
+        when: text(row.when, 'when'),
+        ...(optionalText(row.analyticalNote, 'note') === undefined
+          ? {} : { analyticalNote: text(row.analyticalNote, 'note') }),
+        ...(optionalText(row.factualNote, 'note') === undefined
+          ? {} : { factualNote: text(row.factualNote, 'note') }),
+        ...(optionalText(row.body, 'body') === undefined ? {} : { body: technicalText(row.body, 'body') }),
+        technical: technicalList(row.technical ?? [], 'technical'),
+      })
+    })),
+    activityBlocks: Object.freeze(list(value.activityBlocks ?? [], 'activity blocks').map((row): CollabActivityBlock => {
+      if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid activity block')
+      return Object.freeze({
+        title: text(row.title, 'title'),
+        from: text(row.from, 'from'),
+        to: text(row.to, 'to'),
+        participants: textList(row.participants ?? [], 'participants'),
+        counts: textList(row.counts ?? [], 'counts'),
+        ...(optionalText(row.legacyNote, 'note') === undefined
+          ? {} : { legacyNote: technicalText(row.legacyNote, 'note') }),
+        members: Object.freeze(list(row.members ?? [], 'members').map((member): CollabActivityRow => {
+          if (!isObject(member)) throw new Error('dsh-plugin-desktop: invalid block member')
+          const detail = optionalText(member.detail, 'detail')
+          const memberTechnical = member.technical === undefined
+            ? undefined : technicalText(member.technical, 'technical')
+          return Object.freeze({
+            actor: text(member.actor, 'actor'),
+            summary: technicalText(member.summary, 'summary'),
+            when: text(member.when, 'when'),
+            ...(detail === undefined ? {} : { detail }),
+            ...(memberTechnical === undefined ? {} : { technical: memberTechnical }),
+          })
+        })),
+        technical: technicalList(row.technical ?? [], 'technical'),
+      })
+    })),
+    decisions: Object.freeze(list(value.decisions ?? [], 'decisions').map((row): CollabDecision => {
+      if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid decision')
+      return Object.freeze({
+        subject: text(row.subject, 'subject'),
+        decidedBy: text(row.decidedBy, 'decided by'),
+        recordedBy: text(row.recordedBy, 'recorded by'),
+        ...(optionalText(row.authorisedBy, 'authorised by') === undefined
+          ? {} : { authorisedBy: text(row.authorisedBy, 'authorised by') }),
+        ...(optionalText(row.verifiedBy, 'verified by') === undefined
+          ? {} : { verifiedBy: text(row.verifiedBy, 'verified by') }),
+        when: text(row.when, 'when'),
+        selectedOption: text(row.selectedOption, 'selected'),
+        ...(optionalText(row.rationale, 'rationale') === undefined
+          ? {} : { rationale: technicalText(row.rationale, 'rationale') }),
+        alternatives: textList(row.alternatives ?? [], 'alternatives'),
+        evidence: textList(row.evidence ?? [], 'evidence'),
+        discussions: textList(row.discussions ?? [], 'discussions'),
+        authorisedEffects: textList(row.authorisedEffects ?? [], 'authorised effects'),
+        resultingEffects: textList(row.resultingEffects ?? [], 'resulting effects'),
+        statusWord: text(row.statusWord, 'status'),
+        ...(optionalText(row.supersededByNote, 'note') === undefined
+          ? {} : { supersededByNote: text(row.supersededByNote, 'note') }),
+        notAFactNote: technicalText(row.notAFactNote, 'note'),
+        technical: technicalList(row.technical ?? [], 'technical'),
+      })
+    })),
+    discussions: Object.freeze(list(value.discussions ?? [], 'discussions').map((row): CollabDiscussion => {
+      if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid discussion')
+      return Object.freeze({
+        subject: text(row.subject, 'subject'),
+        entryCount: typeof row.entryCount === 'number' ? row.entryCount : 0,
+        participants: textList(row.participants ?? [], 'participants'),
+        updatedAt: text(row.updatedAt, 'updatedAt'),
+        ...(optionalText(row.latestEntry, 'entry') === undefined
+          ? {} : { latestEntry: technicalText(row.latestEntry, 'entry') }),
+        technical: technicalList(row.technical ?? [], 'technical'),
+      })
+    })),
+    ...(optionalText(value.discussionsDecisionsEmptyReason, 'reason') === undefined
+      ? {} : { discussionsDecisionsEmptyReason: technicalText(value.discussionsDecisionsEmptyReason, 'reason') }),
     ...(isObject(value.liveProviderState)
       ? {
           liveProviderState: Object.freeze({

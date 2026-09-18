@@ -34,9 +34,14 @@
  */
 
 import type {
+  ActivityBlockV1,
   CodeActivityRowV1,
   CodeCheckpointRowV1,
   CodeParticipantRowV1,
+  DecisionContextV1,
+  LineageTrailV1,
+  ParticipantContributionV1,
+  TypedEvidenceCardV1,
 } from '@aera/participation-runtime'
 import {
   codeCompareDirectionSentence,
@@ -58,7 +63,13 @@ export const COLLAB_RAIL_SECTIONS = [
   'CHECKPOINTS',
   'CHANGED_FILES',
   'EVIDENCE',
-  'DISCUSSION',
+  /*
+   * WO-AERA-COLLAB-DURABLE-...-CHECKPOINTS-001 §44. DISCUSSION becomes
+   * DISCUSSIONS_DECISIONS: a decision is unintelligible without the
+   * discussion, the alternatives and the evidence that produced it, so the
+   * product presents them together (§18) while the RECORDS stay distinct.
+   */
+  'DISCUSSIONS_DECISIONS',
   'ARCHIVED',
 ] as const
 export type CollabRailSection = (typeof COLLAB_RAIL_SECTIONS)[number]
@@ -68,7 +79,7 @@ export const COLLAB_RAIL_LABELS: Readonly<Record<CollabRailSection, string>> = {
   CHECKPOINTS: 'Checkpoints',
   CHANGED_FILES: 'Changed files',
   EVIDENCE: 'Evidence',
-  DISCUSSION: 'Discussion',
+  DISCUSSIONS_DECISIONS: 'Discussions & decisions',
   ARCHIVED: 'Archived',
 }
 
@@ -116,6 +127,17 @@ export interface CollabLineRowView {
    */
   readonly provenance: 'DURABLE' | 'OBSERVED'
   readonly provenanceNote?: string
+  /**
+   * §41: a simple parent/origin trail, never a DAG. Absent for an OBSERVED
+   * checkout, which by construction has no recorded lineage — an absence, not
+   * an empty trail dressed up as one.
+   */
+  readonly lineageSentence?: string
+  /** §11: where the work is GOING. A different relationship, a separate line. */
+  readonly integrationTargetSentence?: string
+  /** §40: the latest meaningful checkpoint, where one has been named. */
+  readonly latestCheckpoint?: string
+  readonly lifecycleWord?: string
   /** Disclosure level 5. */
   readonly technical: readonly string[]
 }
@@ -174,7 +196,20 @@ export interface CollabCodeView {
   readonly activity: readonly CollabActivityRowView[]
   readonly checkpoints: readonly CollabCheckpointRowView[]
   readonly checkpointsEmptyReason?: string
+  /**
+   * The legacy prose evidence list, kept so nothing that used to be readable
+   * stops being readable (§47). `evidenceCards` below is what the surface
+   * now DRAWS; this stays as the raw layer beneath it.
+   */
   readonly evidence: readonly { readonly label: string; readonly status: string; readonly technical?: string }[]
+  /** §46: typed cards, not a prose wall. */
+  readonly evidenceCards: readonly CollabEvidenceCardView[]
+  /** §43: deterministic groupings. Raw rows remain in `activity`. */
+  readonly activityBlocks: readonly CollabActivityBlockView[]
+  /** §44 / §45. */
+  readonly decisions: readonly CollabDecisionView[]
+  readonly discussions: readonly CollabDiscussionView[]
+  readonly discussionsDecisionsEmptyReason?: string
   readonly liveProviderState?: CollabLiveProviderStateView
   readonly discussionNote: string
   readonly archivedCount: number
@@ -184,11 +219,79 @@ export interface CollabCodeView {
   readonly projectedAt: string
 }
 
+/**
+ * §46: the CLASS is the first thing read. A model analysis says so on its face
+ * and carries its producer inline, so it can never be mistaken at a glance for
+ * an observation — which is the practical half of the §57 invariant.
+ */
+export interface CollabEvidenceCardView {
+  readonly classWord: string
+  readonly subject: string
+  readonly outcome?: string
+  readonly actor: string
+  readonly when: string
+  readonly analyticalNote?: string
+  /** §21 made visible on the card rather than left to the reader to infer. */
+  readonly factualNote?: string
+  readonly body?: string
+  readonly technical: readonly string[]
+}
+
+/** §43: one understandable work unit, with every underlying act kept beneath it. */
+export interface CollabActivityBlockView {
+  readonly title: string
+  readonly from: string
+  readonly to: string
+  readonly participants: readonly string[]
+  readonly counts: readonly string[]
+  /** Present on the legacy block only, saying why it is not grouped (§38). */
+  readonly legacyNote?: string
+  readonly members: readonly CollabActivityRowView[]
+  readonly technical: readonly string[]
+}
+
+/** §44 / §45: a decision with the context that makes it intelligible later. */
+export interface CollabDecisionView {
+  readonly subject: string
+  readonly decidedBy: string
+  readonly recordedBy: string
+  readonly authorisedBy?: string
+  readonly verifiedBy?: string
+  readonly when: string
+  readonly selectedOption: string
+  readonly rationale?: string
+  readonly alternatives: readonly string[]
+  readonly evidence: readonly string[]
+  readonly discussions: readonly string[]
+  readonly authorisedEffects: readonly string[]
+  readonly resultingEffects: readonly string[]
+  readonly statusWord: string
+  readonly supersededByNote?: string
+  /** §21, on every decision, always. */
+  readonly notAFactNote: string
+  readonly technical: readonly string[]
+}
+
+export interface CollabDiscussionView {
+  readonly subject: string
+  readonly entryCount: number
+  readonly participants: readonly string[]
+  readonly updatedAt: string
+  readonly latestEntry?: string
+  readonly technical: readonly string[]
+}
+
 export interface CollabParticipantRowView {
   readonly displayName: string
   readonly principalKind: 'HUMAN' | 'AGENT' | 'SERVICE'
   readonly statusLine: string
   readonly lineLabels: readonly string[]
+  /**
+   * §32/§33: what this participant actually contributed, counted by the
+   * governance legs rather than by who typed the event. Absent where no
+   * durable contribution record exists for them.
+   */
+  readonly contributionSentence?: string
   /** §38 (D-4): the principal id lives HERE, behind Technical details. */
   readonly technical: readonly string[]
 }
@@ -222,6 +325,9 @@ export function toLineRowView(input: {
   readonly codeWorkingLineId?: string
   readonly provenance: 'DURABLE' | 'OBSERVED'
   readonly provenanceNote?: string
+  readonly lineage?: LineageTrailV1
+  readonly latestCheckpoint?: string
+  readonly lifecycle?: string
 }): CollabLineRowView {
   const topology = input.topology
   const technical: string[] = []
@@ -273,6 +379,14 @@ export function toLineRowView(input: {
     compareAvailable,
     provenance: input.provenance,
     ...(input.provenanceNote === undefined ? {} : { provenanceNote: input.provenanceNote }),
+    ...(input.lineage === undefined
+      ? {}
+      : {
+          lineageSentence: input.lineage.sentence,
+          integrationTargetSentence: input.lineage.integrationTargetSentence,
+        }),
+    ...(input.latestCheckpoint === undefined ? {} : { latestCheckpoint: input.latestCheckpoint }),
+    ...(input.lifecycle === undefined || input.lifecycle === 'OPEN' ? {} : { lifecycleWord: input.lifecycle }),
     technical,
   }
 }
@@ -379,18 +493,120 @@ function describeStructuralDelta(delta: CodeStructuralDeltaV1): string {
 export function toParticipantRowView(
   row: CodeParticipantRowV1,
   lineLabelsById: ReadonlyMap<string, string>,
+  contribution?: ParticipantContributionV1,
 ): CollabParticipantRowView {
+  /*
+   * §34: prefer "Last contribution <time>" to a prominent STATUS UNAVAILABLE.
+   *
+   * The absence of a heartbeat is a fact about our telemetry, not about the
+   * person, and leading with it tells the reader nothing they can use. Where a
+   * durable contribution exists we say when it was; LIVE still requires an
+   * actual live signal, which this surface does not yet have and therefore
+   * never claims.
+   */
+  const statusLine = contribution?.lastContributionAt === undefined
+    ? row.statusLine
+    : `Last contribution ${contribution.lastContributionAt}`
   return {
     displayName: row.displayName,
     principalKind: row.principalKind,
-    statusLine: row.statusLine,
+    statusLine,
     lineLabels: row.codeWorkingLineIds
       .map((id) => lineLabelsById.get(id))
       .filter((label): label is string => label !== undefined),
+    ...(contribution === undefined || contribution.summarySentence.startsWith('No contributions')
+      ? {}
+      : { contributionSentence: contribution.summarySentence }),
     technical: [
       row.principalId,
       `${String(row.meaningfulActivityCount)} meaningful attributed acts`,
+      ...(contribution === undefined
+        ? []
+        : [`${String(contribution.recordedActs)} records written by this principal`]),
     ],
+  }
+}
+
+/** §46. */
+export function toEvidenceCardView(card: TypedEvidenceCardV1): CollabEvidenceCardView {
+  return {
+    classWord: card.classWord,
+    subject: card.subject,
+    ...(card.outcome === undefined ? {} : { outcome: card.outcome }),
+    actor: card.actor,
+    when: card.at,
+    ...(card.analyticalNote === undefined ? {} : { analyticalNote: card.analyticalNote }),
+    ...(card.supportsFactualClaim
+      ? {}
+      : { factualNote: 'This records an interpretation or a choice, not an established fact.' }),
+    ...(card.body === undefined ? {} : { body: card.body }),
+    technical: card.technical,
+  }
+}
+
+/** §43. Counts live on the block; they never crowd the member rows. */
+export function toActivityBlockView(
+  block: ActivityBlockV1,
+  members: readonly CollabActivityRowView[],
+): CollabActivityBlockView {
+  const counts: string[] = []
+  const plural = (count: number, singular: string): string =>
+    `${singular} ${String(count)}`
+  if (block.decisionIds.length > 0) counts.push(plural(block.decisionIds.length, 'Decisions'))
+  if (block.evidenceIds.length > 0) counts.push(plural(block.evidenceIds.length, 'Evidence'))
+  if (block.eventIds.length > 0) counts.push(plural(block.eventIds.length, 'Events'))
+  return {
+    title: block.title,
+    from: block.from,
+    to: block.to,
+    participants: block.participants,
+    counts,
+    ...(block.legacyNote === undefined ? {} : { legacyNote: block.legacyNote }),
+    members,
+    technical: [
+      `${block.keyKind} · ${block.blockId}`,
+      ...(block.eventIds.length === 0 ? [] : [`events: ${block.eventIds.join(', ')}`]),
+    ],
+  }
+}
+
+const DECISION_STATUS_WORD: Record<string, string> = {
+  RECORDED: 'In force',
+  SUPERSEDED: 'Superseded',
+  REVOKED: 'Revoked',
+  REVISITED: 'Revisited',
+  INVALIDATED_BY_NEW_EVIDENCE: 'Invalidated by new evidence',
+}
+
+/** §44 / §45. */
+export function toDecisionView(context: DecisionContextV1): CollabDecisionView {
+  return {
+    subject: context.subject,
+    decidedBy: context.decidedBy,
+    recordedBy: context.recordedBy,
+    ...(context.authorisedBy === undefined ? {} : { authorisedBy: context.authorisedBy }),
+    ...(context.verifiedBy === undefined ? {} : { verifiedBy: context.verifiedBy }),
+    when: context.decidedAt,
+    selectedOption: context.selectedOptionLabel,
+    ...(context.rationale === undefined ? {} : { rationale: context.rationale }),
+    alternatives: context.alternatives.map((option) =>
+      option.rationale === undefined ? option.label : `${option.label} — ${option.rationale}`),
+    /*
+     * The evidence line carries its CLASS, because "considered the model's
+     * assessment" and "considered the provider's record" are different
+     * statements about how much the decision is worth relying on.
+     */
+    evidence: context.evidence.map((item) =>
+      `${item.subject} — ${item.evidenceClass.replace(/_EVIDENCE$/, '').toLowerCase()}${item.outcome === undefined ? '' : ` (${item.outcome})`}`),
+    discussions: context.discussionSubjects,
+    authorisedEffects: context.authorisedEffects,
+    resultingEffects: context.resultingEffects,
+    statusWord: DECISION_STATUS_WORD[context.status] ?? context.status,
+    ...(context.supersededBySubject === undefined
+      ? {}
+      : { supersededByNote: `Superseded by: ${context.supersededBySubject}` }),
+    notAFactNote: context.notAFactNote,
+    technical: [context.decisionId, `status ${context.status}`],
   }
 }
 
@@ -440,6 +656,12 @@ export function buildRail(counts: {
   /** Absent until a Compare has been computed — never defaulted to zero. */
   readonly changedFiles?: number
   readonly evidence: number
+  /**
+   * Discussions plus decisions. Now a real count, because durable records
+   * exist and `0` finally means "none recorded" rather than "this build has no
+   * surface for it" — which is why the old tab deliberately had no count.
+   */
+  readonly discussionsDecisions: number
   readonly archived: number
 }): readonly CollabRailTabView[] {
   return [
@@ -454,11 +676,12 @@ export function buildRail(counts: {
       : { section: 'CHANGED_FILES', label: COLLAB_RAIL_LABELS.CHANGED_FILES, count: counts.changedFiles },
     { section: 'EVIDENCE', label: COLLAB_RAIL_LABELS.EVIDENCE, count: counts.evidence },
     /*
-     * Discussion has no count because no discussion surface exists yet. `0`
-     * would read as "nobody has said anything", which is a claim about the
-     * collaboration rather than about this build.
+     * A real count at last. The read-first slice withheld one because `0`
+     * would have read as "nobody has said anything" when the truth was "this
+     * build cannot show you". Durable Discussions and Decisions now exist, so
+     * `0` is a true statement about the collaboration and is shown.
      */
-    { section: 'DISCUSSION', label: COLLAB_RAIL_LABELS.DISCUSSION, countUnavailableReason: DISCUSSION_NOT_RELEASED },
+    { section: 'DISCUSSIONS_DECISIONS', label: COLLAB_RAIL_LABELS.DISCUSSIONS_DECISIONS, count: counts.discussionsDecisions },
     { section: 'ARCHIVED', label: COLLAB_RAIL_LABELS.ARCHIVED, count: counts.archived },
   ]
 }
@@ -468,4 +691,8 @@ export function buildRail(counts: {
  * surface says why nothing is listed rather than drawing an empty box.
  */
 export const DISCUSSION_NOTE =
-  'Discussion is recorded against durable resources and never advances a Work Order’s state — talking about work is not doing it. No discussion surface is released in this slice.'
+  'Discussion is recorded against durable resources and never advances a Work Order’s state — talking about work is not doing it. Decisions are shown beside the discussions that produced them, because a decision is hard to understand later without them.'
+
+/** §44: shown when the section is genuinely empty, rather than an empty box. */
+export const NO_DISCUSSIONS_OR_DECISIONS =
+  'No discussions or decisions have been recorded against this Work Order. Records appear here when they are captured through an explicit decision act — a preference expressed in conversation never becomes one.'
