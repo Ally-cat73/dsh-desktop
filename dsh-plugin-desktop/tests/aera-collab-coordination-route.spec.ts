@@ -234,3 +234,49 @@ describe('packet state read (§20)', () => {
     expect(res.body()).toEqual({ unavailableReason: 'No packet p1 exists in the durable store.' })
   })
 })
+
+/**
+ * WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-WORKING-LINE-HANDOFF-001 §21.
+ *
+ * Mechanical acceptance caught a share that went nowhere: the button created a
+ * deterministic packet and had no thread to put it in, so a real snapshot was
+ * written that no reader could ever see. A share with no recipient is not a
+ * share.
+ *
+ * The share is now two requests — create the packet, then post it into a named
+ * thread — so the route must accept both halves with a Work Order scope.
+ */
+describe('§21 — sharing a comparison is a two-step that lands in a thread', () => {
+  it('accepts a scoped SHARE_COMPARE', () => {
+    const parsed = parseCoordinationBody({
+      action: 'SHARE_COMPARE',
+      workOrderId: 'WO-TEST-SHARE-001',
+      compareLineIndex: 0,
+    })
+    expect(parsed?.action).toBe('SHARE_COMPARE')
+    expect(parsed?.workOrderId).toBe('WO-TEST-SHARE-001')
+    expect(parsed?.compareLineIndex).toBe(0)
+  })
+
+  it('accepts the follow-up POST_MESSAGE carrying the packet into a thread', () => {
+    const parsed = parseCoordinationBody({
+      action: 'POST_MESSAGE',
+      workOrderId: 'WO-TEST-SHARE-001',
+      threadId: 'aera:collab-thread:abc',
+      body: 'Sharing the comparison I am looking at.',
+      intent: 'REVIEW_REQUEST',
+      packetId: 'aera:coordination-packet:def',
+      requestId: 'share-1',
+    })
+    expect(parsed?.packetId).toBe('aera:coordination-packet:def')
+    expect(parsed?.threadId).toBe('aera:collab-thread:abc')
+    expect(parsed?.intent).toBe('REVIEW_REQUEST')
+  })
+
+  it('still refuses a packet reference that is not a bounded id', () => {
+    expect(parseCoordinationBody({
+      action: 'POST_MESSAGE', threadId: 'aera:collab-thread:abc', body: 'x',
+      requestId: 'r', packetId: '   ',
+    })).toBeUndefined()
+  })
+})

@@ -751,9 +751,12 @@ function DecisionFromThread({ threadId, workOrderId, onDone, api, t }: {
   )
 }
 
-function ThreadCard({ thread, workOrderId, api, onChanged, t }: {
+function ThreadCard({ thread, workOrderId, canShareCompare, compareLineIndex, api, onChanged, t }: {
   readonly thread: CollabThreadRow
   readonly workOrderId: string
+  /** A comparison is on screen, so there is something real to share (§21). */
+  readonly canShareCompare: boolean
+  readonly compareLineIndex?: number
   readonly api: Pick<AeraCollabApi, 'coordinate' | 'packetState'>
   readonly onChanged: () => void
   readonly t: Translate
@@ -844,6 +847,59 @@ function ThreadCard({ thread, workOrderId, api, onChanged, t }: {
                 </label>
                 <button type="submit" disabled={busy || draft.trim() === ''}>{t('send')}</button>
               </form>
+              {/*
+                * §21 — SHARE FROM COMPARE, and it lands IN A THREAD.
+                *
+                * Mechanical acceptance caught this: a section-level share
+                * button created the packet and then had nowhere to put it, so
+                * a deterministic snapshot was written that nobody could see. A
+                * share with no recipient is not a share. The action lives on
+                * the thread because that is what makes the target unambiguous,
+                * and it carries whatever note the sender has already typed
+                * (§21: "the sender may add a human note").
+                */}
+              {canShareCompare
+                ? (
+                    <button
+                      type="button"
+                      className="aera-collab-share-compare"
+                      disabled={busy}
+                      onClick={() => {
+                        if (threadId === undefined) return
+                        setBusy(true)
+                        setError(undefined)
+                        const note = draft.trim()
+                        void api.coordinate({
+                          action: 'SHARE_COMPARE',
+                          workOrderId,
+                          ...(compareLineIndex === undefined ? {} : { compareLineIndex }),
+                        })
+                          .then((result) => {
+                            const packetId = (result as { packetId?: string } | undefined)?.packetId
+                            if (packetId === undefined) {
+                              throw new Error('The comparison was shared but no packet came back, so nothing was posted.')
+                            }
+                            return api.coordinate({
+                              action: 'POST_MESSAGE',
+                              workOrderId,
+                              threadId,
+                              body: note === '' ? t('sharedComparisonNote') : note,
+                              intent: 'REVIEW_REQUEST',
+                              packetId,
+                              requestId: `share-${String(Date.now())}-${Math.random().toString(36).slice(2)}`,
+                            })
+                          })
+                          .then(() => { setDraft(''); onChanged() })
+                          .catch((cause: unknown) => {
+                            setError(cause instanceof Error ? cause.message : String(cause))
+                          })
+                          .finally(() => { setBusy(false) })
+                      }}
+                    >
+                      {t('shareCompare')}
+                    </button>
+                  )
+                : null}
               <button
                 type="button"
                 disabled={busy}
@@ -1192,32 +1248,9 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
           <button type="submit" disabled={newThreadSubject.trim() === ''}>{t('startThread')}</button>
         </form>
         {/*
-          * §21 — SHARE FROM COMPARE. Offered only while a comparison is
-          * actually on screen, because a packet is a snapshot of a real
-          * comparison and there is nothing honest to share without one.
+          * §21's share action lives on each THREAD, not here: a packet needs a
+          * recipient, and a section-level button had no unambiguous one.
           */}
-        {surface.compare === undefined
-          ? null
-          : (
-              <button
-                type="button"
-                className="aera-collab-share-compare"
-                onClick={() => {
-                  setCoordinationError(undefined)
-                  void api.coordinate({
-                    action: 'SHARE_COMPARE',
-                    workOrderId,
-                    ...(comparing === undefined ? {} : { compareLineIndex: comparing }),
-                  })
-                    .then(() => { void read(comparing) })
-                    .catch((cause: unknown) => {
-                      setCoordinationError(cause instanceof Error ? cause.message : String(cause))
-                    })
-                }}
-              >
-                {t('shareCompare')}
-              </button>
-            )}
         {coordinationError === undefined
           ? null
           : <p className="aera-collab-status">{coordinationError}</p>}
@@ -1230,6 +1263,8 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
                     key={thread.technical[0] ?? thread.subject}
                     thread={thread}
                     workOrderId={workOrderId}
+                    canShareCompare={surface.compare !== undefined}
+                    {...(comparing === undefined ? {} : { compareLineIndex: comparing })}
                     api={api}
                     t={t}
                     onChanged={() => { void read(comparing) }}
