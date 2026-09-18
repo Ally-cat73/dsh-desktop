@@ -129,10 +129,15 @@ describe('§32, §34 — participant contribution', () => {
         statusLine: 'Ended', codeWorkingLineIds: [], meaningfulActivityCount: 0,
       },
       new Map(),
-      contribution({
-        summarySentence: 'No contributions recorded against this participant yet.',
-        lastContributionAt: undefined,
-      }),
+      // Built without `lastContributionAt` at all — an ABSENT member, not an
+      // explicit undefined, which `exactOptionalPropertyTypes` rightly rejects.
+      (() => {
+        const { lastContributionAt: _absent, ...withoutTime } = contribution()
+        return {
+          ...withoutTime,
+          summarySentence: 'No contributions recorded against this participant yet.',
+        }
+      })(),
     )
     expect(row.contributionSentence).toBeUndefined()
   })
