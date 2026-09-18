@@ -10,7 +10,7 @@ import {
   CHANGED_FILES_NOT_COMPUTED,
   COLLAB_RAIL_SECTIONS,
   COLLAB_VIEWS,
-  DISCUSSION_NOT_RELEASED,
+  NO_DISCUSSIONS_OR_DECISIONS,
   DISCUSSION_NOTE,
   buildRail,
   toActivityRowView,
@@ -346,11 +346,14 @@ describe('participants, activity, checkpoints and the rail', () => {
   })
 
   it('the rail carries the counts, and the counts live only there', () => {
-    const rail = buildRail({ activity: 12, checkpoints: 4, changedFiles: 3, evidence: 2, archived: 1 })
+    const rail = buildRail({
+      activity: 12, checkpoints: 4, changedFiles: 3, evidence: 2, discussionsDecisions: 5, archived: 1,
+    })
     expect(rail.map((tab) => tab.section)).toEqual([...COLLAB_RAIL_SECTIONS])
     expect(rail.map((tab) => tab.label)).toEqual([
-      'Activity', 'Checkpoints', 'Changed files', 'Evidence', 'Discussion', 'Archived',
+      'Activity', 'Checkpoints', 'Changed files', 'Evidence', 'Discussions & decisions', 'Archived',
     ])
+    expect(rail.find((tab) => tab.section === 'DISCUSSIONS_DECISIONS')?.count).toBe(5)
     expect(rail.find((tab) => tab.section === 'ACTIVITY')?.count).toBe(12)
     expect(rail.find((tab) => tab.section === 'ARCHIVED')?.count).toBe(1)
     expect(rail.find((tab) => tab.section === 'CHANGED_FILES')?.count).toBe(3)
@@ -358,18 +361,28 @@ describe('participants, activity, checkpoints and the rail', () => {
 
   it('an uncomputed count is ABSENT with a stated reason — never a zero that means "unknown"', () => {
     // No Compare has been opened, so there is no changed-file count to give.
-    const rail = buildRail({ activity: 4, checkpoints: 0, evidence: 4, archived: 0 })
+    const rail = buildRail({
+      activity: 4, checkpoints: 0, evidence: 4, discussionsDecisions: 0, archived: 0,
+    })
     const changed = rail.find((tab) => tab.section === 'CHANGED_FILES')
 
     expect(changed?.count).toBeUndefined()
     expect(changed?.countUnavailableReason).toBe(CHANGED_FILES_NOT_COMPUTED)
     expect(changed?.countUnavailableReason).toContain('Not computed until Compare is opened')
 
-    // Discussion has no surface yet, so it has no count either — `0` would
-    // claim nobody has said anything.
-    const discussion = rail.find((tab) => tab.section === 'DISCUSSION')
-    expect(discussion?.count).toBeUndefined()
-    expect(discussion?.countUnavailableReason).toBe(DISCUSSION_NOT_RELEASED)
+    /*
+     * Discussions & decisions now HAS a count, and that is the change.
+     *
+     * The read-first slice withheld one on purpose: `0` would have read as
+     * "nobody has said anything" when the truth was "this build cannot show
+     * you", and a count that means "unknown" is exactly what this test exists
+     * to forbid. Durable Discussions and Decisions exist now, so zero is a
+     * true statement about the collaboration rather than about the build, and
+     * withholding it would itself be the dishonest option.
+     */
+    const discussion = rail.find((tab) => tab.section === 'DISCUSSIONS_DECISIONS')
+    expect(discussion?.count).toBe(0)
+    expect(discussion?.countUnavailableReason).toBeUndefined()
 
     // A genuine zero is still a zero: nothing is archived, and that IS known.
     const archived = rail.find((tab) => tab.section === 'ARCHIVED')
@@ -380,5 +393,10 @@ describe('participants, activity, checkpoints and the rail', () => {
   it('discussion is offered as an entry point and never as history authority', () => {
     expect(DISCUSSION_NOTE).toContain('never advances a Work Order’s state')
     expect(DISCUSSION_NOTE).toContain('talking about work is not doing it')
+  })
+
+  it('an empty Discussions & decisions section says why, and says a chat turn is not a decision', () => {
+    expect(NO_DISCUSSIONS_OR_DECISIONS).toContain('explicit decision act')
+    expect(NO_DISCUSSIONS_OR_DECISIONS).toContain('never becomes one')
   })
 })

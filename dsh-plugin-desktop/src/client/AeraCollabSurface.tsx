@@ -25,8 +25,11 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   MAX_RENDERED_FILES,
   type AeraCollabApi,
+  type CollabActivityBlock,
   type CollabActivityRow,
   type CollabChangedFileRow,
+  type CollabDecision,
+  type CollabEvidenceCard,
   type CollabLineRow,
   type CollabNodeRef,
   type CollabSurfaceView,
@@ -181,11 +184,56 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
         <span className="aera-collab-line-participant">{line.participant}</span>
         {/* An observed line says so. It never poses as a durable record. */}
         <span className="aera-collab-line-provenance">{line.provenance}</span>
+        {line.lifecycleWord === undefined
+          ? null
+          : <span className="aera-collab-line-lifecycle">{line.lifecycleWord}</span>}
       </button>
       {expanded
         ? (
             <div className="aera-collab-line-body">
-              <p className="aera-collab-line-topology">{line.topologySentence}</p>
+              {/*
+                * §41: WHERE IT CAME FROM and WHERE IT IS GOING, as two
+                * separate sentences, because they are two different
+                * relationships (§11). Absent on an OBSERVED row, which has no
+                * recorded lineage to show.
+                */}
+              {/*
+                * `role="note"` + `aria-label` is not decoration. A bare <p> is
+                * invisible to the macOS accessibility API, so the lineage and
+                * the integration target — the two facts §41 and §11 exist to
+                * put in front of the reader — could be SEEN but not HEARD, and
+                * could not be mechanically observed either (§64). A screen
+                * reader user would have been told this line's name and its
+                * provenance would have been silent.
+                */}
+              {line.lineageSentence === undefined
+                ? null
+                : (
+                    <p className="aera-collab-line-lineage" role="note" aria-label={line.lineageSentence}>
+                      {line.lineageSentence}
+                    </p>
+                  )}
+              {line.integrationTargetSentence === undefined
+                ? null
+                : (
+                    <p className="aera-collab-line-target" role="note" aria-label={line.integrationTargetSentence}>
+                      {line.integrationTargetSentence}
+                    </p>
+                  )}
+              <p className="aera-collab-line-topology" role="note" aria-label={line.topologySentence}>
+                {line.topologySentence}
+              </p>
+              {line.latestCheckpoint === undefined
+                ? null
+                : (
+                    <p
+                      className="aera-collab-line-checkpoint"
+                      role="note"
+                      aria-label={`${t('latestCheckpoint')}: ${line.latestCheckpoint}`}
+                    >
+                      {`${t('latestCheckpoint')}: ${line.latestCheckpoint}`}
+                    </p>
+                  )}
               {line.conflictSentence === undefined
                 ? null
                 : <p className="aera-collab-line-conflict">{line.conflictSentence}</p>}
@@ -195,6 +243,27 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
               {line.provenanceNote === undefined
                 ? null
                 : <p className="aera-collab-status">{line.provenanceNote}</p>}
+              {/*
+                * §47: the stored record still says what it said. The correction
+                * is a separate record, and the reader can see both.
+                */}
+              {line.attributionNote === undefined
+                ? null
+                : (
+                    <div className="aera-collab-corrected">
+                      <p className="aera-collab-corrected-note" role="note" aria-label={line.attributionNote}>
+                        {line.attributionNote}
+                      </p>
+                      {line.attributionOriginalClaim === undefined
+                        ? null
+                        : (
+                            <details className="aera-collab-corrected-original">
+                              <summary>{t('originalRecord')}</summary>
+                              <p>{line.attributionOriginalClaim}</p>
+                            </details>
+                          )}
+                    </div>
+                  )}
               <Technical lines={line.technical} label={t('technicalDetails')} />
               {line.compareAvailable
                 ? (
@@ -267,6 +336,161 @@ function ActivityRow({ row, t }: {
       {row.technical === undefined
         ? null
         : <Technical lines={[row.technical]} label={t('technicalDetails')} />}
+    </li>
+  )
+}
+
+
+/**
+ * §43: one Activity Block. The block says WHAT happened as a unit; its members
+ * stay individually readable underneath, because grouping must never be a way
+ * of hiding an act (§47, §58).
+ */
+function ActivityBlock({ block, t }: {
+  readonly block: CollabActivityBlock
+  readonly t: Translate
+}) {
+  return (
+    <li className="aera-collab-block">
+      <details className="aera-collab-block-details">
+        <summary className="aera-collab-block-head">
+          <span className="aera-collab-block-title">{block.title}</span>
+          <span className="aera-collab-block-range">
+            <Recorded value={block.from} />
+            {block.from === block.to ? null : <span aria-hidden="true">{' – '}</span>}
+            {block.from === block.to ? null : <Recorded value={block.to} />}
+          </span>
+          {block.counts.map(count => (
+            <span key={count} className="aera-collab-block-count">{count}</span>
+          ))}
+        </summary>
+        {block.participants.length === 0
+          ? null
+          : <p className="aera-collab-block-participants">{block.participants.join(' · ')}</p>}
+        {/* §38: the legacy block says why it is not grouped, in words. */}
+        {block.legacyNote === undefined
+          ? null
+          : <p className="aera-collab-status">{block.legacyNote}</p>}
+        <ul className="aera-collab-activity">
+          {block.members.map(member => (
+            <ActivityRow key={`${member.when}:${member.summary.slice(0, 64)}`} row={member} t={t} />
+          ))}
+        </ul>
+        <Technical lines={block.technical} label={t('technicalDetails')} />
+      </details>
+    </li>
+  )
+}
+
+/**
+ * §46: a typed evidence card.
+ *
+ * The CLASS leads, because "the provider's receipt says X" and "a model thinks
+ * X" are different kinds of claim and the reader must be able to tell them
+ * apart before reading anything else. An analytical card carries its producer
+ * inline and says, in words, that it is an interpretation.
+ */
+function EvidenceCard({ card, t }: {
+  readonly card: CollabEvidenceCard
+  readonly t: Translate
+}) {
+  return (
+    <li className="aera-collab-evidence-card">
+      <div className="aera-collab-evidence-card-head">
+        <span className="aera-collab-evidence-class">{card.classWord}</span>
+        {card.outcome === undefined
+          ? null
+          : <span className="aera-collab-evidence-outcome">{card.outcome}</span>}
+      </div>
+      <p className="aera-collab-evidence-subject">{card.subject}</p>
+      <p className="aera-collab-evidence-actor">
+        <span>{card.actor}</span>
+        <Recorded value={card.when} />
+      </p>
+      {card.analyticalNote === undefined
+        ? null
+        : <p className="aera-collab-evidence-analytical">{card.analyticalNote}</p>}
+      {card.factualNote === undefined
+        ? null
+        : <p className="aera-collab-status">{card.factualNote}</p>}
+      {card.body === undefined
+        ? null
+        : (
+            <details className="aera-collab-evidence-body">
+              <summary>{t('showMore')}</summary>
+              <p>{card.body}</p>
+            </details>
+          )}
+      <Technical lines={card.technical} label={t('technicalDetails')} />
+    </li>
+  )
+}
+
+/** One list of labelled strings, drawn only when there is something to draw. */
+function DecisionFacts({ label, values }: {
+  readonly label: string
+  readonly values: readonly string[]
+}) {
+  if (values.length === 0) return null
+  return (
+    <div className="aera-collab-decision-facts">
+      <span className="aera-collab-decision-facts-label">{label}</span>
+      <ul>
+        {values.map(value => <li key={value}>{value}</li>)}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * §44 / §45: a decision the reader can actually understand later.
+ *
+ * Shut by default with the subject, the decider and the choice; opening it
+ * answers every question §45 asks — what alternatives existed, what evidence
+ * was considered, what was discussed, under what authority, what followed, and
+ * whether it has since been superseded.
+ *
+ * The §21 sentence is on every decision, always: this proves the choice was
+ * made, not that the choice was right.
+ */
+function DecisionCard({ decision, t }: {
+  readonly decision: CollabDecision
+  readonly t: Translate
+}) {
+  return (
+    <li className="aera-collab-decision">
+      <details className="aera-collab-decision-details">
+        <summary className="aera-collab-decision-head">
+          <span className="aera-collab-decision-subject">{decision.subject}</span>
+          <span className="aera-collab-decision-selected">{decision.selectedOption}</span>
+          <span className="aera-collab-decision-status">{decision.statusWord}</span>
+        </summary>
+        <p className="aera-collab-decision-actors">
+          <span>{`${t('decidedBy')}: ${decision.decidedBy}`}</span>
+          {/* §31: who decided and who typed it are shown as different facts. */}
+          <span>{`${t('recordedBy')}: ${decision.recordedBy}`}</span>
+          {decision.authorisedBy === undefined
+            ? null
+            : <span>{`${t('authorisedBy')}: ${decision.authorisedBy}`}</span>}
+          {decision.verifiedBy === undefined
+            ? null
+            : <span>{`${t('verifiedBy')}: ${decision.verifiedBy}`}</span>}
+          <Recorded value={decision.when} />
+        </p>
+        {decision.rationale === undefined
+          ? null
+          : <p className="aera-collab-decision-rationale">{decision.rationale}</p>}
+        <DecisionFacts label={t('alternatives')} values={decision.alternatives} />
+        <DecisionFacts label={t('evidenceConsidered')} values={decision.evidence} />
+        <DecisionFacts label={t('discussedIn')} values={decision.discussions} />
+        <DecisionFacts label={t('authorisedEffects')} values={decision.authorisedEffects} />
+        <DecisionFacts label={t('resultingEffects')} values={decision.resultingEffects} />
+        {decision.supersededByNote === undefined
+          ? null
+          : <p className="aera-collab-decision-superseded">{decision.supersededByNote}</p>}
+        <p className="aera-collab-decision-not-a-fact">{decision.notAFactNote}</p>
+        <Technical lines={decision.technical} label={t('technicalDetails')} />
+      </details>
     </li>
   )
 }
@@ -431,6 +655,14 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
               <span className="aera-collab-participant-name">{participant.displayName}</span>
               <span className="aera-collab-participant-kind">{participant.principalKind}</span>
               <span className="aera-collab-participant-status">{participant.statusLine}</span>
+              {/*
+                * §32/§33: what they contributed, counted by governance leg. A
+                * human who decided and authorised is not "0 acts" because an
+                * agent typed the events. Navigation aid, never a score (§60).
+                */}
+              {participant.contributionSentence === undefined
+                ? null
+                : <span className="aera-collab-participant-contribution">{participant.contributionSentence}</span>}
               <Technical lines={participant.technical} label={t('technicalDetails')} />
             </li>
           ))}
@@ -461,11 +693,29 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
       </Section>
 
       <Section title={t('activity')} {...railCount('ACTIVITY')}>
-        <ul className="aera-collab-activity">
-          {surface.activity.map(row => (
-            <ActivityRow key={`${row.when}:${row.summary.slice(0, 64)}`} row={row} t={t} />
-          ))}
-        </ul>
+        {/*
+          * §43: blocks sit ABOVE the raw rows and never replace them. §47 is
+          * the reason the raw list is still here in full — the human-readable
+          * projection sits over the canonical history, it does not stand in
+          * for it, and a reader who wants the forensic view can still have it.
+          */}
+        {surface.activityBlocks.length === 0
+          ? null
+          : (
+              <ul className="aera-collab-blocks">
+                {surface.activityBlocks.map(block => (
+                  <ActivityBlock key={`${block.title}:${block.from}`} block={block} t={t} />
+                ))}
+              </ul>
+            )}
+        <details className="aera-collab-raw-activity">
+          <summary>{t('rawActivity')}</summary>
+          <ul className="aera-collab-activity">
+            {surface.activity.map(row => (
+              <ActivityRow key={`${row.when}:${row.summary.slice(0, 64)}`} row={row} t={t} />
+            ))}
+          </ul>
+        </details>
       </Section>
 
       <Section title={t('checkpoints')} {...railCount('CHECKPOINTS')}>
@@ -474,9 +724,38 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
           : (
               <ul className="aera-collab-checkpoints">
                 {surface.checkpoints.map(row => (
-                  <li key={`${row.label}:${row.when ?? ''}`} className="aera-collab-checkpoint-row">
-                    <span className="aera-collab-checkpoint-label">{row.label}</span>
-                    <Recorded value={row.when} />
+                  <li key={`${row.name}:${row.when}`} className="aera-collab-checkpoint-row">
+                    <div className="aera-collab-checkpoint-head">
+                      <span className="aera-collab-checkpoint-label">{row.name}</span>
+                      <span className="aera-collab-checkpoint-origin">{row.origin}</span>
+                      <span className="aera-collab-checkpoint-who">{row.who}</span>
+                      <Recorded value={row.when} />
+                    </div>
+                    {/* §42: the summary is the point of a checkpoint card; the
+                        underlying commit stays progressive disclosure. */}
+                    {row.summary === undefined
+                      ? null
+                      : <p className="aera-collab-checkpoint-summary">{row.summary}</p>}
+                    {/* CP-5: the weakest arm says so, on every row that uses it. */}
+                    {row.verifiabilityNote === undefined
+                      ? null
+                      : <p className="aera-collab-status">{row.verifiabilityNote}</p>}
+                    {row.attributionNote === undefined
+                      ? null
+                      : (
+                          <div className="aera-collab-corrected">
+                            <p className="aera-collab-corrected-note">{row.attributionNote}</p>
+                            {row.attributionOriginalClaim === undefined
+                              ? null
+                              : (
+                                  <details className="aera-collab-corrected-original">
+                                    <summary>{t('originalRecord')}</summary>
+                                    <p>{row.attributionOriginalClaim}</p>
+                                  </details>
+                                )}
+                          </div>
+                        )}
+                    <Technical lines={[row.technical]} label={t('technicalDetails')} />
                   </li>
                 ))}
               </ul>
@@ -484,18 +763,71 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
       </Section>
 
       <Section title={t('evidence')} {...railCount('EVIDENCE')}>
-        <ul className="aera-collab-evidence">
-          {surface.evidence.map(row => (
-            <li key={row.label}>
-              <span>{row.label}</span>
-              <span className="aera-collab-evidence-status">{row.status}</span>
-            </li>
-          ))}
-        </ul>
+        {/* §46: typed cards first. The prose list stays beneath, disclosed. */}
+        {surface.evidenceCards.length === 0
+          ? null
+          : (
+              <ul className="aera-collab-evidence-cards">
+                {surface.evidenceCards.map(card => (
+                  <EvidenceCard key={`${card.classWord}:${card.subject}:${card.when}`} card={card} t={t} />
+                ))}
+              </ul>
+            )}
+        {surface.evidence.length === 0
+          ? null
+          : (
+              <details className="aera-collab-evidence-raw">
+                <summary>{t('technicalDetails')}</summary>
+                <ul className="aera-collab-evidence">
+                  {surface.evidence.map(row => (
+                    <li key={row.label}>
+                      <span>{row.label}</span>
+                      <span className="aera-collab-evidence-status">{row.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
       </Section>
 
-      <Section title={t('discussion')} {...railCount('DISCUSSION')}>
+      {/*
+        * §44: DISCUSSIONS & DECISIONS. They remain distinct RECORDS (§18) and
+        * are presented together because a decision is very hard to understand
+        * later without the discussion that produced it.
+        */}
+      <Section title={t('discussionsDecisions')} {...railCount('DISCUSSIONS_DECISIONS')}>
         <p className="aera-collab-status">{surface.discussionNote}</p>
+        {surface.discussionsDecisionsEmptyReason === undefined
+          ? null
+          : <p className="aera-collab-status">{surface.discussionsDecisionsEmptyReason}</p>}
+        {surface.decisions.length === 0
+          ? null
+          : (
+              <ul className="aera-collab-decisions">
+                {surface.decisions.map(decision => (
+                  <DecisionCard key={`${decision.subject}:${decision.when}`} decision={decision} t={t} />
+                ))}
+              </ul>
+            )}
+        {surface.discussions.length === 0
+          ? null
+          : (
+              <ul className="aera-collab-discussions">
+                {surface.discussions.map(discussion => (
+                  <li key={`${discussion.subject}:${discussion.updatedAt}`} className="aera-collab-discussion">
+                    <span className="aera-collab-discussion-subject">{discussion.subject}</span>
+                    <span className="aera-collab-discussion-count">
+                      {`${String(discussion.entryCount)} ${discussion.entryCount === 1 ? 'entry' : 'entries'}`}
+                    </span>
+                    <Recorded value={discussion.updatedAt} />
+                    {discussion.latestEntry === undefined
+                      ? null
+                      : <p className="aera-collab-discussion-entry">{discussion.latestEntry}</p>}
+                    <Technical lines={discussion.technical} label={t('technicalDetails')} />
+                  </li>
+                ))}
+              </ul>
+            )}
       </Section>
 
       <Section title={t('archived')} count={surface.archivedCount} />

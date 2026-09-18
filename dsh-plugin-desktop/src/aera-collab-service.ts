@@ -54,7 +54,11 @@ import {
 } from '@aera/participation-runtime'
 import {
   DISCUSSION_NOTE,
+  NO_DISCUSSIONS_OR_DECISIONS,
   buildRail,
+  toActivityBlockView,
+  toDecisionView,
+  toEvidenceCardView,
   toActivityRowView,
   toCheckpointRowView,
   toCompareView,
@@ -1139,6 +1143,19 @@ export class CollabWorkspaceService {
     for (const projection of surface.lines) {
       const label = projection.line.label ?? projection.line.codeWorkingLineId
       lineLabelsById.set(projection.line.codeWorkingLineId, label)
+      /*
+       * §40, §41, §42: a durable line now shows where it CAME FROM, where it
+       * is GOING, and the last meaningful state it reached. Each is read off a
+       * real record — `lineage` is absent rather than invented when the
+       * projection has none, and `latestCheckpoint` is absent when no
+       * checkpoint has been named, which is the honest answer and the one that
+       * keeps the §15 rule visible: a checkpoint is not a commit, so a line
+       * with commits and no checkpoints truthfully has none.
+       */
+      const lineage = surface.institutional.lineageByLineId.get(projection.line.codeWorkingLineId)
+      const lineCorrection = surface.institutional.correctionNotes
+        .find(note => note.subjectRecordId === projection.line.codeWorkingLineId)
+      const latest = projection.checkpoints.at(-1)
       lines.push(toLineRowView({
         label,
         participant: projection.participantDisplayName ?? 'Participant unresolved',
@@ -1146,6 +1163,12 @@ export class CollabWorkspaceService {
         checkpointCount: projection.checkpoints.length,
         codeWorkingLineId: projection.line.codeWorkingLineId,
         provenance: 'DURABLE',
+        ...(lineage === undefined ? {} : { lineage }),
+        ...(latest === undefined
+          ? {}
+          : { latestCheckpoint: `${latest.label ?? `Checkpoint ${String(latest.lineSequence)}`}${latest.summary === undefined ? '' : ` — ${latest.summary}`}` }),
+        lifecycle: projection.line.lifecycle,
+        ...(lineCorrection === undefined ? {} : { correction: lineCorrection }),
       }))
     }
 
@@ -1210,7 +1233,11 @@ export class CollabWorkspaceService {
       authorityMode: context.authorityMode,
       authorityModeNote: context.authorityModeNote,
       assembledAt: context.assembledAt,
-      participants: surface.participants.map(row => toParticipantRowView(row, lineLabelsById)),
+      participants: surface.participants.map(row => {
+        const contribution = surface.institutional.contributions
+          .find(entry => entry.principalId === row.principalId)
+        return toParticipantRowView(row, lineLabelsById, contribution)
+      }),
       lines,
       ...(lines.length === 0
         ? {
@@ -1230,11 +1257,16 @@ export class CollabWorkspaceService {
          * nothing changed.
          */
         ...(compare === undefined ? {} : { changedFiles: compare.files.length }),
-        evidence: context.evidence.length,
+        evidence: context.evidence.length + surface.institutional.evidenceCards.length,
+        discussionsDecisions:
+          surface.institutional.discussions.length + surface.institutional.decisionContexts.length,
         archived: surface.archivedLineIds.length,
       }),
       activity: surface.activity.map(toActivityRowView),
-      checkpoints: surface.checkpoints.map(toCheckpointRowView),
+      checkpoints: surface.checkpoints.map(row => toCheckpointRowView(
+        row,
+        surface.institutional.correctionNotes.find(note => note.subjectRecordId === row.checkpointId),
+      )),
       ...(surface.checkpoints.length === 0
         ? {
             checkpointsEmptyReason:
@@ -1246,6 +1278,42 @@ export class CollabWorkspaceService {
         status: node.status,
         ...(node.sourcePath === undefined ? {} : { technical: node.sourcePath }),
       })),
+      // §46: typed cards are what the surface draws; the prose list above
+      // stays as the raw layer beneath them (§47).
+      evidenceCards: surface.institutional.evidenceCards.map(toEvidenceCardView),
+      /*
+       * §43: blocks sit ABOVE the raw rows, which remain in `activity`
+       * untouched. A member row is matched back to its raw row by rowId so the
+       * block shows exactly the acts it groups and invents no prose of its own.
+       */
+      activityBlocks: surface.institutional.activityBlocks.map(block => {
+        const byRowId = new Map(surface.activity.map(row => [row.rowId, row]))
+        return toActivityBlockView(
+          block,
+          block.members.map(member => {
+            const raw = byRowId.get(member.rowId)
+            return raw === undefined
+              ? { actor: member.actor, summary: member.summary, when: member.at }
+              : toActivityRowView(raw)
+          }),
+        )
+      }),
+      decisions: surface.institutional.decisionContexts.map(toDecisionView),
+      discussions: surface.institutional.discussions.map(discussion => {
+        const latest = discussion.entries.at(-1)
+        return {
+          subject: discussion.subject,
+          entryCount: discussion.entries.length,
+          participants: [...discussion.participants],
+          updatedAt: discussion.updatedAt,
+          ...(latest === undefined ? {} : { latestEntry: latest.text }),
+          technical: [discussion.discussionId],
+        }
+      }),
+      ...(surface.institutional.discussions.length === 0
+        && surface.institutional.decisionContexts.length === 0
+        ? { discussionsDecisionsEmptyReason: NO_DISCUSSIONS_OR_DECISIONS }
+        : {}),
       ...(liveProviderState === undefined ? {} : { liveProviderState }),
       discussionNote: DISCUSSION_NOTE,
       archivedCount: surface.archivedLineIds.length,
