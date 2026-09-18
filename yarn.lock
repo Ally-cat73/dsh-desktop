@@ -39,24 +39,24 @@ __metadata:
 
 "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::hash=33fcde&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::hash=7deedf&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/cis-contracts": "npm:0.1.0"
     "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
-  checksum: 10c0/221c3c9a90169545a74f196b9420ed400ad0afa1128ed72b03673ddd460fd23cd8f3c0dd80711c4b59a1bb48c6d893948f50813fbd154d32d1c89a77df3b09f5
+  checksum: 10c0/93f6258168b06a2c5b94314c3b09b579403ad150ad2b5ebc495bcb94315a52d9eb9454eb9720619a7255c61963425d91d0aa981d399ecf3bd3b1d262bf736c6f
   languageName: node
   linkType: hard
 
 "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=2eac73&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=0c015e&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/cis-contracts": "npm:0.1.0"
     "@aera/evidentiary-work-graph": "npm:0.1.0"
     "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
     "@aera/harness": "npm:0.1.0"
     "@aera/participation-contracts": "npm:0.1.0"
-  checksum: 10c0/784ca6331f4aa517b831d1f1920d27fbf0fc2485578ea8c334b3e2fb4f0089d84e9c633f27dc4ca2f1d1fbcac69f370553bc2d090b0d9ef680069812efb8916b
+  checksum: 10c0/5606bd01abdd8f7bda2f7108e2b708070cd6f15cbb577596eb104c230a5d4051fe2f70e2726e8ff8a2cd90a0b96931a4ad4c1e609a6202e7e1a87ae6642345cf
   languageName: node
   linkType: hard
 

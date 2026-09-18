@@ -861,6 +861,7 @@ export function threadAboutLine(
 export function toPacketCardView(
   packet: CoordinationPacketV1,
   assessment?: PacketStateAssessmentV1,
+  names: { readonly source?: string, readonly target?: string } = {},
 ): CollabPacketCardView {
   const comparison = packet.comparison
   const facts: string[] = []
@@ -878,9 +879,19 @@ export function toPacketCardView(
     && assessment.verdict !== 'UNRESOLVABLE'
   return {
     title: packet.subject === 'WORKING_LINE_COMPARE' ? 'Working-Line compare' : 'Shared reference',
+    /*
+     * §56: "which Working Lines" — a reader should see `Jordan → Integration`,
+     * not two hex revisions. Names are resolved by the caller from the ids the
+     * packet carries.
+     *
+     * The fallback to a revision is deliberate and is NOT a name: where the
+     * compared side has no durable Working Line record there is no name to
+     * show, and printing a revision is the truthful thing to do rather than
+     * inventing a label for something that has none.
+     */
     operands: comparison === undefined
       ? packet.subject
-      : `${comparison.sourceRevision} → ${comparison.targetRevision}`,
+      : `${names.source ?? comparison.sourceRevision} → ${names.target ?? comparison.targetRevision}`,
     facts,
     capturedAt: packet.observedAt,
     ...(assessment === undefined ? {} : { stateNote: assessment.humanSummary }),

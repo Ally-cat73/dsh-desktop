@@ -17,6 +17,7 @@ import {
   toCheckpointRowView,
   toCompareView,
   toLineRowView,
+  toPacketCardView,
   toParticipantRowView,
 } from '../src/aera-collab-code-view.ts'
 import { parseWorkContextAction } from '../src/work-context-window.ts'
@@ -399,5 +400,73 @@ describe('participants, activity, checkpoints and the rail', () => {
   it('an empty Discussions & decisions section says why, and says a chat turn is not a decision', () => {
     expect(NO_DISCUSSIONS_OR_DECISIONS).toContain('explicit decision act')
     expect(NO_DISCUSSIONS_OR_DECISIONS).toContain('never becomes one')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// §17/§56 — a shared comparison names the Working Lines it compares.
+// Independent review R1, finding 1.
+describe('toPacketCardView — naming the Working Lines', () => {
+  const packet = {
+    packetVersion: 'CoordinationPacketV1',
+    packetId: 'aera:coordination-packet:abc12345',
+    workOrderId: 'WO-TEST-CARD-001',
+    subject: 'WORKING_LINE_COMPARE',
+    evidenceIds: [],
+    decisionIds: [],
+    observedAt: '2026-09-19T00:00:00.000Z',
+    observedBy: {
+      principalId: 'aera:participant:10000000-0000-4000-8000-000000000001',
+      principalKind: 'HUMAN',
+      displayName: 'Alyshia Daley',
+    },
+    packetDigest: `sha256:${'a'.repeat(64)}`,
+    authority: {
+      authorisingWorkOrderId: 'WO-TEST-CARD-001',
+      recordedByPrincipalId: 'aera:participant:10000000-0000-4000-8000-000000000001',
+      participationSessionId: 'session-1',
+      delegationId: 'delegation-1',
+      authorityMode: 'RECORDED_NOT_ENFORCED',
+    },
+    comparison: {
+      sourceRevision: 'source111',
+      targetRevision: 'target222',
+      filesChanged: 17,
+      filesChangedOnBothLines: 3,
+      filesChangedOnlyOnSource: 12,
+      filesChangedOnlyOnTarget: 2,
+      textualConflicts: 1,
+      linesAdded: 402,
+      linesRemoved: 118,
+      structuralDeltaAvailable: false,
+    },
+  } as unknown as Parameters<typeof toPacketCardView>[0]
+
+  it('renders Working Line NAMES when the packet cites lines that have them', () => {
+    const card = toPacketCardView(packet, undefined, { source: 'Jordan', target: 'Integration' })
+    // §56: "which Working Lines" — not two hex revisions.
+    expect(card.operands).toBe('Jordan → Integration')
+    expect(card.operands).not.toContain('source111')
+  })
+
+  it('falls back to the revision where a side has no durable Working Line', () => {
+    /*
+     * The fallback is truthful, not a degradation: a side with no durable
+     * record has no name, and printing the revision beats inventing a label.
+     */
+    const card = toPacketCardView(packet, undefined, { target: 'Integration' })
+    expect(card.operands).toBe('source111 → Integration')
+  })
+
+  it('names nothing when the packet cites no lines at all', () => {
+    const card = toPacketCardView(packet)
+    expect(card.operands).toBe('source111 → target222')
+  })
+
+  it('still carries the deterministic counts, whatever the operands are called', () => {
+    const card = toPacketCardView(packet, undefined, { source: 'Jordan', target: 'Integration' })
+    expect(card.facts).toContain('17 changed files')
+    expect(card.facts).toContain('3 changed on both lines')
+    expect(card.facts).toContain('1 textual conflict')
   })
 })

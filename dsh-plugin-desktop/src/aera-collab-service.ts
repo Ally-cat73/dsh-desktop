@@ -1150,9 +1150,16 @@ export class CollabWorkspaceService {
           const packet = packets.find(row => row.packetId === reference.packetId)
           if (packet === undefined) return []
           const assessment = assessments.get(packet.packetId)
-          return [assessment === undefined
-            ? toPacketCardView(packet)
-            : toPacketCardView(packet, assessment)]
+          // §56: name the Working Lines the packet cites, where they have names.
+          const names = {
+            ...(packet.sourceWorkingLineId === undefined
+              ? {}
+              : { source: workingLineLabels[packet.sourceWorkingLineId] }),
+            ...(packet.targetWorkingLineId === undefined
+              ? {}
+              : { target: workingLineLabels[packet.targetWorkingLineId] }),
+          }
+          return [toPacketCardView(packet, assessment, names)]
         }),
       ))
       return toThreadRowView({
@@ -1293,6 +1300,23 @@ export class CollabWorkspaceService {
       ...(topology === undefined ? {} : { topology }),
     })
     const summary = computed.summary
+    /*
+     * §17/§56: record WHICH Working Lines were compared, where the compared row
+     * actually has a durable Working Line record.
+     *
+     * Today the observed checkout has none — Compare refuses every non-OBSERVED
+     * row, and an observed checkout carries no `codeWorkingLineId` — so this is
+     * usually absent and the card honestly falls back to revisions. It is read
+     * from the row rather than resolved from the branch on purpose: CWL-1
+     * forbids resolving a Working Line by its branch, label or path, and a
+     * convenient lookup here would be exactly that violation. The moment
+     * Compare supports durable lines, the packet carries the id with no further
+     * change.
+     */
+    const requestedRow = input.compareLineIndex === undefined
+      ? undefined
+      : view.lines[input.compareLineIndex]
+    const sourceWorkingLineId = requestedRow?.codeWorkingLineId
     if (summary === undefined) {
       throw new CollabHonestError(
         'COMPARE_UNAVAILABLE',
@@ -1306,6 +1330,9 @@ export class CollabWorkspaceService {
       authorisingWorkOrderId: workOrderId,
       workOrderId,
       subject: 'WORKING_LINE_COMPARE',
+      ...(sourceWorkingLineId === undefined
+        ? {}
+        : { sourceWorkingLineId: sourceWorkingLineId as NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['sourceWorkingLineId']> }),
       comparison: {
         sourceRevision: summary.fromRevision,
         targetRevision: summary.toRevision,
