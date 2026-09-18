@@ -1301,15 +1301,21 @@ export class CollabWorkspaceService {
     })
     const summary = computed.summary
     /*
-     * §17/§56: record WHICH Working Lines were compared, where the compared row
-     * actually has a durable Working Line record.
+     * §17/§56: record which Working Line the SOURCE side was, where the
+     * compared row actually has a durable Working Line record.
      *
-     * Today the observed checkout has none — Compare refuses every non-OBSERVED
-     * row, and an observed checkout carries no `codeWorkingLineId` — so this is
-     * usually absent and the card honestly falls back to revisions. It is read
-     * from the row rather than resolved from the branch on purpose: CWL-1
-     * forbids resolving a Working Line by its branch, label or path, and a
-     * convenient lookup here would be exactly that violation. The moment
+     * Only the source, deliberately. The target of this comparison is an
+     * accepted integration ref, not a Working Line, so `targetWorkingLineId`
+     * stays absent rather than being filled with something that is not a
+     * Working Line (independent review R2, finding 2 — the earlier wording here
+     * said "Working Lines" plural and overstated what is set).
+     *
+     * Today the source is usually absent too: Compare refuses every
+     * non-OBSERVED row, and an observed checkout carries no
+     * `codeWorkingLineId`, so the card honestly falls back to revisions. The id
+     * is read from the row rather than resolved from the branch on purpose —
+     * CWL-1 forbids resolving a Working Line by its branch, label or path, and
+     * a convenient lookup here would be exactly that violation. The moment
      * Compare supports durable lines, the packet carries the id with no further
      * change.
      */
@@ -1317,6 +1323,17 @@ export class CollabWorkspaceService {
       ? undefined
       : view.lines[input.compareLineIndex]
     const sourceWorkingLineId = requestedRow?.codeWorkingLineId
+    /*
+     * §17 lists RepositoryId among the packet's minimum content, and this is
+     * the repository the comparison was actually observed in. Validated rather
+     * than cast: a configured value that is not a canonical RepositoryId is
+     * omitted, because a packet that names the wrong repository is worse than
+     * one that names none (independent review R2, finding 1).
+     */
+    const observedRepositoryId = observed.view !== undefined
+      && isRepositoryId(observed.view.repositoryId)
+      ? observed.view.repositoryId
+      : undefined
     if (summary === undefined) {
       throw new CollabHonestError(
         'COMPARE_UNAVAILABLE',
@@ -1334,6 +1351,7 @@ export class CollabWorkspaceService {
         ? {}
         : { sourceWorkingLineId: sourceWorkingLineId as NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['sourceWorkingLineId']> }),
       comparison: {
+        ...(observedRepositoryId === undefined ? {} : { repositoryId: observedRepositoryId }),
         sourceRevision: summary.fromRevision,
         targetRevision: summary.toRevision,
         ...(summary.mergeBase === undefined ? {} : { mergeBase: summary.mergeBase }),
