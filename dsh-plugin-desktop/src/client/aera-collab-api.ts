@@ -113,6 +113,16 @@ export interface CollabCompare {
   readonly directionSentence: string
   readonly headline: string
   readonly files: readonly CollabChangedFileRow[]
+  /**
+   * Why the file list is absent even though the comparison succeeded.
+   *
+   * A comparison of more than `MAX_LIST` files used to throw out of the shared
+   * `list()` helper, which aborted `parseCollabSurface` and blanked the ENTIRE
+   * Collab panel — threads, messages, evidence and all — over one oversized
+   * section. A surface whose whole job is to be readable must degrade the part
+   * it cannot draw and say why, not delete itself.
+   */
+  readonly filesUnavailableReason?: string
   readonly unrepresentable: readonly string[]
   readonly structuralDeltaNote?: string
   readonly technical: readonly string[]
@@ -510,6 +520,17 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
     : (() => {
         const raw = value.compare
         if (!isObject(raw)) throw new Error('dsh-plugin-desktop: invalid Compare in Aera Collab surface')
+        /*
+         * A comparison larger than `MAX_LIST` is a real comparison, not a
+         * malformed one. Throwing here aborted the whole surface parse and
+         * blanked the panel; it is now reported per-section instead.
+         */
+        const oversizedFileList = Array.isArray(raw.files) && raw.files.length > MAX_LIST
+          ? `This comparison changed ${String(raw.files.length)} files, more than this surface lists (${String(MAX_LIST)}). The counts above are complete; the per-file list is not shown.`
+          : undefined
+        const renderableFiles = oversizedFileList === undefined
+          ? list(raw.files, 'changed files')
+          : []
         const operand = (side: unknown): { side: string, name: string } => {
           if (!isObject(side)) throw new Error('dsh-plugin-desktop: invalid Compare operand')
           return Object.freeze({ side: text(side.side, 'side'), name: text(side.name, 'name') })
@@ -521,7 +542,13 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           to: operand(raw.to),
           directionSentence: text(raw.directionSentence, 'direction'),
           headline: text(raw.headline, 'headline'),
-          files: Object.freeze(list(raw.files, 'changed files').map((file): CollabChangedFileRow => {
+          /*
+           * BOUNDED, NOT FATAL. The counts in `headline` are complete and stay
+           * readable even when the file rows cannot be, which is the more
+           * useful half of a large comparison anyway.
+           */
+          ...(oversizedFileList === undefined ? {} : { filesUnavailableReason: oversizedFileList }),
+          files: Object.freeze(renderableFiles.map((file): CollabChangedFileRow => {
             if (!isObject(file)) throw new Error('dsh-plugin-desktop: invalid changed file row')
             const previousPath = optionalText(file.previousPath, 'previous path')
             const counts = optionalText(file.counts, 'counts')

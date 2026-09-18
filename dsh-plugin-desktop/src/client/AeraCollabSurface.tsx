@@ -137,6 +137,15 @@ function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView,
               {compare.unrepresentable.map(line => <li key={line}>{line}</li>)}
             </ul>
           )}
+      {/*
+        * A comparison too large to list is still a comparison. The counts
+        * above are complete; saying why the rows are absent beats an empty
+        * list, and beats the panel deleting itself, which is what used to
+        * happen.
+        */}
+      {compare.filesUnavailableReason === undefined
+        ? null
+        : <p className="aera-collab-status">{compare.filesUnavailableReason}</p>}
       <ul className="aera-collab-files">
         {shown.map(file => <ChangedFile key={`${file.kindWord}:${file.path}`} file={file} />)}
       </ul>

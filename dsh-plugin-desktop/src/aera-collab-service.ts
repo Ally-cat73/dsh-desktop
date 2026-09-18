@@ -1531,6 +1531,8 @@ export class CollabWorkspaceService {
   ): Promise<CodeTopologyV1 | undefined> {
     if (observed.view === undefined) return undefined
     const targetRef = this.integrationTargetRef(observed.view.repositoryId)
+    // No recorded canonical branch means no target. Refuse rather than guess.
+    if (targetRef === undefined) return undefined
     const expected = observed.instance?.expectedBase
       ?? this.observedMergeBase(observed.view.localPath, observed.view.branchRef, targetRef)
       ?? observed.view.headRevision
@@ -1823,11 +1825,22 @@ export class CollabWorkspaceService {
    * resource records nothing, and that fallback is visible in the topology
    * facts.
    */
-  private integrationTargetRef(repositoryId: string): string {
+  /**
+   * The integration target ref for a repository, or **undefined** when the
+   * resource records no canonical branch.
+   *
+   * It used to fall back to `origin/HEAD`, which is whatever a local clone's
+   * remote head happens to point at — on this machine, `origin/main`, nine
+   * thousand files from the integration line. A comparison against an
+   * accidental ref is not a comparison; it is a confident wrong answer. The
+   * caller now says it could not resolve the target instead (§21: a Compare
+   * the surface cannot ground must be refused, not guessed).
+   */
+  private integrationTargetRef(repositoryId: string): string | undefined {
     const store = this.requireStore()
     const resource = store.listRepositoryResources().find(entry => entry.repositoryId === repositoryId)
     const branch = resource?.canonicalBranch
-    if (branch === undefined || branch.trim() === '') return 'origin/HEAD'
+    if (branch === undefined || branch.trim() === '') return undefined
     // Prefer the remote-tracking ref: the local branch may be stale or absent,
     // and "where Integration is" means where the shared line is, not where a
     // local copy of it happens to sit.
