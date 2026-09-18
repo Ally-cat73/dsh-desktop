@@ -35,6 +35,7 @@
 
 import type {
   ActivityBlockV1,
+  AttributionCorrectionNoteV1,
   CodeActivityRowV1,
   CodeCheckpointRowV1,
   CodeParticipantRowV1,
@@ -138,6 +139,13 @@ export interface CollabLineRowView {
   /** §40: the latest meaningful checkpoint, where one has been named. */
   readonly latestCheckpoint?: string
   readonly lifecycleWord?: string
+  /**
+   * §47: this record's stored attribution was corrected. The sentence says so;
+   * `attributionOriginalClaim` discloses what the stored record still says,
+   * because the correction is append-only and the original is never rewritten.
+   */
+  readonly attributionNote?: string
+  readonly attributionOriginalClaim?: string
   /** Disclosure level 5. */
   readonly technical: readonly string[]
 }
@@ -312,6 +320,9 @@ export interface CollabCheckpointRowView {
   /** CP-5: stated, never implied. */
   readonly verifiabilityNote?: string
   readonly summary?: string
+  /** §47: corrected attribution, with the stored claim disclosed. */
+  readonly attributionNote?: string
+  readonly attributionOriginalClaim?: string
   readonly technical: string
 }
 
@@ -328,6 +339,7 @@ export function toLineRowView(input: {
   readonly lineage?: LineageTrailV1
   readonly latestCheckpoint?: string
   readonly lifecycle?: string
+  readonly correction?: AttributionCorrectionNoteV1
 }): CollabLineRowView {
   const topology = input.topology
   const technical: string[] = []
@@ -387,6 +399,12 @@ export function toLineRowView(input: {
         }),
     ...(input.latestCheckpoint === undefined ? {} : { latestCheckpoint: input.latestCheckpoint }),
     ...(input.lifecycle === undefined || input.lifecycle === 'OPEN' ? {} : { lifecycleWord: input.lifecycle }),
+    ...(input.correction === undefined
+      ? {}
+      : {
+          attributionNote: input.correction.sentence,
+          attributionOriginalClaim: `${input.correction.originalClaim} ${input.correction.reason}`,
+        }),
     technical,
   }
 }
@@ -631,7 +649,10 @@ const ORIGIN_WORD: Record<string, string> = {
   INTEGRATION: 'Brought changes in',
 }
 
-export function toCheckpointRowView(row: CodeCheckpointRowV1): CollabCheckpointRowView {
+export function toCheckpointRowView(
+  row: CodeCheckpointRowV1,
+  correction?: AttributionCorrectionNoteV1,
+): CollabCheckpointRowView {
   return {
     name: row.label,
     origin: ORIGIN_WORD[row.origin] ?? row.origin,
@@ -640,6 +661,12 @@ export function toCheckpointRowView(row: CodeCheckpointRowV1): CollabCheckpointR
     // CP-5: the weakest arm says so on every row that uses it.
     ...(row.verifiable ? {} : { verifiabilityNote: 'Not digest-verifiable — a tested working state' }),
     ...(row.summary === undefined ? {} : { summary: row.summary }),
+    ...(correction === undefined
+      ? {}
+      : {
+          attributionNote: correction.sentence,
+          attributionOriginalClaim: `${correction.originalClaim} ${correction.reason}`,
+        }),
     technical: `${row.checkpointId} · sequence ${String(row.lineSequence)} · ${String(row.evidenceCount)} evidence`,
   }
 }

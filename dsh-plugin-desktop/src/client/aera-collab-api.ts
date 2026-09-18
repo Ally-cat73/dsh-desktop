@@ -84,6 +84,9 @@ export interface CollabLineRow {
   readonly integrationTargetSentence?: string
   readonly latestCheckpoint?: string
   readonly lifecycleWord?: string
+  /** §47: attribution corrected, with the stored claim disclosed. */
+  readonly attributionNote?: string
+  readonly attributionOriginalClaim?: string
   readonly technical: readonly string[]
 }
 
@@ -160,6 +163,8 @@ export interface CollabCheckpointRow {
   /** CP-5: stated, never implied. */
   readonly verifiabilityNote?: string
   readonly summary?: string
+  readonly attributionNote?: string
+  readonly attributionOriginalClaim?: string
   readonly technical: string
 }
 
@@ -529,6 +534,10 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           ? {} : { latestCheckpoint: text(row.latestCheckpoint, 'checkpoint') }),
         ...(optionalText(row.lifecycleWord, 'lifecycle') === undefined
           ? {} : { lifecycleWord: text(row.lifecycleWord, 'lifecycle') }),
+        ...(optionalText(row.attributionNote, 'attribution') === undefined
+          ? {} : { attributionNote: technicalText(row.attributionNote, 'attribution') }),
+        ...(optionalText(row.attributionOriginalClaim, 'attribution') === undefined
+          ? {} : { attributionOriginalClaim: technicalText(row.attributionOriginalClaim, 'attribution') }),
         technical: technicalList(row.technical ?? [], 'technical'),
       })
     })),
@@ -567,6 +576,10 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           ? {} : { verifiabilityNote: technicalText(row.verifiabilityNote, 'note') }),
         ...(optionalText(row.summary, 'summary') === undefined
           ? {} : { summary: technicalText(row.summary, 'summary') }),
+        ...(optionalText(row.attributionNote, 'attribution') === undefined
+          ? {} : { attributionNote: technicalText(row.attributionNote, 'attribution') }),
+        ...(optionalText(row.attributionOriginalClaim, 'attribution') === undefined
+          ? {} : { attributionOriginalClaim: technicalText(row.attributionOriginalClaim, 'attribution') }),
         technical: technicalText(row.technical, 'technical'),
       })
     })),

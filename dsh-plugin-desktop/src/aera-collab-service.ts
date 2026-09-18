@@ -1153,6 +1153,8 @@ export class CollabWorkspaceService {
        * with commits and no checkpoints truthfully has none.
        */
       const lineage = surface.institutional.lineageByLineId.get(projection.line.codeWorkingLineId)
+      const lineCorrection = surface.institutional.correctionNotes
+        .find(note => note.subjectRecordId === projection.line.codeWorkingLineId)
       const latest = projection.checkpoints.at(-1)
       lines.push(toLineRowView({
         label,
@@ -1166,6 +1168,7 @@ export class CollabWorkspaceService {
           ? {}
           : { latestCheckpoint: `${latest.label ?? `Checkpoint ${String(latest.lineSequence)}`}${latest.summary === undefined ? '' : ` — ${latest.summary}`}` }),
         lifecycle: projection.line.lifecycle,
+        ...(lineCorrection === undefined ? {} : { correction: lineCorrection }),
       }))
     }
 
@@ -1260,7 +1263,10 @@ export class CollabWorkspaceService {
         archived: surface.archivedLineIds.length,
       }),
       activity: surface.activity.map(toActivityRowView),
-      checkpoints: surface.checkpoints.map(toCheckpointRowView),
+      checkpoints: surface.checkpoints.map(row => toCheckpointRowView(
+        row,
+        surface.institutional.correctionNotes.find(note => note.subjectRecordId === row.checkpointId),
+      )),
       ...(surface.checkpoints.length === 0
         ? {
             checkpointsEmptyReason:

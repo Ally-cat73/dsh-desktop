@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   toActivityBlockView,
+  toCheckpointRowView,
   toDecisionView,
   toEvidenceCardView,
   toLineRowView,
@@ -289,5 +290,48 @@ describe('§44, §45 — decision context', () => {
     const view = toDecisionView(context({ decidedBy: 'Decider not recorded' }))
     expect(view.decidedBy).toBe('Decider not recorded')
     expect(view.recordedBy).toBe('Execution Child')
+  })
+})
+
+describe('§47 — a corrected record says so, and discloses what it still stores', () => {
+  const correction = {
+    subjectRecordId: 'aera:code_working_line:b',
+    sentence: 'Attribution corrected — performed by Execution Child.',
+    originalClaim: 'The stored record states creator Alyshia Daley. That record is unchanged.',
+    reason: 'The execution agent opened this line; the owner authorised the Work Order.',
+  }
+
+  it('marks a corrected Working Line and keeps the original claim available', () => {
+    const row = toLineRowView({
+      label: 'Durable lineage', participant: 'Execution Child', checkpointCount: 2,
+      codeWorkingLineId: 'aera:code_working_line:b', provenance: 'DURABLE', correction,
+    })
+    expect(row.attributionNote).toContain('Attribution corrected')
+    // The stored record is still disclosed, verbatim in meaning (§47).
+    expect(row.attributionOriginalClaim).toContain('Alyshia Daley')
+    expect(row.attributionOriginalClaim).toContain('unchanged')
+    expect(row.attributionOriginalClaim).toContain('authorised the Work Order')
+  })
+
+  it('marks a corrected checkpoint the same way', () => {
+    const row = toCheckpointRowView(
+      {
+        checkpointId: 'aera:code_checkpoint:1', codeWorkingLineId: 'aera:code_working_line:b',
+        lineSequence: 1, label: 'A1', origin: 'MANUAL_CHECKPOINT',
+        createdAt: '2026-09-18T00:00:00.000Z', createdBy: 'Alyshia Daley',
+        verifiable: true, evidenceCount: 0,
+      },
+      { ...correction, subjectRecordId: 'aera:code_checkpoint:1' },
+    )
+    expect(row.attributionNote).toContain('Attribution corrected')
+    expect(row.attributionOriginalClaim).toContain('unchanged')
+  })
+
+  it('an uncorrected record carries no correction furniture at all', () => {
+    const row = toLineRowView({
+      label: 'Fine', participant: 'X', checkpointCount: 0, provenance: 'DURABLE',
+    })
+    expect(row.attributionNote).toBeUndefined()
+    expect(row.attributionOriginalClaim).toBeUndefined()
   })
 })

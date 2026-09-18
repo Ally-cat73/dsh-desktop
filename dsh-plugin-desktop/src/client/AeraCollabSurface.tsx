@@ -220,6 +220,25 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
               {line.provenanceNote === undefined
                 ? null
                 : <p className="aera-collab-status">{line.provenanceNote}</p>}
+              {/*
+                * §47: the stored record still says what it said. The correction
+                * is a separate record, and the reader can see both.
+                */}
+              {line.attributionNote === undefined
+                ? null
+                : (
+                    <div className="aera-collab-corrected">
+                      <p className="aera-collab-corrected-note">{line.attributionNote}</p>
+                      {line.attributionOriginalClaim === undefined
+                        ? null
+                        : (
+                            <details className="aera-collab-corrected-original">
+                              <summary>{t('originalRecord')}</summary>
+                              <p>{line.attributionOriginalClaim}</p>
+                            </details>
+                          )}
+                    </div>
+                  )}
               <Technical lines={line.technical} label={t('technicalDetails')} />
               {line.compareAvailable
                 ? (
@@ -696,6 +715,21 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
                     {row.verifiabilityNote === undefined
                       ? null
                       : <p className="aera-collab-status">{row.verifiabilityNote}</p>}
+                    {row.attributionNote === undefined
+                      ? null
+                      : (
+                          <div className="aera-collab-corrected">
+                            <p className="aera-collab-corrected-note">{row.attributionNote}</p>
+                            {row.attributionOriginalClaim === undefined
+                              ? null
+                              : (
+                                  <details className="aera-collab-corrected-original">
+                                    <summary>{t('originalRecord')}</summary>
+                                    <p>{row.attributionOriginalClaim}</p>
+                                  </details>
+                                )}
+                          </div>
+                        )}
                     <Technical lines={[row.technical]} label={t('technicalDetails')} />
                   </li>
                 ))}

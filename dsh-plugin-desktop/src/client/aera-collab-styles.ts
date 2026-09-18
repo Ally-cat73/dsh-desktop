@@ -606,6 +606,22 @@ const CSS = `
 .aera-collab-discussion-entry { max-width: 70ch; margin: 4px 0 0; opacity: 0.9; }
 .aera-collab-participant-contribution { font-size: 11.5px; opacity: 0.9; }
 
+/* §47: a corrected record is marked, and the original stays one click away. */
+.aera-collab-corrected {
+  margin: 6px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid currentColor;
+}
+.aera-collab-corrected-note {
+  font-size: 12px;
+  line-height: 1.7;
+  max-width: 70ch;
+  margin: 0;
+  font-weight: 600;
+}
+.aera-collab-corrected-original > summary { font-size: 11.5px; opacity: 0.8; cursor: pointer; }
+.aera-collab-corrected-original p { font-size: 11.5px; line-height: 1.7; max-width: 70ch; opacity: 0.9; }
+
 @media (max-width: 720px) {
   /* Below this the three-column file row stops helping; keep the counts on
      their own line rather than crushing the path. */
