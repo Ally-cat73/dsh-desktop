@@ -45,6 +45,7 @@ export const COORDINATION_ACTIONS = [
   'OPEN_THREAD',
   'POST_MESSAGE',
   'SHARE_COMPARE',
+  'SHARE_COMPARE_TO_THREAD',
   'ACKNOWLEDGE',
   'SET_LIFECYCLE',
   'RECORD_DECISION',
@@ -79,6 +80,8 @@ export interface CoordinationRequest {
   readonly selectedOptionId?: string
   readonly rationale?: string
   readonly messageIds?: readonly string[]
+  readonly newThreadSubject?: string
+  readonly note?: string
 }
 
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
@@ -134,6 +137,7 @@ export function parseCoordinationBody(value: unknown): CoordinationRequest | und
     OPEN_THREAD: ['action', 'subject'],
     POST_MESSAGE: ['action', 'threadId', 'body', 'intent', 'packetId', 'parentMessageId', 'requestId'],
     SHARE_COMPARE: ['action', 'compareLineIndex'],
+    SHARE_COMPARE_TO_THREAD: ['action', 'compareLineIndex', 'threadId', 'newThreadSubject', 'note'],
     ACKNOWLEDGE: ['action', 'threadId', 'messageId', 'kind'],
     SET_LIFECYCLE: ['action', 'threadId', 'lifecycle'],
     RECORD_DECISION: ['action', 'threadId', 'subject', 'options', 'selectedOptionId', 'rationale', 'messageIds'],
@@ -194,6 +198,53 @@ export function parseCoordinationBody(value: unknown): CoordinationRequest | und
         return undefined
       }
       return { action, compareLineIndex: index, ...scope }
+    }
+    case 'SHARE_COMPARE_TO_THREAD': {
+      /*
+       * §21: a comparison is shared WITH someone. This action refuses unless a
+       * recipient is named, which is what keeps a cancelled or half-filled
+       * share from writing anything at all — the orphaned packet
+       * `aera:coordination-packet:a02ba81a` is in the store because an earlier
+       * version wrote first and looked for a recipient afterwards.
+       */
+      let threadId: string | undefined
+      if (body['threadId'] !== undefined) {
+        threadId = boundedId(body['threadId'])
+        if (threadId === undefined) return undefined
+      }
+      let newThreadSubject: string | undefined
+      if (body['newThreadSubject'] !== undefined) {
+        if (typeof body['newThreadSubject'] !== 'string') return undefined
+        const trimmed = body['newThreadSubject'].trim()
+        if (trimmed === '' || trimmed.length > MAX_SUBJECT_LENGTH) return undefined
+        newThreadSubject = trimmed
+      }
+      // Exactly one recipient, stated. Neither is a share with nobody; both is
+      // ambiguous about where it should land.
+      if ((threadId === undefined) === (newThreadSubject === undefined)) return undefined
+      let note: string | undefined
+      if (body['note'] !== undefined) {
+        if (typeof body['note'] !== 'string') return undefined
+        const trimmed = body['note'].trim()
+        if (trimmed === '' || trimmed.length > MAX_MESSAGE_BODY_LENGTH) return undefined
+        note = trimmed
+      }
+      let compareLineIndex: number | undefined
+      if (body['compareLineIndex'] !== undefined) {
+        const index = body['compareLineIndex']
+        if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 || index > 999) {
+          return undefined
+        }
+        compareLineIndex = index
+      }
+      return {
+        action,
+        ...scope,
+        ...(threadId === undefined ? {} : { threadId }),
+        ...(newThreadSubject === undefined ? {} : { newThreadSubject }),
+        ...(note === undefined ? {} : { note }),
+        ...(compareLineIndex === undefined ? {} : { compareLineIndex }),
+      }
     }
     case 'ACKNOWLEDGE': {
       const threadId = boundedId(body['threadId'])

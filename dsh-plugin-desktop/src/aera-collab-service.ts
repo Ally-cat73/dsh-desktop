@@ -1404,6 +1404,115 @@ export class CollabWorkspaceService {
   }
 
   /**
+   * §21 / §35 — SHARE / SEND TO COLLABORATOR, from Compare, with a recipient.
+   *
+   * **Confirm before write, and resolve the recipient FIRST.**
+   *
+   * The first version of this created the packet the moment the button was
+   * pressed and only then looked for somewhere to put it. Mechanical
+   * acceptance duly produced `aera:coordination-packet:a02ba81a` — a real
+   * 2,003-file snapshot, written durably, referenced by nothing, visible to
+   * nobody. It is still in the store, because the store is append-only and
+   * deleting institutional records to tidy an evidence trail is the habit
+   * these orders exist to prevent.
+   *
+   * So the order of operations here is load-bearing, not incidental:
+   *
+   *   1. resolve the recipient thread — open it, or validate the named one;
+   *   2. prove it can actually receive a message (exists, active, in scope);
+   *   3. only then write the packet;
+   *   4. post the message that references it.
+   *
+   * A cancelled share therefore writes nothing at all, and a share that fails
+   * for want of a recipient fails before any packet exists. Steps 3 and 4 are
+   * adjacent inside one call with no user interaction between them.
+   *
+   * Full honesty about the residual: this is not a database transaction. If
+   * the process died between 3 and 4 the packet would survive unreferenced.
+   * What removes that risk in practice is step 2 — by the time the packet is
+   * written the only remaining work is an append to a thread already proven
+   * writable — and `requestId`, which makes a retried post resolve to the same
+   * message rather than a second one.
+   */
+  async shareCompareToThread(input: {
+    readonly workOrderId?: string
+    readonly compareLineIndex?: number
+    /** An existing thread to send into. */
+    readonly threadId?: string
+    /** Or a subject, to open a thread for this Work Order and send into that. */
+    readonly newThreadSubject?: string
+    /** §21: "the sender may add a human note." */
+    readonly note?: string
+  }): Promise<{
+    readonly packetId: string
+    readonly threadId: string
+    readonly messageId: string
+    readonly outcome: string
+  }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+
+    // ---- 1 & 2 · the recipient, resolved and proven writable, BEFORE any packet
+    let threadId: string
+    if (input.threadId !== undefined && input.threadId.trim() !== '') {
+      threadId = input.threadId.trim()
+    } else {
+      const subject = input.newThreadSubject?.trim() ?? ''
+      if (subject === '') {
+        throw new CollabHonestError(
+          'INVALID_INPUT',
+          'A comparison is shared WITH someone. Choose a thread to send it to, or name a new one — nothing is written until you do.',
+        )
+      }
+      threadId = (await this.openCoordinationThread({ workOrderId, subject })).threadId
+    }
+    const thread = store.listCollabThreads(workOrderId).find(row => row.threadId === threadId)
+    if (thread === undefined) {
+      throw new CollabHonestError(
+        'WORK_ORDER_NOT_FOUND',
+        `No coordination thread ${threadId} exists on this Work Order, so there is nobody to share the comparison with. Nothing was written.`,
+      )
+    }
+    if (thread.lifecycle === 'ARCHIVED') {
+      throw new CollabHonestError(
+        'INVALID_INPUT',
+        'That thread is archived. Reopen it before sharing into it — nothing was written.',
+      )
+    }
+    if (!thread.accessScope.authorisedPrincipalIds.includes(human as never)) {
+      throw new CollabHonestError(
+        'INVALID_INPUT',
+        'You are not within that thread\u2019s access scope, so the comparison was not shared and nothing was written.',
+      )
+    }
+
+    // ---- 3 · the packet, from the EXACT on-screen operands
+    const shared = await this.shareComparePacket({
+      workOrderId,
+      ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+    })
+
+    // ---- 4 · the message that makes it visible to the recipient
+    const note = input.note?.trim() ?? ''
+    const posted = store.postCollabMessage({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      threadId: threadId as Parameters<ParticipationStore['postCollabMessage']>[0]['threadId'],
+      senderPrincipalId: human as Parameters<ParticipationStore['postCollabMessage']>[0]['senderPrincipalId'],
+      body: note === '' ? 'Sharing the comparison I am looking at.' : note,
+      intent: 'REVIEW_REQUEST',
+      references: [{ kind: 'PACKET', packetId: shared.packetId as never }],
+      requestId: `share-compare-${shared.packetId}`,
+    })
+    return {
+      packetId: shared.packetId,
+      threadId,
+      messageId: posted.message.messageId,
+      outcome: posted.outcome,
+    }
+  }
+
+  /**
    * §20 — VIEW CURRENT STATE.
    *
    * Resolves the live revisions and compares them against the packet's frozen

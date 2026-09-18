@@ -287,3 +287,62 @@ describe('§20 — a packet that is not in the store is refused honestly', () =>
       .toThrow(/No packet aera:coordination-packet:nope/)
   })
 })
+
+/**
+ * §21 / §35 — SHARE FROM COMPARE, with a recipient, and the orphan-packet rule.
+ *
+ * `aera:coordination-packet:a02ba81a` sits in the live store referenced by
+ * nothing because the first version of this wrote the packet the moment the
+ * button was pressed and only then went looking for somewhere to put it. These
+ * tests pin the rule that replaced it: **resolve the recipient first, write
+ * nothing until it is resolved.**
+ */
+describe('§21 — a shared comparison reaches a recipient, or writes nothing', () => {
+  const packetCount = (): number =>
+    new ParticipationStore(storeDir).listCoordinationPackets(TEST_WO).length
+
+  it('refuses with NO recipient, and writes not a single record', async () => {
+    const service = await joined()
+    const before = packetCount()
+    await expect(service.shareCompareToThread({ workOrderId: TEST_WO }))
+      .rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    // The whole point: a share that cannot name a recipient mints no packet.
+    expect(packetCount()).toBe(before)
+  })
+
+  it('refuses a thread that does not exist, and still writes no packet', async () => {
+    const service = await joined()
+    const before = packetCount()
+    await expect(service.shareCompareToThread({
+      workOrderId: TEST_WO, threadId: 'aera:collab-thread:nope',
+    })).rejects.toMatchObject({ code: 'WORK_ORDER_NOT_FOUND' })
+    expect(packetCount()).toBe(before)
+  })
+
+  it('refuses an ARCHIVED thread before minting anything', async () => {
+    const service = await joined()
+    const { threadId } = await service.openCoordinationThread({ subject: 'Archived recipient' })
+    await service.setCoordinationThreadLifecycle({ threadId, lifecycle: 'ARCHIVED' })
+    const before = packetCount()
+    await expect(service.shareCompareToThread({ workOrderId: TEST_WO, threadId }))
+      .rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    expect(packetCount()).toBe(before)
+  })
+
+  /*
+   * The happy path needs a real comparison, which needs a repository this
+   * harness does not have. The refusal path is what these tests exist to pin,
+   * and it is the path that produced the orphan — so what matters is proven
+   * here, and the end-to-end share is proven mechanically on the installed
+   * product at §62 rather than claimed by a stub.
+   */
+  it('refuses when there is no comparison to share — after the recipient is resolved', async () => {
+    const service = await joined()
+    const { threadId } = await service.openCoordinationThread({ subject: 'Live recipient' })
+    const before = packetCount()
+    await expect(service.shareCompareToThread({ workOrderId: TEST_WO, threadId }))
+      .rejects.toMatchObject({ code: 'COMPARE_UNAVAILABLE' })
+    // Recipient was valid; the comparison was not. Still no packet.
+    expect(packetCount()).toBe(before)
+  })
+})

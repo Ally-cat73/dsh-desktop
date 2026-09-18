@@ -154,6 +154,14 @@ export function apply(ctx: Context): void {
                   ...(request.compareLineIndex === undefined ? {} : { compareLineIndex: request.compareLineIndex }),
                   ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
                 })
+              case 'SHARE_COMPARE_TO_THREAD':
+                return await service.shareCompareToThread({
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                  ...(request.compareLineIndex === undefined ? {} : { compareLineIndex: request.compareLineIndex }),
+                  ...(request.threadId === undefined ? {} : { threadId: request.threadId }),
+                  ...(request.newThreadSubject === undefined ? {} : { newThreadSubject: request.newThreadSubject }),
+                  ...(request.note === undefined ? {} : { note: request.note }),
+                })
               case 'ACKNOWLEDGE':
                 return await service.acknowledgeCoordinationMessage({
                   threadId: request.threadId ?? '',

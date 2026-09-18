@@ -59,6 +59,7 @@ describe('parseCoordinationBody', () => {
       { action: 'OPEN_THREAD', subject: 'Authentication overlap' },
       { action: 'POST_MESSAGE', threadId: 'aera:collab-thread:a', body: 'hello', requestId: 'r1' },
       { action: 'SHARE_COMPARE' },
+      { action: 'SHARE_COMPARE_TO_THREAD', threadId: 'aera:collab-thread:a' },
       { action: 'ACKNOWLEDGE', threadId: 'aera:collab-thread:a', messageId: 'aera:collab-message:b', kind: 'READ' },
       { action: 'SET_LIFECYCLE', threadId: 'aera:collab-thread:a', lifecycle: 'ARCHIVED' },
       {
@@ -277,6 +278,73 @@ describe('§21 — sharing a comparison is a two-step that lands in a thread', (
     expect(parseCoordinationBody({
       action: 'POST_MESSAGE', threadId: 'aera:collab-thread:abc', body: 'x',
       requestId: 'r', packetId: '   ',
+    })).toBeUndefined()
+  })
+})
+
+/**
+ * §21 / §35 — the Compare share must resolve a RECIPIENT, and must write
+ * nothing until it has one.
+ *
+ * `aera:coordination-packet:a02ba81a` is in the live store, referenced by
+ * nothing, because the first version of this button wrote the packet first and
+ * looked for somewhere to put it afterwards. These tests exist so that cannot
+ * recur through the wire boundary.
+ */
+describe('§21 — SHARE_COMPARE_TO_THREAD demands exactly one recipient', () => {
+  it('accepts an existing thread as the recipient', () => {
+    const parsed = parseCoordinationBody({
+      action: 'SHARE_COMPARE_TO_THREAD',
+      workOrderId: 'WO-TEST-SHARE-002',
+      threadId: 'aera:collab-thread:abc',
+      compareLineIndex: 0,
+      note: 'Three of these touch the authentication contract.',
+    })
+    expect(parsed?.action).toBe('SHARE_COMPARE_TO_THREAD')
+    expect(parsed?.threadId).toBe('aera:collab-thread:abc')
+    expect(parsed?.newThreadSubject).toBeUndefined()
+    expect(parsed?.note).toBe('Three of these touch the authentication contract.')
+  })
+
+  it('accepts a new thread subject as the recipient', () => {
+    const parsed = parseCoordinationBody({
+      action: 'SHARE_COMPARE_TO_THREAD',
+      newThreadSubject: 'Authentication overlap',
+    })
+    expect(parsed?.newThreadSubject).toBe('Authentication overlap')
+    expect(parsed?.threadId).toBeUndefined()
+  })
+
+  it('REFUSES a share with no recipient — this is the orphan-packet guard', () => {
+    // Neither a thread nor a subject: a share with nobody to share with.
+    expect(parseCoordinationBody({ action: 'SHARE_COMPARE_TO_THREAD' })).toBeUndefined()
+    expect(parseCoordinationBody({
+      action: 'SHARE_COMPARE_TO_THREAD', note: 'look at this',
+    })).toBeUndefined()
+  })
+
+  it('REFUSES an ambiguous share naming both a thread and a new subject', () => {
+    expect(parseCoordinationBody({
+      action: 'SHARE_COMPARE_TO_THREAD',
+      threadId: 'aera:collab-thread:abc',
+      newThreadSubject: 'Somewhere else',
+    })).toBeUndefined()
+  })
+
+  it('refuses malformed recipients and notes rather than coercing them', () => {
+    expect(parseCoordinationBody({ action: 'SHARE_COMPARE_TO_THREAD', threadId: '   ' })).toBeUndefined()
+    expect(parseCoordinationBody({ action: 'SHARE_COMPARE_TO_THREAD', newThreadSubject: '  ' })).toBeUndefined()
+    expect(parseCoordinationBody({
+      action: 'SHARE_COMPARE_TO_THREAD', threadId: 'aera:collab-thread:abc', note: '   ',
+    })).toBeUndefined()
+    expect(parseCoordinationBody({
+      action: 'SHARE_COMPARE_TO_THREAD', threadId: 'aera:collab-thread:abc', compareLineIndex: -1,
+    })).toBeUndefined()
+  })
+
+  it('refuses an unknown member, so a stale renderer cannot half-share', () => {
+    expect(parseCoordinationBody({
+      action: 'SHARE_COMPARE_TO_THREAD', threadId: 'aera:collab-thread:abc', recipient: 'jordan',
     })).toBeUndefined()
   })
 })

@@ -115,8 +115,126 @@ function ChangedFile({ file }: { readonly file: CollabChangedFileRow }) {
   )
 }
 
+/**
+ * §21 / §35 — SHARE / SEND TO COLLABORATOR, from Compare.
+ *
+ * The recipient step exists because of a real defect: the first version wrote
+ * the packet the instant the button was pressed and only then looked for
+ * somewhere to put it, leaving `aera:coordination-packet:a02ba81a` in the
+ * durable store referenced by nothing and visible to nobody. **Nothing is
+ * written until a recipient is confirmed**, so Cancel costs the store nothing.
+ */
+function ShareCompareToThread({ workOrderId, threads, compareLineIndex, api, onShared, t }: {
+  readonly workOrderId: string
+  readonly threads: readonly CollabThreadRow[]
+  readonly compareLineIndex?: number
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly onShared: () => void
+  readonly t: Translate
+}) {
+  const [open, setOpen] = useState(false)
+  const [threadId, setThreadId] = useState('')
+  const [newSubject, setNewSubject] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const openThreads = threads.filter(thread => !thread.archived)
+  // Exactly one recipient: an existing thread, or a new one. Never both.
+  const recipientChosen = threadId !== '' || newSubject.trim() !== ''
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="aera-collab-share-compare"
+        onClick={() => { setOpen(true); setError(undefined) }}
+      >
+        {t('shareCompare')}
+      </button>
+    )
+  }
+
+  return (
+    <form
+      className="aera-collab-share-form"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!recipientChosen) return
+        setBusy(true)
+        setError(undefined)
+        void api.coordinate({
+          action: 'SHARE_COMPARE_TO_THREAD',
+          workOrderId,
+          ...(compareLineIndex === undefined ? {} : { compareLineIndex }),
+          ...(threadId === ''
+            ? { newThreadSubject: newSubject.trim() }
+            : { threadId }),
+          ...(note.trim() === '' ? {} : { note: note.trim() }),
+        })
+          .then(() => {
+            setOpen(false); setNote(''); setNewSubject(''); setThreadId('')
+            onShared()
+          })
+          .catch((cause: unknown) => {
+            setError(cause instanceof Error ? cause.message : String(cause))
+          })
+          .finally(() => { setBusy(false) })
+      }}
+    >
+      <p className="aera-collab-status">{t('shareRecipientIntro')}</p>
+      {openThreads.length === 0
+        ? null
+        : (
+            <label>
+              {t('shareToThread')}
+              <select
+                value={threadId}
+                onChange={(event) => { setThreadId(event.target.value); setNewSubject('') }}
+              >
+                <option value="">{t('shareNewThread')}</option>
+                {openThreads.map(thread => (
+                  <option key={thread.technical[0] ?? thread.subject} value={thread.technical[0] ?? ''}>
+                    {thread.subject}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+      {threadId === ''
+        ? (
+            <label>
+              {t('threadSubject')}
+              <input
+                value={newSubject}
+                onChange={(event) => { setNewSubject(event.target.value) }}
+              />
+            </label>
+          )
+        : null}
+      <label>
+        {t('shareNote')}
+        <textarea rows={2} value={note} onChange={(event) => { setNote(event.target.value) }} />
+      </label>
+      {error === undefined ? null : <p className="aera-collab-status">{error}</p>}
+      <button type="submit" disabled={busy || !recipientChosen}>{t('shareSend')}</button>
+      {/* Cancel writes nothing, because nothing has been written yet. */}
+      <button type="button" disabled={busy} onClick={() => { setOpen(false); setError(undefined) }}>
+        {t('shareCancel')}
+      </button>
+    </form>
+  )
+}
+
 /** The Compare accordion, rendered under the line whose states it compares. */
-function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView, readonly t: Translate }) {
+function CompareAccordion({ surface, workOrderId, compareLineIndex, api, onShared, t }: {
+  readonly surface: CollabSurfaceView
+  readonly workOrderId: string
+  readonly compareLineIndex?: number
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly onShared: () => void
+  readonly t: Translate
+}) {
   const { compare } = surface
   if (compare === undefined) {
     return surface.compareUnavailableReason === undefined
@@ -130,6 +248,15 @@ function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView,
       <p className="aera-collab-compare-banner">{compare.banner}</p>
       <p className="aera-collab-compare-direction">{compare.directionSentence}</p>
       <p className="aera-collab-compare-headline">{compare.headline}</p>
+      {/* §35 lists "Compare: SHARE". It belongs here, where the reader is. */}
+      <ShareCompareToThread
+        workOrderId={workOrderId}
+        threads={surface.threads}
+        {...(compareLineIndex === undefined ? {} : { compareLineIndex })}
+        api={api}
+        onShared={onShared}
+        t={t}
+      />
       {compare.unrepresentable.length === 0
         ? null
         : (
@@ -173,7 +300,10 @@ function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView,
 }
 
 /** One Working Line, expandable in place, with its Compare underneath. */
-function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, onCompare, onCloseCompare }: {
+function WorkingLine({ line, index, expanded, comparing, surface, workOrderId, api, onShared, t, onToggle, onCompare, onCloseCompare }: {
+  readonly workOrderId: string
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly onShared: () => void
   readonly line: CollabLineRow
   readonly index: number
   readonly expanded: boolean
@@ -292,7 +422,18 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
                     </div>
                   )
                 : null}
-              {comparing ? <CompareAccordion surface={surface} t={t} /> : null}
+              {comparing
+                ? (
+                    <CompareAccordion
+                      surface={surface}
+                      workOrderId={workOrderId}
+                      {...(comparing ? { compareLineIndex: index } : {})}
+                      api={api}
+                      onShared={onShared}
+                      t={t}
+                    />
+                  )
+                : null}
             </div>
           )
         : null}
@@ -1069,6 +1210,9 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
                     surface={surface}
                     t={t}
                     onToggle={next => { setExpanded(current => (current === next ? undefined : next)) }}
+                    workOrderId={workOrderId}
+                    api={api}
+                    onShared={() => { void read(comparing) }}
                     onCompare={onCompare}
                     onCloseCompare={onCloseCompare}
                   />
