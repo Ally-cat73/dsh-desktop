@@ -52,6 +52,12 @@ import {
   type CodeFileChangeV1,
   type CodeStructuralDeltaV1,
   type CodeTopologyV1,
+  type CollabMessageV1,
+  type CollabThreadAnchorV1,
+  type CollabThreadV1,
+  type CoordinationIntent,
+  type CoordinationPacketV1,
+  type PacketStateAssessmentV1,
 } from '@aera/participation-contracts'
 
 /** The two views of one window. A view is a projection, never a second app. */
@@ -71,6 +77,13 @@ export const COLLAB_RAIL_SECTIONS = [
    * product presents them together (§18) while the RECORDS stay distinct.
    */
   'DISCUSSIONS_DECISIONS',
+  /*
+   * WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-WORKING-LINE-HANDOFF-001
+   * §35. A lightweight coordination surface, deliberately added as one more
+   * rail section rather than a redesign: the order says extend the Read-First
+   * surface, not replace it.
+   */
+  'COORDINATION',
   'ARCHIVED',
 ] as const
 export type CollabRailSection = (typeof COLLAB_RAIL_SECTIONS)[number]
@@ -81,6 +94,7 @@ export const COLLAB_RAIL_LABELS: Readonly<Record<CollabRailSection, string>> = {
   CHANGED_FILES: 'Changed files',
   EVIDENCE: 'Evidence',
   DISCUSSIONS_DECISIONS: 'Discussions & decisions',
+  COORDINATION: 'Messages',
   ARCHIVED: 'Archived',
 }
 
@@ -218,6 +232,11 @@ export interface CollabCodeView {
   readonly decisions: readonly CollabDecisionView[]
   readonly discussions: readonly CollabDiscussionView[]
   readonly discussionsDecisionsEmptyReason?: string
+  /** §35/§36: coordination threads, drawn in the rail's Messages section. */
+  readonly threads: readonly CollabThreadRowView[]
+  readonly threadsEmptyReason?: string
+  /** §30/§55: stated on the surface, so nobody infers live delivery. */
+  readonly coordinationDeliveryNote: string
   readonly liveProviderState?: CollabLiveProviderStateView
   readonly discussionNote: string
   readonly archivedCount: number
@@ -277,6 +296,56 @@ export interface CollabDecisionView {
   readonly supersededByNote?: string
   /** §21, on every decision, always. */
   readonly notAFactNote: string
+  readonly technical: readonly string[]
+}
+
+/**
+ * §38: a packet renders as a compact card, never as pasted terminal output.
+ *
+ * `stateNote` is the §19 movement line and is computed fresh on every read —
+ * it is deliberately NOT stored on the packet, because a packet that updated
+ * itself would have stopped being a snapshot.
+ */
+export interface CollabPacketCardView {
+  readonly title: string
+  readonly operands: string
+  readonly facts: readonly string[]
+  readonly capturedAt: string
+  /** §19. Absent only when the packet carries no comparison to re-check. */
+  readonly stateNote?: string
+  readonly stateMoved: boolean
+  readonly technical: readonly string[]
+}
+
+/**
+ * §10/§40: what the reader must be able to tell at a glance is WHO is
+ * speaking — a person, an agent, or a service — and whether what they are
+ * reading is a deterministic packet or an agent's interpretation of one.
+ */
+export interface CollabMessageRowView {
+  readonly who: string
+  readonly principalKind: 'HUMAN' | 'AGENT' | 'SERVICE'
+  /** 'Agent analysis' for AGENT senders; absent for humans (§40). */
+  readonly authorshipNote?: string
+  readonly body: string
+  readonly when: string
+  readonly intentLabel?: string
+  readonly sequence: number
+  readonly packets: readonly CollabPacketCardView[]
+  readonly otherReferences: readonly string[]
+  readonly technical: readonly string[]
+}
+
+/** §37: the thread says what it is about before it says what was said. */
+export interface CollabThreadRowView {
+  readonly subject: string
+  readonly aboutLine: string
+  readonly participants: readonly string[]
+  readonly messageCount: number
+  readonly lastMessageAt?: string
+  readonly archived: boolean
+  readonly messages: readonly CollabMessageRowView[]
+  readonly decisionSubjects: readonly string[]
   readonly technical: readonly string[]
 }
 
@@ -689,6 +758,8 @@ export function buildRail(counts: {
    * surface for it" — which is why the old tab deliberately had no count.
    */
   readonly discussionsDecisions: number
+  /** Coordination threads on this Work Order. `0` truthfully means none. */
+  readonly coordination: number
   readonly archived: number
 }): readonly CollabRailTabView[] {
   return [
@@ -709,6 +780,7 @@ export function buildRail(counts: {
      * `0` is a true statement about the collaboration and is shown.
      */
     { section: 'DISCUSSIONS_DECISIONS', label: COLLAB_RAIL_LABELS.DISCUSSIONS_DECISIONS, count: counts.discussionsDecisions },
+    { section: 'COORDINATION', label: COLLAB_RAIL_LABELS.COORDINATION, count: counts.coordination },
     { section: 'ARCHIVED', label: COLLAB_RAIL_LABELS.ARCHIVED, count: counts.archived },
   ]
 }
@@ -723,3 +795,155 @@ export const DISCUSSION_NOTE =
 /** §44: shown when the section is genuinely empty, rather than an empty box. */
 export const NO_DISCUSSIONS_OR_DECISIONS =
   'No discussions or decisions have been recorded against this Work Order. Records appear here when they are captured through an explicit decision act — a preference expressed in conversation never becomes one.'
+
+// ---------------------------------------------------------------------------
+// Coordination threads (§35–§40)
+// ---------------------------------------------------------------------------
+
+/**
+ * §30/§55 stated on the surface, in the product's own words.
+ *
+ * The honest sentence, chosen over silence: a reader who is not told will
+ * assume a message appears on the other side instantly, and that assumption is
+ * currently false. Durability is real; live push is not built.
+ */
+export const COORDINATION_DELIVERY_NOTE =
+  'Messages are recorded durably the moment you send them, and nothing is lost if the other person is away. They are not pushed live yet — the recipient sees them when they next open or refresh this Work Order.'
+
+/** §35: shown when the section is genuinely empty, rather than an empty box. */
+export const NO_COORDINATION_THREADS =
+  'No coordination threads have been opened on this Work Order. Start one from a participant, a Working Line, or by sharing a comparison.'
+
+/** §40: an agent's words are labelled as interpretation, never as measurement. */
+export const AGENT_ANALYSIS_NOTE = 'Agent analysis — an interpretation, not deterministic state.'
+
+const COORDINATION_INTENT_LABELS: Readonly<Record<CoordinationIntent, string | undefined>> = {
+  // A general message needs no badge; every other intent is worth naming.
+  GENERAL: undefined,
+  REVIEW_REQUEST: 'Review requested',
+  RECONCILIATION_REQUEST: 'Reconciliation requested',
+  // §28: a REQUEST, and the label says so. It stops nothing.
+  PAUSE_REQUEST: 'Pause requested',
+  RESUME_NOTICE: 'Resume notice',
+  DECISION_REQUEST: 'Decision requested',
+}
+
+/** §2/§37: one plain line saying what this conversation is about. */
+export function threadAboutLine(
+  anchors: readonly CollabThreadAnchorV1[],
+  labels: { readonly workingLineLabels?: Readonly<Record<string, string>> } = {},
+): string {
+  const parts = anchors.map((anchor) => {
+    switch (anchor.kind) {
+      case 'WORK_ORDER': return `Work Order ${anchor.workOrderId}`
+      case 'WORKING_LINE':
+        return labels.workingLineLabels?.[anchor.codeWorkingLineId] === undefined
+          ? 'a Working Line'
+          : `the ${labels.workingLineLabels[anchor.codeWorkingLineId]} Working Line`
+      case 'CHECKPOINT': return 'a checkpoint'
+      case 'PACKET': return 'a shared comparison'
+      case 'EVIDENCE': return 'an evidence record'
+      case 'DECISION': return 'a decision'
+      case 'RESOURCE': return anchor.resourceRef
+    }
+  })
+  return `About ${parts.join(', ')}.`
+}
+
+/**
+ * §38: the compact card. Counts and operands, never a pasted diff.
+ *
+ * `assessment` is supplied by the caller because resolving current state is a
+ * repository read, and a view builder must stay pure. Where the caller could
+ * not resolve it, the card says nothing about movement rather than implying
+ * there was none.
+ */
+export function toPacketCardView(
+  packet: CoordinationPacketV1,
+  assessment?: PacketStateAssessmentV1,
+): CollabPacketCardView {
+  const comparison = packet.comparison
+  const facts: string[] = []
+  if (comparison !== undefined) {
+    facts.push(`${String(comparison.filesChanged)} changed files`)
+    facts.push(`${String(comparison.filesChangedOnBothLines)} changed on both lines`)
+    facts.push(
+      comparison.textualConflicts === 0
+        ? 'no textual conflicts'
+        : `${String(comparison.textualConflicts)} textual conflict${comparison.textualConflicts === 1 ? '' : 's'}`,
+    )
+  }
+  const moved = assessment !== undefined
+    && assessment.verdict !== 'UNCHANGED'
+    && assessment.verdict !== 'UNRESOLVABLE'
+  return {
+    title: packet.subject === 'WORKING_LINE_COMPARE' ? 'Working-Line compare' : 'Shared reference',
+    operands: comparison === undefined
+      ? packet.subject
+      : `${comparison.sourceRevision} → ${comparison.targetRevision}`,
+    facts,
+    capturedAt: packet.observedAt,
+    ...(assessment === undefined ? {} : { stateNote: assessment.humanSummary }),
+    stateMoved: moved,
+    technical: [
+      packet.packetId,
+      packet.packetDigest,
+      ...(comparison?.mergeBase === undefined ? [] : [`merge base ${comparison.mergeBase}`]),
+    ],
+  }
+}
+
+export function toMessageRowView(
+  message: CollabMessageV1,
+  packets: readonly CollabPacketCardView[],
+): CollabMessageRowView {
+  const intentLabel = COORDINATION_INTENT_LABELS[message.intent]
+  return {
+    who: message.sender.displayName,
+    principalKind: message.sender.principalKind,
+    // §40: only an agent gets the interpretation banner. A human's message is
+    // not analysis, and a service's is not either.
+    ...(message.sender.principalKind === 'AGENT' ? { authorshipNote: AGENT_ANALYSIS_NOTE } : {}),
+    body: message.body,
+    when: message.sentAt,
+    ...(intentLabel === undefined ? {} : { intentLabel }),
+    sequence: message.sequence,
+    packets,
+    otherReferences: message.references.flatMap((reference) => {
+      switch (reference.kind) {
+        case 'PACKET': return []
+        case 'EVIDENCE': return [`Evidence ${reference.evidenceId}`]
+        case 'WORKING_LINE': return [`Working Line ${reference.codeWorkingLineId}`]
+        case 'CHECKPOINT': return [`Checkpoint ${reference.checkpointId}`]
+        case 'DECISION': return [`Decision ${reference.decisionId}`]
+        case 'RESOURCE': return [reference.resourceRef]
+      }
+    }),
+    technical: [message.messageId, `sequence ${String(message.sequence)}`],
+  }
+}
+
+export function toThreadRowView(input: {
+  readonly thread: CollabThreadV1
+  readonly messages: readonly CollabMessageRowView[]
+  readonly decisionSubjects: readonly string[]
+  readonly workingLineLabels?: Readonly<Record<string, string>>
+}): CollabThreadRowView {
+  const last = input.messages.at(-1)
+  return {
+    subject: input.thread.subject,
+    aboutLine: threadAboutLine(
+      input.thread.anchors,
+      input.workingLineLabels === undefined ? {} : { workingLineLabels: input.workingLineLabels },
+    ),
+    participants: input.thread.participants.map(
+      (participant) => `${participant.displayName} (${participant.principalKind.toLowerCase()})`,
+    ),
+    messageCount: input.messages.length,
+    ...(last === undefined ? {} : { lastMessageAt: last.when }),
+    archived: input.thread.lifecycle === 'ARCHIVED',
+    messages: input.messages,
+    decisionSubjects: input.decisionSubjects,
+    technical: [input.thread.threadId, ...input.thread.decisionIds],
+  }
+}

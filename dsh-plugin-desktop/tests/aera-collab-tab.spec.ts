@@ -73,6 +73,8 @@ function harness(api: Partial<AeraCollabApi> = {}) {
     resolve: vi.fn(async () => ({ source: 'NONE' as const })),
     view: vi.fn(async () => ({ unavailableReason: 'no store in this harness' })),
     openCollab: vi.fn(async () => {}),
+    coordinate: vi.fn(async () => ({})),
+    packetState: vi.fn(async () => ({ verdict: 'UNRESOLVABLE', humanSummary: 'no store in this harness' })),
     ...api,
   }, controller)
   return { registrations, injected, controller }

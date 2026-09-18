@@ -347,22 +347,23 @@ describe('participants, activity, checkpoints and the rail', () => {
 
   it('the rail carries the counts, and the counts live only there', () => {
     const rail = buildRail({
-      activity: 12, checkpoints: 4, changedFiles: 3, evidence: 2, discussionsDecisions: 5, archived: 1,
+      activity: 12, checkpoints: 4, changedFiles: 3, evidence: 2, discussionsDecisions: 5, coordination: 2, archived: 1,
     })
     expect(rail.map((tab) => tab.section)).toEqual([...COLLAB_RAIL_SECTIONS])
     expect(rail.map((tab) => tab.label)).toEqual([
-      'Activity', 'Checkpoints', 'Changed files', 'Evidence', 'Discussions & decisions', 'Archived',
+      'Activity', 'Checkpoints', 'Changed files', 'Evidence', 'Discussions & decisions', 'Messages', 'Archived',
     ])
     expect(rail.find((tab) => tab.section === 'DISCUSSIONS_DECISIONS')?.count).toBe(5)
     expect(rail.find((tab) => tab.section === 'ACTIVITY')?.count).toBe(12)
     expect(rail.find((tab) => tab.section === 'ARCHIVED')?.count).toBe(1)
     expect(rail.find((tab) => tab.section === 'CHANGED_FILES')?.count).toBe(3)
+    expect(rail.find((tab) => tab.section === 'COORDINATION')?.count).toBe(2)
   })
 
   it('an uncomputed count is ABSENT with a stated reason — never a zero that means "unknown"', () => {
     // No Compare has been opened, so there is no changed-file count to give.
     const rail = buildRail({
-      activity: 4, checkpoints: 0, evidence: 4, discussionsDecisions: 0, archived: 0,
+      activity: 4, checkpoints: 0, evidence: 4, discussionsDecisions: 0, coordination: 0, archived: 0,
     })
     const changed = rail.find((tab) => tab.section === 'CHANGED_FILES')
 

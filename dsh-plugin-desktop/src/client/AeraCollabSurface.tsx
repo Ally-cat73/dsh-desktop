@@ -31,8 +31,12 @@ import {
   type CollabDecision,
   type CollabEvidenceCard,
   type CollabLineRow,
+  type CollabMessageRow,
   type CollabNodeRef,
+  type CollabPacketCard,
+  type CollabPacketState,
   type CollabSurfaceView,
+  type CollabThreadRow,
 } from './aera-collab-api.ts'
 import type { AeraCollabLocaleKey } from './aera-collab-locales.ts'
 import { displayTime, splitCounts } from './aera-collab-format.ts'
@@ -546,8 +550,318 @@ function ContextGroup({ title, rows, t }: {
 }
 
 /** The whole read-first surface, inline. */
+/**
+ * §35–§40 — the coordination surface.
+ *
+ * Deliberately lightweight, and deliberately inside the existing rail rather
+ * than beside it: the order says extend the Read-First surface, not redesign
+ * it. Thread identity is never bound to any window or component (§36) — the
+ * component holds a thread id and nothing else, so closing the panel closes
+ * nothing.
+ */
+function PacketCardView({ card, api, t }: {
+  readonly card: CollabPacketCard
+  readonly api: Pick<AeraCollabApi, 'packetState'>
+  readonly t: Translate
+}) {
+  const [live, setLive] = useState<CollabPacketState>()
+  const [busy, setBusy] = useState(false)
+  const packetId = card.technical[0]
+
+  return (
+    <div className="aera-collab-packet-card">
+      <span className="aera-collab-packet-title">{card.title}</span>
+      <span className="aera-collab-packet-operands">{card.operands}</span>
+      {card.facts.length === 0
+        ? null
+        : <p className="aera-collab-packet-facts">{card.facts.join(' · ')}</p>}
+      <p className="aera-collab-packet-captured">
+        {`${t('capturedAt')} `}
+        <Recorded value={card.capturedAt} className="aera-collab-when" />
+      </p>
+      {/*
+        * §19: the movement line. It describes the world, not the packet — the
+        * packet above is the snapshot and has not changed.
+        */}
+      {card.stateNote === undefined
+        ? null
+        : (
+            <p className={card.stateMoved ? 'aera-collab-packet-moved' : 'aera-collab-status'}>
+              {card.stateNote}
+            </p>
+          )}
+      {packetId === undefined
+        ? null
+        : (
+            <button
+              type="button"
+              className="aera-collab-packet-action"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true)
+                void api.packetState(packetId)
+                  .then(setLive)
+                  .catch(() => { setLive(undefined) })
+                  .finally(() => { setBusy(false) })
+              }}
+            >
+              {t('viewCurrentState')}
+            </button>
+          )}
+      {/*
+        * §20: resolved separately and shown BESIDE the snapshot, never in
+        * place of it. Both are on screen at once, which is the whole point.
+        */}
+      {live === undefined
+        ? null
+        : (
+            <p className="aera-collab-packet-live">
+              {live.humanSummary}
+              {live.currentSourceRevision === undefined
+                ? null
+                : <span className="aera-collab-when">{` (${live.currentSourceRevision} → ${live.currentTargetRevision ?? '?'})`}</span>}
+            </p>
+          )}
+      <Technical lines={card.technical} label={t('technicalDetails')} />
+    </div>
+  )
+}
+
+function MessageRowView({ message, api, t }: {
+  readonly message: CollabMessageRow
+  readonly api: Pick<AeraCollabApi, 'packetState'>
+  readonly t: Translate
+}) {
+  return (
+    <li className={`aera-collab-message aera-collab-message-${message.principalKind.toLowerCase()}`}>
+      <span className="aera-collab-message-who">{message.who}</span>
+      {/* §10: the kind is drawn, always. An agent can never look like a person. */}
+      <span className="aera-collab-message-kind">{message.principalKind}</span>
+      {message.intentLabel === undefined
+        ? null
+        : <span className="aera-collab-message-intent">{message.intentLabel}</span>}
+      <Recorded value={message.when} className="aera-collab-when" />
+      {/* §40: an agent's words are labelled as interpretation, above the words. */}
+      {message.authorshipNote === undefined
+        ? null
+        : <p className="aera-collab-message-analysis">{message.authorshipNote}</p>}
+      <p className="aera-collab-message-body">{message.body}</p>
+      {message.packets.map(card => (
+        <PacketCardView key={card.technical[0] ?? card.capturedAt} card={card} api={api} t={t} />
+      ))}
+      {message.otherReferences.length === 0
+        ? null
+        : (
+            <ul className="aera-collab-message-refs">
+              {message.otherReferences.map(reference => <li key={reference}>{reference}</li>)}
+            </ul>
+          )}
+      <Technical lines={message.technical} label={t('technicalDetails')} />
+    </li>
+  )
+}
+
+function DecisionFromThread({ threadId, onDone, api, t }: {
+  readonly threadId: string
+  readonly onDone: () => void
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly t: Translate
+}) {
+  const [subject, setSubject] = useState('')
+  const [optionText, setOptionText] = useState('')
+  const [selected, setSelected] = useState('')
+  const [rationale, setRationale] = useState('')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+
+  /*
+   * §14, in the shape of the form: the alternatives are TYPED BY A PERSON and
+   * the selection is CHOSEN BY A PERSON. Nothing reads the conversation to
+   * guess either. A decision that cannot name its alternatives is not a
+   * decision, so the submit stays disabled until both exist.
+   */
+  const options = optionText
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '')
+    .map((label, index) => ({ optionId: `option-${String(index + 1)}`, label }))
+
+  return (
+    <form
+      className="aera-collab-decision-form"
+      onSubmit={(event) => {
+        event.preventDefault()
+        setBusy(true)
+        setError(undefined)
+        void api.coordinate({
+          action: 'RECORD_DECISION',
+          threadId,
+          subject: subject.trim(),
+          options,
+          selectedOptionId: selected,
+          ...(rationale.trim() === '' ? {} : { rationale: rationale.trim() }),
+        })
+          .then(() => { onDone() })
+          .catch((cause: unknown) => {
+            setError(cause instanceof Error ? cause.message : String(cause))
+          })
+          .finally(() => { setBusy(false) })
+      }}
+    >
+      <label>
+        {t('decisionSubject')}
+        <input value={subject} onChange={event => { setSubject(event.target.value) }} />
+      </label>
+      <label>
+        {t('decisionOptions')}
+        <textarea rows={3} value={optionText} onChange={event => { setOptionText(event.target.value) }} />
+      </label>
+      <label>
+        {t('decisionSelected')}
+        <select value={selected} onChange={event => { setSelected(event.target.value) }}>
+          <option value="">—</option>
+          {options.map(option => (
+            <option key={option.optionId} value={option.optionId}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t('decisionRationale')}
+        <textarea rows={2} value={rationale} onChange={event => { setRationale(event.target.value) }} />
+      </label>
+      {error === undefined ? null : <p className="aera-collab-status">{error}</p>}
+      <button
+        type="submit"
+        disabled={busy || subject.trim() === '' || options.length === 0 || selected === ''}
+      >
+        {t('recordIt')}
+      </button>
+    </form>
+  )
+}
+
+function ThreadCard({ thread, api, onChanged, t }: {
+  readonly thread: CollabThreadRow
+  readonly api: Pick<AeraCollabApi, 'coordinate' | 'packetState'>
+  readonly onChanged: () => void
+  readonly t: Translate
+}) {
+  const [draft, setDraft] = useState('')
+  const [intent, setIntent] = useState('GENERAL')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const threadId = thread.technical[0]
+
+  const act = (request: Record<string, unknown>, after: () => void): void => {
+    if (threadId === undefined) return
+    setBusy(true)
+    setError(undefined)
+    void api.coordinate(request)
+      .then(() => { after(); onChanged() })
+      .catch((cause: unknown) => { setError(cause instanceof Error ? cause.message : String(cause)) })
+      .finally(() => { setBusy(false) })
+  }
+
+  return (
+    <li className="aera-collab-thread">
+      <span className="aera-collab-thread-subject">{thread.subject}</span>
+      {/* §37: what it is about, before what was said. */}
+      <p className="aera-collab-thread-about">{thread.aboutLine}</p>
+      <p className="aera-collab-thread-participants">{thread.participants.join(' · ')}</p>
+      {thread.decisionSubjects.length === 0
+        ? null
+        : (
+            <p className="aera-collab-thread-decisions">
+              {thread.decisionSubjects.join(' · ')}
+            </p>
+          )}
+      <ul className="aera-collab-messages">
+        {thread.messages.map(message => (
+          <MessageRowView key={message.technical[0] ?? String(message.sequence)} message={message} api={api} t={t} />
+        ))}
+      </ul>
+      {error === undefined ? null : <p className="aera-collab-status">{error}</p>}
+      {thread.archived
+        ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => { act({ action: 'SET_LIFECYCLE', threadId, lifecycle: 'ACTIVE' }, () => undefined) }}
+            >
+              {t('reopenThread')}
+            </button>
+          )
+        : (
+            <>
+              <form
+                className="aera-collab-composer"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const body = draft.trim()
+                  if (body === '') return
+                  act({
+                    action: 'POST_MESSAGE',
+                    threadId,
+                    body,
+                    intent,
+                    /*
+                     * §31: the idempotency key. A double-clicked Send, or a
+                     * retry after a dropped response, resolves to the SAME
+                     * message rather than posting twice.
+                     */
+                    requestId: `${String(Date.now())}-${Math.random().toString(36).slice(2)}`,
+                  }, () => { setDraft('') })
+                }}
+              >
+                <textarea
+                  rows={2}
+                  value={draft}
+                  placeholder={t('messagePlaceholder')}
+                  aria-label={t('messagePlaceholder')}
+                  onChange={(event) => { setDraft(event.target.value) }}
+                />
+                <label>
+                  {t('intent')}
+                  <select value={intent} onChange={(event) => { setIntent(event.target.value) }}>
+                    {['GENERAL', 'REVIEW_REQUEST', 'RECONCILIATION_REQUEST',
+                      'PAUSE_REQUEST', 'RESUME_NOTICE', 'DECISION_REQUEST'].map(value => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                  </select>
+                </label>
+                <button type="submit" disabled={busy || draft.trim() === ''}>{t('send')}</button>
+              </form>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { act({ action: 'SET_LIFECYCLE', threadId, lifecycle: 'ARCHIVED' }, () => undefined) }}
+              >
+                {t('archiveThread')}
+              </button>
+              {/* §39: the entry point from a discussion to a DECISION, explicit. */}
+              <button type="button" onClick={() => { setRecording(value => !value) }}>
+                {t('recordDecision')}
+              </button>
+              {recording && threadId !== undefined
+                ? (
+                    <DecisionFromThread
+                      threadId={threadId}
+                      api={api}
+                      t={t}
+                      onDone={() => { setRecording(false); onChanged() }}
+                    />
+                  )
+                : null}
+            </>
+          )}
+      <Technical lines={thread.technical} label={t('technicalDetails')} />
+    </li>
+  )
+}
+
 export function AeraCollabSurface({ api, workOrderId, t }: {
-  readonly api: Pick<AeraCollabApi, 'view'>
+  readonly api: Pick<AeraCollabApi, 'view' | 'coordinate' | 'packetState'>
   readonly workOrderId: string
   readonly t: Translate
 }) {
@@ -556,6 +870,8 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<number | undefined>(0)
   const [comparing, setComparing] = useState<number>()
+  const [newThreadSubject, setNewThreadSubject] = useState('')
+  const [coordinationError, setCoordinationError] = useState<string>()
 
   const read = useCallback(async (compareLineIndex?: number) => {
     setLoading(true)
@@ -825,6 +1141,84 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
                       : <p className="aera-collab-discussion-entry">{discussion.latestEntry}</p>}
                     <Technical lines={discussion.technical} label={t('technicalDetails')} />
                   </li>
+                ))}
+              </ul>
+            )}
+      </Section>
+
+      {/*
+        * §35/§36 — COORDINATION. A lightweight section, not a second product.
+        * §30/§55: the delivery note is the FIRST thing in it, because a reader
+        * who is not told will assume live push that does not exist yet.
+        */}
+      <Section title={t('coordination')} {...railCount('COORDINATION')}>
+        <p className="aera-collab-status">{surface.coordinationDeliveryNote}</p>
+        {surface.threadsEmptyReason === undefined
+          ? null
+          : <p className="aera-collab-status">{surface.threadsEmptyReason}</p>}
+        <form
+          className="aera-collab-new-thread"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const subject = newThreadSubject.trim()
+            if (subject === '') return
+            setCoordinationError(undefined)
+            void api.coordinate({ action: 'OPEN_THREAD', subject })
+              .then(() => { setNewThreadSubject(''); void read(comparing) })
+              .catch((cause: unknown) => {
+                setCoordinationError(cause instanceof Error ? cause.message : String(cause))
+              })
+          }}
+        >
+          <input
+            value={newThreadSubject}
+            placeholder={t('threadSubject')}
+            aria-label={t('threadSubject')}
+            onChange={(event) => { setNewThreadSubject(event.target.value) }}
+          />
+          <button type="submit" disabled={newThreadSubject.trim() === ''}>{t('startThread')}</button>
+        </form>
+        {/*
+          * §21 — SHARE FROM COMPARE. Offered only while a comparison is
+          * actually on screen, because a packet is a snapshot of a real
+          * comparison and there is nothing honest to share without one.
+          */}
+        {surface.compare === undefined
+          ? null
+          : (
+              <button
+                type="button"
+                className="aera-collab-share-compare"
+                onClick={() => {
+                  setCoordinationError(undefined)
+                  void api.coordinate({
+                    action: 'SHARE_COMPARE',
+                    ...(comparing === undefined ? {} : { compareLineIndex: comparing }),
+                  })
+                    .then(() => { void read(comparing) })
+                    .catch((cause: unknown) => {
+                      setCoordinationError(cause instanceof Error ? cause.message : String(cause))
+                    })
+                }}
+              >
+                {t('shareCompare')}
+              </button>
+            )}
+        {coordinationError === undefined
+          ? null
+          : <p className="aera-collab-status">{coordinationError}</p>}
+        {surface.threads.length === 0
+          ? null
+          : (
+              <ul className="aera-collab-threads">
+                {surface.threads.map(thread => (
+                  <ThreadCard
+                    key={thread.technical[0] ?? thread.subject}
+                    thread={thread}
+                    api={api}
+                    t={t}
+                    onChanged={() => { void read(comparing) }}
+                  />
                 ))}
               </ul>
             )}

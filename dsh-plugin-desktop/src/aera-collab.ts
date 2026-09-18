@@ -30,6 +30,12 @@ import {
   handleAeraCollabViewRequest,
   handleAeraWorkContextOpenRequest,
 } from './aera-collab-route.ts'
+import {
+  AERA_COLLAB_COORDINATION_PATH,
+  AERA_COLLAB_PACKET_STATE_PATH,
+  handleAeraCollabCoordinationRequest,
+  handleAeraCollabPacketStateRequest,
+} from './aera-collab-coordination-route.ts'
 import { CollabWorkspaceService, resolveCollabConfig } from './aera-collab-service.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
@@ -109,6 +115,83 @@ export function apply(ctx: Context): void {
       },
     }),
     'aera-collab: workspace Work Order resolve route',
+  )
+  /*
+   * COORDINATION ROUTES (WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-
+   * WORKING-LINE-HANDOFF-001 §35). The first writes this surface has ever
+   * offered. They stay behind POST for the same reason joining does: they
+   * change durable institutional records. The packet-state read below is a
+   * GET, because resolving where the world is now changes nothing.
+   */
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_COLLAB_COORDINATION_PATH,
+      handler: (req, res) => {
+        void handleAeraCollabCoordinationRequest(
+          req,
+          res,
+          rendererOrigin,
+          async (request) => {
+            switch (request.action) {
+              case 'OPEN_THREAD':
+                return service.openCoordinationThread({ subject: request.subject ?? '' })
+              case 'POST_MESSAGE':
+                return service.postCoordinationMessage({
+                  threadId: request.threadId ?? '',
+                  body: request.body ?? '',
+                  requestId: request.requestId ?? '',
+                  ...(request.intent === undefined ? {} : { intent: request.intent }),
+                  ...(request.packetId === undefined ? {} : { packetId: request.packetId }),
+                  ...(request.parentMessageId === undefined ? {} : { parentMessageId: request.parentMessageId }),
+                })
+              case 'SHARE_COMPARE':
+                return await service.shareComparePacket(
+                  request.compareLineIndex === undefined ? {} : { compareLineIndex: request.compareLineIndex },
+                )
+              case 'ACKNOWLEDGE':
+                return service.acknowledgeCoordinationMessage({
+                  threadId: request.threadId ?? '',
+                  messageId: request.messageId ?? '',
+                  kind: request.kind ?? 'READ',
+                })
+              case 'SET_LIFECYCLE':
+                return service.setCoordinationThreadLifecycle({
+                  threadId: request.threadId ?? '',
+                  lifecycle: request.lifecycle ?? 'ACTIVE',
+                })
+              case 'RECORD_DECISION':
+                return service.recordDecisionFromThread({
+                  threadId: request.threadId ?? '',
+                  subject: request.subject ?? '',
+                  options: request.options ?? [],
+                  selectedOptionId: request.selectedOptionId ?? '',
+                  ...(request.rationale === undefined ? {} : { rationale: request.rationale }),
+                  ...(request.messageIds === undefined ? {} : { messageIds: request.messageIds }),
+                })
+            }
+          },
+          reportError,
+        )
+      },
+    }),
+    'aera-collab: coordination write route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_COLLAB_PACKET_STATE_PATH,
+      handler: (req, res) => {
+        handleAeraCollabPacketStateRequest(
+          req,
+          res,
+          rendererOrigin,
+          packetId => service.assessPacket(packetId),
+          reportError,
+        )
+      },
+    }),
+    'aera-collab: coordination packet state read route',
   )
   ctx.effect(
     () => ctx.webServer.register({
