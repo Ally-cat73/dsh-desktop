@@ -1308,24 +1308,30 @@ export class CollabWorkspaceService {
    * "what I am looking at" must send what the sender was actually looking at.
    * No model call is involved (§41); this is arithmetic over a diff summary.
    */
-  async shareComparePacket(input: {
+  /**
+   * Resolve the comparison a share would send. **A PURE READ: it computes,
+   * validates and refuses, and writes nothing.**
+   *
+   * Extracted so that every refusal a share can hit — no comparison open, an
+   * unresolvable target, a line that cannot be observed — fires BEFORE any
+   * record is created. Independent review R5-3 found the sequencing defect
+   * this closes: `shareCompareToThread` created a brand-new thread at step 1
+   * and only then called into the packet path, so a share with no comparison
+   * left an empty orphan thread behind. That is the same write-before-validate
+   * shape that produced the orphan packet `a02ba81a`, one level up.
+   */
+  private async resolveCompareForShare(input: {
+    readonly workOrderId: string
     readonly compareLineIndex?: number
-    readonly workOrderId?: string
-  } = {}): Promise<{ readonly packetId: string, readonly outcome: string }> {
-    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
-    const human = this.requireHumanPrincipal()
-    /*
-     * The Work Order is named explicitly from the JOINED AGENT context.
-     * `collabView` otherwise resolves it from the native WorkContext, which is
-     * a different join — sharing from an agent session must not require the
-     * user to have separately opened the native window.
-     */
-    const subject = input.workOrderId ?? workOrderId
+  }): Promise<{
+    readonly comparison: NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['comparison']>
+    readonly sourceWorkingLineId?: string
+  }> {
     const view = await this.collabView({
-      workOrderId: subject,
+      workOrderId: input.workOrderId,
       ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
     })
-    const observed = this.observeWorkingState(subject)
+    const observed = this.observeWorkingState(input.workOrderId)
     const topology = await this.deriveObservedTopology(observed)
     const computed = await this.computeObservedCompare({
       ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
@@ -1334,40 +1340,6 @@ export class CollabWorkspaceService {
       ...(topology === undefined ? {} : { topology }),
     })
     const summary = computed.summary
-    /*
-     * §17/§56: record which Working Line the SOURCE side was, where the
-     * compared row actually has a durable Working Line record.
-     *
-     * Only the source, deliberately. The target of this comparison is an
-     * accepted integration ref, not a Working Line, so `targetWorkingLineId`
-     * stays absent rather than being filled with something that is not a
-     * Working Line (independent review R2, finding 2 — the earlier wording here
-     * said "Working Lines" plural and overstated what is set).
-     *
-     * Today the source is usually absent too: Compare refuses every
-     * non-OBSERVED row, and an observed checkout carries no
-     * `codeWorkingLineId`, so the card honestly falls back to revisions. The id
-     * is read from the row rather than resolved from the branch on purpose —
-     * CWL-1 forbids resolving a Working Line by its branch, label or path, and
-     * a convenient lookup here would be exactly that violation. The moment
-     * Compare supports durable lines, the packet carries the id with no further
-     * change.
-     */
-    const requestedRow = input.compareLineIndex === undefined
-      ? undefined
-      : view.lines[input.compareLineIndex]
-    const sourceWorkingLineId = requestedRow?.codeWorkingLineId
-    /*
-     * §17 lists RepositoryId among the packet's minimum content, and this is
-     * the repository the comparison was actually observed in. Validated rather
-     * than cast: a configured value that is not a canonical RepositoryId is
-     * omitted, because a packet that names the wrong repository is worse than
-     * one that names none (independent review R2, finding 1).
-     */
-    const observedRepositoryId = observed.view !== undefined
-      && isRepositoryId(observed.view.repositoryId)
-      ? observed.view.repositoryId
-      : undefined
     if (summary === undefined) {
       throw new CollabHonestError(
         'COMPARE_UNAVAILABLE',
@@ -1376,14 +1348,33 @@ export class CollabWorkspaceService {
         ?? 'There is no computed comparison to share. Open a Compare first \u2014 a packet is a snapshot of a real comparison, never a fabricated one.',
       )
     }
-    const result = store.recordCoordinationPacket({
-      sessionId,
-      authorisingWorkOrderId: workOrderId,
-      workOrderId,
-      subject: 'WORKING_LINE_COMPARE',
-      ...(sourceWorkingLineId === undefined
-        ? {}
-        : { sourceWorkingLineId: sourceWorkingLineId as NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['sourceWorkingLineId']> }),
+    /*
+     * §17/§56: record which Working Line the SOURCE side was, where the
+     * compared row actually has a durable Working Line record.
+     *
+     * Only the source, deliberately. The target of this comparison is an
+     * accepted integration ref, not a Working Line, so `targetWorkingLineId`
+     * stays absent rather than being filled with something that is not a
+     * Working Line (independent review R2, finding 2).
+     *
+     * The id is read from the row rather than resolved from the branch on
+     * purpose — CWL-1 forbids resolving a Working Line by its branch, label or
+     * path, and a convenient lookup here would be exactly that violation.
+     */
+    const sourceWorkingLineId = input.compareLineIndex === undefined
+      ? undefined
+      : view.lines[input.compareLineIndex]?.codeWorkingLineId
+    /*
+     * §17 lists RepositoryId among the packet's minimum content. Validated
+     * rather than cast: a configured value that is not a canonical
+     * RepositoryId is omitted, because a packet that names the wrong
+     * repository is worse than one that names none (R2, finding 1).
+     */
+    const observedRepositoryId = observed.view !== undefined
+      && isRepositoryId(observed.view.repositoryId)
+      ? observed.view.repositoryId
+      : undefined
+    return {
       comparison: {
         ...(observedRepositoryId === undefined ? {} : { repositoryId: observedRepositoryId }),
         sourceRevision: summary.fromRevision,
@@ -1398,6 +1389,33 @@ export class CollabWorkspaceService {
         linesRemoved: summary.totals.linesRemoved,
         structuralDeltaAvailable: false,
       },
+      ...(sourceWorkingLineId === undefined ? {} : { sourceWorkingLineId }),
+    }
+  }
+
+  /**
+   * §21 — record a Compare packet. The comparison is resolved first and the
+   * packet is written only if that succeeded.
+   */
+  async shareComparePacket(input: {
+    readonly compareLineIndex?: number
+    readonly workOrderId?: string
+  } = {}): Promise<{ readonly packetId: string, readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+    const resolved = await this.resolveCompareForShare({
+      workOrderId: input.workOrderId ?? workOrderId,
+      ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+    })
+    const result = store.recordCoordinationPacket({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      workOrderId,
+      subject: 'WORKING_LINE_COMPARE',
+      ...(resolved.sourceWorkingLineId === undefined
+        ? {}
+        : { sourceWorkingLineId: resolved.sourceWorkingLineId as NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['sourceWorkingLineId']> }),
+      comparison: resolved.comparison,
       observedByPrincipalId: human as Parameters<ParticipationStore['recordCoordinationPacket']>[0]['observedByPrincipalId'],
     })
     return { packetId: result.packet.packetId, outcome: result.outcome }
@@ -1418,21 +1436,31 @@ export class CollabWorkspaceService {
    *
    * So the order of operations here is load-bearing, not incidental:
    *
-   *   1. resolve the recipient thread — open it, or validate the named one;
-   *   2. prove it can actually receive a message (exists, active, in scope);
-   *   3. only then write the packet;
-   *   4. post the message that references it.
+   *   1. check the recipient SPEC — exactly one of a thread or a new subject;
+   *   2. validate an EXISTING thread (exists, active, sender in scope);
+   *   3. **resolve the comparison** — a pure read that refuses if there is
+   *      none to send;
+   *   4. only now create a NEW thread, if that is what was asked for;
+   *   5. write the packet;
+   *   6. post the message that references it.
    *
-   * A cancelled share therefore writes nothing at all, and a share that fails
-   * for want of a recipient fails before any packet exists. Steps 3 and 4 are
-   * adjacent inside one call with no user interaction between them.
+   * Steps 1–3 touch nothing, so a cancelled share, a share with no recipient
+   * and a share with no comparison all leave the store exactly as they found
+   * it. Step 3 sits before step 4 because of independent review R5-3: the
+   * previous version created the new thread first and left an empty orphan
+   * thread behind whenever the comparison turned out to be unavailable.
    *
-   * Full honesty about the residual: this is not a database transaction. If
-   * the process died between 3 and 4 the packet would survive unreferenced.
-   * What removes that risk in practice is step 2 — by the time the packet is
-   * written the only remaining work is an append to a thread already proven
-   * writable — and `requestId`, which makes a retried post resolve to the same
-   * message rather than a second one.
+   * Full honesty about the residual: this is not a database transaction, and
+   * `requestId` does not make it one. If the process died between 5 and 6 the
+   * packet would survive unreferenced. What reduces that risk is step 2/4 —
+   * by the time the packet is written the only remaining work is an append to
+   * a thread already proven writable.
+   *
+   * `requestId` binds a retry only within the same observation: `observedAt`
+   * is retaken on each share, so pressing Send twice at different times is
+   * deliberately two observations and mints two packets and two messages. That
+   * is intended — each packet is an honest record of what the sender saw at
+   * that moment — and it is not an idempotency guarantee.
    */
   async shareCompareToThread(input: {
     readonly workOrderId?: string
@@ -1452,47 +1480,84 @@ export class CollabWorkspaceService {
     const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
     const human = this.requireHumanPrincipal()
 
-    // ---- 1 & 2 · the recipient, resolved and proven writable, BEFORE any packet
-    let threadId: string
-    if (input.threadId !== undefined && input.threadId.trim() !== '') {
-      threadId = input.threadId.trim()
-    } else {
-      const subject = input.newThreadSubject?.trim() ?? ''
-      if (subject === '') {
-        throw new CollabHonestError(
-          'INVALID_INPUT',
-          'A comparison is shared WITH someone. Choose a thread to send it to, or name a new one — nothing is written until you do.',
-        )
-      }
-      threadId = (await this.openCoordinationThread({ workOrderId, subject })).threadId
-    }
-    const thread = store.listCollabThreads(workOrderId).find(row => row.threadId === threadId)
-    if (thread === undefined) {
-      throw new CollabHonestError(
-        'WORK_ORDER_NOT_FOUND',
-        `No coordination thread ${threadId} exists on this Work Order, so there is nobody to share the comparison with. Nothing was written.`,
-      )
-    }
-    if (thread.lifecycle === 'ARCHIVED') {
+    // ---- 1 · the recipient SPEC, checked without writing anything
+    const namedThreadId = input.threadId?.trim() ?? ''
+    const newSubject = input.newThreadSubject?.trim() ?? ''
+    if (namedThreadId === '' && newSubject === '') {
       throw new CollabHonestError(
         'INVALID_INPUT',
-        'That thread is archived. Reopen it before sharing into it — nothing was written.',
+        'A comparison is shared WITH someone. Choose a thread to send it to, or name a new one — nothing is written until you do.',
       )
     }
-    if (!thread.accessScope.authorisedPrincipalIds.includes(human as never)) {
+    if (namedThreadId !== '' && newSubject !== '') {
       throw new CollabHonestError(
         'INVALID_INPUT',
-        'You are not within that thread\u2019s access scope, so the comparison was not shared and nothing was written.',
+        'Name either an existing thread or a new one, not both — it is not clear where this should land, so nothing was written.',
       )
     }
 
-    // ---- 3 · the packet, from the EXACT on-screen operands
-    const shared = await this.shareComparePacket({
+    /*
+     * ---- 2 · an EXISTING recipient is validated before anything is written.
+     * A new one is not created yet: see step 3.
+     */
+    const requireWritableThread = (threadId: string): void => {
+      const thread = store.listCollabThreads(workOrderId).find(row => row.threadId === threadId)
+      if (thread === undefined) {
+        throw new CollabHonestError(
+          'WORK_ORDER_NOT_FOUND',
+          `No coordination thread ${threadId} exists on this Work Order, so there is nobody to share the comparison with. Nothing was written.`,
+        )
+      }
+      if (thread.lifecycle === 'ARCHIVED') {
+        throw new CollabHonestError(
+          'INVALID_INPUT',
+          'That thread is archived. Reopen it before sharing into it — nothing was written.',
+        )
+      }
+      if (!thread.accessScope.authorisedPrincipalIds.includes(human as never)) {
+        throw new CollabHonestError(
+          'INVALID_INPUT',
+          'You are not within that thread\u2019s access scope, so the comparison was not shared and nothing was written.',
+        )
+      }
+    }
+    if (namedThreadId !== '') requireWritableThread(namedThreadId)
+
+    /*
+     * ---- 3 · RESOLVE THE COMPARISON BEFORE CREATING ANYTHING.
+     *
+     * This ordering is the whole finding of independent review R5-3. The
+     * previous version created a brand-new thread first and only then went
+     * looking for a comparison, so a share with nothing to send left an empty
+     * orphan thread in the durable store — the same write-before-validate
+     * shape that produced the orphan packet `a02ba81a`, one level up. Every
+     * refusal a share can hit now fires while the store is still untouched.
+     */
+    const resolved = await this.resolveCompareForShare({
       workOrderId,
       ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
     })
 
-    // ---- 4 · the message that makes it visible to the recipient
+    // ---- 4 · only now is a new recipient created
+    const threadId = namedThreadId !== ''
+      ? namedThreadId
+      : (await this.openCoordinationThread({ workOrderId, subject: newSubject })).threadId
+    if (namedThreadId === '') requireWritableThread(threadId)
+
+    // ---- 5 · the packet, from the comparison resolved at step 3
+    const packet = store.recordCoordinationPacket({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      workOrderId,
+      subject: 'WORKING_LINE_COMPARE',
+      ...(resolved.sourceWorkingLineId === undefined
+        ? {}
+        : { sourceWorkingLineId: resolved.sourceWorkingLineId as NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['sourceWorkingLineId']> }),
+      comparison: resolved.comparison,
+      observedByPrincipalId: human as Parameters<ParticipationStore['recordCoordinationPacket']>[0]['observedByPrincipalId'],
+    }).packet
+
+    // ---- 6 · the message that makes it visible to the recipient
     const note = input.note?.trim() ?? ''
     const posted = store.postCollabMessage({
       sessionId,
@@ -1501,11 +1566,11 @@ export class CollabWorkspaceService {
       senderPrincipalId: human as Parameters<ParticipationStore['postCollabMessage']>[0]['senderPrincipalId'],
       body: note === '' ? 'Sharing the comparison I am looking at.' : note,
       intent: 'REVIEW_REQUEST',
-      references: [{ kind: 'PACKET', packetId: shared.packetId as never }],
-      requestId: `share-compare-${shared.packetId}`,
+      references: [{ kind: 'PACKET', packetId: packet.packetId as never }],
+      requestId: `share-compare-${packet.packetId}`,
     })
     return {
-      packetId: shared.packetId,
+      packetId: packet.packetId,
       threadId,
       messageId: posted.message.messageId,
       outcome: posted.outcome,

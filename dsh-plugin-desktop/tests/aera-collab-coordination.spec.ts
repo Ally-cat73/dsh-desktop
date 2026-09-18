@@ -346,3 +346,53 @@ describe('§21 — a shared comparison reaches a recipient, or writes nothing', 
     expect(packetCount()).toBe(before)
   })
 })
+
+/**
+ * Independent review R5-3: the write-before-validate shape, one level up.
+ *
+ * `shareCompareToThread` used to create a brand-new thread at step 1 and only
+ * then look for a comparison, so a share with nothing to send left an EMPTY
+ * ORPHAN THREAD in the durable store — the same defect that produced the
+ * orphan packet `a02ba81a`, repeated against a different record type.
+ */
+describe('§21 — a share with no comparison creates no thread either', () => {
+  const threadCount = (): number =>
+    new ParticipationStore(storeDir).listCollabThreads(TEST_WO).length
+  const packetCount = (): number =>
+    new ParticipationStore(storeDir).listCoordinationPackets(TEST_WO).length
+
+  it('refuses a NEW-thread share when the comparison is unavailable, and writes NOTHING', async () => {
+    const service = await joined()
+    const threadsBefore = threadCount()
+    const packetsBefore = packetCount()
+
+    await expect(service.shareCompareToThread({
+      workOrderId: TEST_WO,
+      newThreadSubject: 'This thread must never exist',
+    })).rejects.toMatchObject({ code: 'COMPARE_UNAVAILABLE' })
+
+    // The assertion R5-3 is about: no thread was minted on the way to failing.
+    expect(threadCount()).toBe(threadsBefore)
+    expect(packetCount()).toBe(packetsBefore)
+    expect(new ParticipationStore(storeDir).listCollabThreads(TEST_WO)
+      .some(thread => thread.subject === 'This thread must never exist')).toBe(false)
+  })
+
+  it('refuses before anything when neither recipient is named', async () => {
+    const service = await joined()
+    const threadsBefore = threadCount()
+    await expect(service.shareCompareToThread({ workOrderId: TEST_WO }))
+      .rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    expect(threadCount()).toBe(threadsBefore)
+  })
+
+  it('refuses an ambiguous share naming BOTH a thread and a new subject', async () => {
+    const service = await joined()
+    const { threadId } = await service.openCoordinationThread({ subject: 'Ambiguity guard' })
+    const threadsBefore = threadCount()
+    await expect(service.shareCompareToThread({
+      workOrderId: TEST_WO, threadId, newThreadSubject: 'Somewhere else',
+    })).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    expect(threadCount()).toBe(threadsBefore)
+  })
+})
