@@ -58,6 +58,12 @@ const INTENTS = [
 
 export interface CoordinationRequest {
   readonly action: CoordinationAction
+  /**
+   * The Work Order the surface is looking at. Carried on every action because
+   * the renderer may be reading an order other than this workspace's default,
+   * and a message must land on the order the sender was actually reading.
+   */
+  readonly workOrderId?: string
   readonly threadId?: string
   readonly messageId?: string
   readonly subject?: string
@@ -132,8 +138,16 @@ export function parseCoordinationBody(value: unknown): CoordinationRequest | und
     SET_LIFECYCLE: ['action', 'threadId', 'lifecycle'],
     RECORD_DECISION: ['action', 'threadId', 'subject', 'options', 'selectedOptionId', 'rationale', 'messageIds'],
   }
-  const permitted = allowed[action as CoordinationAction]
+  // `workOrderId` is accepted on every action, so it is permitted alongside
+  // each action's own members rather than repeated in six lists.
+  const permitted = [...allowed[action as CoordinationAction], 'workOrderId']
   for (const key of Object.keys(body)) if (!permitted.includes(key)) return undefined
+  let scopedWorkOrderId: string | undefined
+  if (body['workOrderId'] !== undefined) {
+    scopedWorkOrderId = boundedId(body['workOrderId'])
+    if (scopedWorkOrderId === undefined) return undefined
+  }
+  const scope = scopedWorkOrderId === undefined ? {} : { workOrderId: scopedWorkOrderId }
 
   switch (action) {
     case 'OPEN_THREAD': {
@@ -141,7 +155,7 @@ export function parseCoordinationBody(value: unknown): CoordinationRequest | und
       if (typeof subject !== 'string') return undefined
       const trimmed = subject.trim()
       if (trimmed === '' || trimmed.length > MAX_SUBJECT_LENGTH) return undefined
-      return { action, subject: trimmed }
+      return { action, subject: trimmed, ...scope }
     }
     case 'POST_MESSAGE': {
       const threadId = boundedId(body['threadId'])
@@ -167,32 +181,32 @@ export function parseCoordinationBody(value: unknown): CoordinationRequest | und
         if (parentMessageId === undefined) return undefined
       }
       return {
-        action, threadId, body: messageBody, requestId,
+        action, threadId, body: messageBody, requestId, ...scope,
         ...(intent === undefined ? {} : { intent }),
         ...(packetId === undefined ? {} : { packetId }),
         ...(parentMessageId === undefined ? {} : { parentMessageId }),
       }
     }
     case 'SHARE_COMPARE': {
-      if (body['compareLineIndex'] === undefined) return { action }
+      if (body['compareLineIndex'] === undefined) return { action, ...scope }
       const index = body['compareLineIndex']
       if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 || index > 999) {
         return undefined
       }
-      return { action, compareLineIndex: index }
+      return { action, compareLineIndex: index, ...scope }
     }
     case 'ACKNOWLEDGE': {
       const threadId = boundedId(body['threadId'])
       const messageId = boundedId(body['messageId'])
       if (threadId === undefined || messageId === undefined) return undefined
       if (body['kind'] !== 'READ' && body['kind'] !== 'ACKNOWLEDGED') return undefined
-      return { action, threadId, messageId, kind: body['kind'] }
+      return { action, threadId, messageId, kind: body['kind'], ...scope }
     }
     case 'SET_LIFECYCLE': {
       const threadId = boundedId(body['threadId'])
       if (threadId === undefined) return undefined
       if (body['lifecycle'] !== 'ACTIVE' && body['lifecycle'] !== 'ARCHIVED') return undefined
-      return { action, threadId, lifecycle: body['lifecycle'] }
+      return { action, threadId, lifecycle: body['lifecycle'], ...scope }
     }
     case 'RECORD_DECISION': {
       const threadId = boundedId(body['threadId'])
@@ -234,7 +248,7 @@ export function parseCoordinationBody(value: unknown): CoordinationRequest | und
         }
       }
       return {
-        action, threadId, subject, options, selectedOptionId,
+        action, threadId, subject, options, selectedOptionId, ...scope,
         ...(rationale === undefined ? {} : { rationale }),
         ...(messageIds === undefined ? {} : { messageIds }),
       }

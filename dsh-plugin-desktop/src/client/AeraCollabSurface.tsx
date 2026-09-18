@@ -661,8 +661,9 @@ function MessageRowView({ message, api, t }: {
   )
 }
 
-function DecisionFromThread({ threadId, onDone, api, t }: {
+function DecisionFromThread({ threadId, workOrderId, onDone, api, t }: {
   readonly threadId: string
+  readonly workOrderId: string
   readonly onDone: () => void
   readonly api: Pick<AeraCollabApi, 'coordinate'>
   readonly t: Translate
@@ -696,6 +697,7 @@ function DecisionFromThread({ threadId, onDone, api, t }: {
         void api.coordinate({
           action: 'RECORD_DECISION',
           threadId,
+          workOrderId,
           subject: subject.trim(),
           options,
           selectedOptionId: selected,
@@ -740,8 +742,9 @@ function DecisionFromThread({ threadId, onDone, api, t }: {
   )
 }
 
-function ThreadCard({ thread, api, onChanged, t }: {
+function ThreadCard({ thread, workOrderId, api, onChanged, t }: {
   readonly thread: CollabThreadRow
+  readonly workOrderId: string
   readonly api: Pick<AeraCollabApi, 'coordinate' | 'packetState'>
   readonly onChanged: () => void
   readonly t: Translate
@@ -757,7 +760,7 @@ function ThreadCard({ thread, api, onChanged, t }: {
     if (threadId === undefined) return
     setBusy(true)
     setError(undefined)
-    void api.coordinate(request)
+    void api.coordinate({ ...request, workOrderId })
       .then(() => { after(); onChanged() })
       .catch((cause: unknown) => { setError(cause instanceof Error ? cause.message : String(cause)) })
       .finally(() => { setBusy(false) })
@@ -847,6 +850,7 @@ function ThreadCard({ thread, api, onChanged, t }: {
                 ? (
                     <DecisionFromThread
                       threadId={threadId}
+                      workOrderId={workOrderId}
                       api={api}
                       t={t}
                       onDone={() => { setRecording(false); onChanged() }}
@@ -1163,7 +1167,7 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
             const subject = newThreadSubject.trim()
             if (subject === '') return
             setCoordinationError(undefined)
-            void api.coordinate({ action: 'OPEN_THREAD', subject })
+            void api.coordinate({ action: 'OPEN_THREAD', subject, workOrderId })
               .then(() => { setNewThreadSubject(''); void read(comparing) })
               .catch((cause: unknown) => {
                 setCoordinationError(cause instanceof Error ? cause.message : String(cause))
@@ -1193,6 +1197,7 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
                   setCoordinationError(undefined)
                   void api.coordinate({
                     action: 'SHARE_COMPARE',
+                    workOrderId,
                     ...(comparing === undefined ? {} : { compareLineIndex: comparing }),
                   })
                     .then(() => { void read(comparing) })
@@ -1215,6 +1220,7 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
                   <ThreadCard
                     key={thread.technical[0] ?? thread.subject}
                     thread={thread}
+                    workOrderId={workOrderId}
                     api={api}
                     t={t}
                     onChanged={() => { void read(comparing) }}

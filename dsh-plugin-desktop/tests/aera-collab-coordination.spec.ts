@@ -80,10 +80,32 @@ beforeAll(() => {
 })
 
 describe('coordination writes require real authority', () => {
-  it('refuses to open a thread without a joined WorkContext', () => {
+  it('joins on demand — a thread opens from a surface that never joined', async () => {
+    /*
+     * THE REGRESSION THIS PINS was found by mechanical GUI acceptance, not by
+     * this suite: the Read-First surface projects a Work Order WITHOUT joining
+     * it, so every coordination control was visible, reachable, and refused
+     * with "No agent WorkContext is open" the moment it was pressed. The
+     * earlier version of this test asserted that refusal and called it correct,
+     * which is why the suite stayed green through a feature that did not work.
+     *
+     * A service that has never joined must now be able to write, because an
+     * explicit POST is already a mutation and the session it implies is as
+     * authorised as the message it carries.
+     */
     const service = new CollabWorkspaceService(config())
-    expect(() => service.openCoordinationThread({ subject: 'Overlap' }))
-      .toThrow(/No agent WorkContext is open/)
+    const opened = await service.openCoordinationThread({
+      subject: 'Opened without a prior join', workOrderId: TEST_WO,
+    })
+    expect(opened.outcome).toBe('RECORDED')
+    expect(opened.threadId).toMatch(/^aera:collab-thread:/)
+  })
+
+  it('refuses without a store rather than inventing one', async () => {
+    const { storeDir: _omitted, ...withoutStore } = config()
+    const service = new CollabWorkspaceService(withoutStore)
+    await expect(service.openCoordinationThread({ subject: 'Overlap' }))
+      .rejects.toMatchObject({ code: 'STORE_UNAVAILABLE' })
   })
 
   it('refuses to send without a canonical human principal — a sender is never invented', async () => {
@@ -96,8 +118,8 @@ describe('coordination writes require real authority', () => {
 describe('§9/§10 — a person sends, and the agent that carried it is not the sender', () => {
   it('records the human as sender and the agent as recorder', async () => {
     const service = await joined()
-    const { threadId } = service.openCoordinationThread({ subject: 'Authentication overlap' })
-    const posted = service.postCoordinationMessage({
+    const { threadId } = await service.openCoordinationThread({ subject: 'Authentication overlap' })
+    const posted = await service.postCoordinationMessage({
       threadId, body: 'Three of your changes touch the authentication contract.', requestId: 'desk-1',
     })
     expect(posted.outcome).toBe('RECORDED')
@@ -114,9 +136,9 @@ describe('§9/§10 — a person sends, and the agent that carried it is not the 
 
   it('§31 — a retried send is the same message, not a second one', async () => {
     const service = await joined()
-    const { threadId } = service.openCoordinationThread({ subject: 'Retry subject' })
-    const first = service.postCoordinationMessage({ threadId, body: 'once', requestId: 'retry-desk' })
-    const again = service.postCoordinationMessage({ threadId, body: 'once', requestId: 'retry-desk' })
+    const { threadId } = await service.openCoordinationThread({ subject: 'Retry subject' })
+    const first = await service.postCoordinationMessage({ threadId, body: 'once', requestId: 'retry-desk' })
+    const again = await service.postCoordinationMessage({ threadId, body: 'once', requestId: 'retry-desk' })
     expect(again.outcome).toBe('IDEMPOTENT')
     expect(again.messageId).toBe(first.messageId)
     expect(new ParticipationStore(storeDir)
@@ -127,8 +149,8 @@ describe('§9/§10 — a person sends, and the agent that carried it is not the 
 describe('§35 — the surface projects threads, and reading them writes nothing', () => {
   it('threads appear on the Collab view with a Messages rail count', async () => {
     const service = await joined()
-    const { threadId } = service.openCoordinationThread({ subject: 'Visible on the surface' })
-    service.postCoordinationMessage({ threadId, body: 'A message to draw.', requestId: 'draw-1' })
+    const { threadId } = await service.openCoordinationThread({ subject: 'Visible on the surface' })
+    await service.postCoordinationMessage({ threadId, body: 'A message to draw.', requestId: 'draw-1' })
 
     const view = await service.collabView({ workOrderId: TEST_WO })
     const thread = view.threads.find(row => row.subject === 'Visible on the surface')
@@ -146,8 +168,8 @@ describe('§35 — the surface projects threads, and reading them writes nothing
 
   it('§48 — projecting the surface leaves every durable record byte-identical', async () => {
     const service = await joined()
-    const { threadId } = service.openCoordinationThread({ subject: 'Read-only proof' })
-    service.postCoordinationMessage({ threadId, body: 'Written before the read.', requestId: 'read-1' })
+    const { threadId } = await service.openCoordinationThread({ subject: 'Read-only proof' })
+    await service.postCoordinationMessage({ threadId, body: 'Written before the read.', requestId: 'read-1' })
 
     const snapshot = (): Record<string, string> => Object.fromEntries(
       STORE_RECORD_FILES.map((file) => {
@@ -168,20 +190,20 @@ describe('§35 — the surface projects threads, and reading them writes nothing
 describe('§33 — archive hides a thread from the active surface and erases nothing', () => {
   it('archives, refuses new messages, and reopens intact', async () => {
     const service = await joined()
-    const { threadId } = service.openCoordinationThread({ subject: 'Archivable' })
-    service.postCoordinationMessage({ threadId, body: 'Said before archiving.', requestId: 'arch-1' })
+    const { threadId } = await service.openCoordinationThread({ subject: 'Archivable' })
+    await service.postCoordinationMessage({ threadId, body: 'Said before archiving.', requestId: 'arch-1' })
 
-    service.setCoordinationThreadLifecycle({ threadId, lifecycle: 'ARCHIVED' })
+    await service.setCoordinationThreadLifecycle({ threadId, lifecycle: 'ARCHIVED' })
     const archived = (await service.collabView({ workOrderId: TEST_WO }))
       .threads.find(row => row.subject === 'Archivable')
     expect(archived?.archived).toBe(true)
     expect(archived?.messages).toHaveLength(1)
 
-    expect(() => service.postCoordinationMessage({
+    await expect(service.postCoordinationMessage({
       threadId, body: 'After archive.', requestId: 'arch-2',
-    })).toThrow(/archived/)
+    })).rejects.toThrow(/archived/)
 
-    service.setCoordinationThreadLifecycle({ threadId, lifecycle: 'ACTIVE' })
+    await service.setCoordinationThreadLifecycle({ threadId, lifecycle: 'ACTIVE' })
     const reopened = (await service.collabView({ workOrderId: TEST_WO }))
       .threads.find(row => row.subject === 'Archivable')
     expect(reopened?.archived).toBe(false)
@@ -192,12 +214,12 @@ describe('§33 — archive hides a thread from the active surface and erases not
 describe('§13/§14 — a decision is recorded explicitly, or not at all', () => {
   it('records a canonical DecisionV1 that cites the thread, and links it back', async () => {
     const service = await joined()
-    const { threadId } = service.openCoordinationThread({ subject: 'Decide something' })
-    const message = service.postCoordinationMessage({
+    const { threadId } = await service.openCoordinationThread({ subject: 'Decide something' })
+    const message = await service.postCoordinationMessage({
       threadId, body: 'Option A is safer.', requestId: 'dec-1',
     })
 
-    const { decisionId } = service.recordDecisionFromThread({
+    const { decisionId } = await service.recordDecisionFromThread({
       threadId,
       subject: 'Authentication contract change',
       options: [
@@ -225,10 +247,10 @@ describe('§13/§14 — a decision is recorded explicitly, or not at all', () =>
 
   it('§14 — casual agreement in a thread creates no decision whatsoever', async () => {
     const service = await joined()
-    const { threadId } = service.openCoordinationThread({ subject: 'No decision here' })
+    const { threadId } = await service.openCoordinationThread({ subject: 'No decision here' })
     const before = new ParticipationStore(storeDir).listDecisions(TEST_WO).length
     for (const [index, body] of ['yeah that sounds good', 'agreed', 'lgtm, ship it'].entries()) {
-      service.postCoordinationMessage({ threadId, body, requestId: `casual-desk-${String(index)}` })
+      await service.postCoordinationMessage({ threadId, body, requestId: `casual-desk-${String(index)}` })
     }
     expect(new ParticipationStore(storeDir).listDecisions(TEST_WO)).toHaveLength(before)
   })
@@ -241,8 +263,8 @@ describe('§41 — no model call anywhere on this path', () => {
     globalThis.fetch = spy as unknown as typeof fetch
     try {
       const service = await joined()
-      const { threadId } = service.openCoordinationThread({ subject: 'No model call' })
-      service.postCoordinationMessage({ threadId, body: 'Nothing calls a model.', requestId: 'model-1' })
+      const { threadId } = await service.openCoordinationThread({ subject: 'No model call' })
+      await service.postCoordinationMessage({ threadId, body: 'Nothing calls a model.', requestId: 'model-1' })
       await service.collabView({ workOrderId: TEST_WO })
       expect(spy).not.toHaveBeenCalled()
     } finally {

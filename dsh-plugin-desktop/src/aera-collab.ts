@@ -135,39 +135,47 @@ export function apply(ctx: Context): void {
           async (request) => {
             switch (request.action) {
               case 'OPEN_THREAD':
-                return service.openCoordinationThread({ subject: request.subject ?? '' })
+                return await service.openCoordinationThread({
+                  subject: request.subject ?? '',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                })
               case 'POST_MESSAGE':
-                return service.postCoordinationMessage({
+                return await service.postCoordinationMessage({
                   threadId: request.threadId ?? '',
                   body: request.body ?? '',
                   requestId: request.requestId ?? '',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
                   ...(request.intent === undefined ? {} : { intent: request.intent }),
                   ...(request.packetId === undefined ? {} : { packetId: request.packetId }),
                   ...(request.parentMessageId === undefined ? {} : { parentMessageId: request.parentMessageId }),
                 })
               case 'SHARE_COMPARE':
-                return await service.shareComparePacket(
-                  request.compareLineIndex === undefined ? {} : { compareLineIndex: request.compareLineIndex },
-                )
+                return await service.shareComparePacket({
+                  ...(request.compareLineIndex === undefined ? {} : { compareLineIndex: request.compareLineIndex }),
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                })
               case 'ACKNOWLEDGE':
-                return service.acknowledgeCoordinationMessage({
+                return await service.acknowledgeCoordinationMessage({
                   threadId: request.threadId ?? '',
                   messageId: request.messageId ?? '',
                   kind: request.kind ?? 'READ',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
                 })
               case 'SET_LIFECYCLE':
-                return service.setCoordinationThreadLifecycle({
+                return await service.setCoordinationThreadLifecycle({
                   threadId: request.threadId ?? '',
                   lifecycle: request.lifecycle ?? 'ACTIVE',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
                 })
               case 'RECORD_DECISION':
-                return service.recordDecisionFromThread({
+                return await service.recordDecisionFromThread({
                   threadId: request.threadId ?? '',
                   subject: request.subject ?? '',
                   options: request.options ?? [],
                   selectedOptionId: request.selectedOptionId ?? '',
                   ...(request.rationale === undefined ? {} : { rationale: request.rationale }),
                   ...(request.messageIds === undefined ? {} : { messageIds: request.messageIds }),
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
                 })
             }
           },

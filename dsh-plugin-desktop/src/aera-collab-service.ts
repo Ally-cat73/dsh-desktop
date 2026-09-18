@@ -1174,15 +1174,47 @@ export class CollabWorkspaceService {
     })
   }
 
-  /** The joined session every coordination write runs under. */
-  private requireCoordinationAuthority(): {
+  /**
+   * The joined session every coordination write runs under, **joining on
+   * demand** when the surface has not joined yet.
+   *
+   * MECHANICAL GUI ACCEPTANCE found this the hard way: the Read-First surface
+   * projects a Work Order WITHOUT joining it (deliberately — a read should not
+   * have to write in order to be read), so every coordination control was
+   * visible, reachable, and refused with "No agent WorkContext is open" the
+   * moment it was pressed. A feature that is present and inert is worse than
+   * one that is absent, because the absent one promises nothing.
+   *
+   * Joining here does not blur the verb boundary the predecessor order drew —
+   * it honours it. That boundary exists because joining writes `sessions.json`
+   * and a GET must not mutate. Every caller of this method is already an
+   * explicit POST about to write durable records, so the session write it
+   * implies is exactly as authorised as the message write it carries.
+   *
+   * The Work Order is taken from the caller where stated, because the renderer
+   * may be looking at an order other than this workspace's default, and a
+   * message must land on the order the sender was actually reading.
+   */
+  private async requireCoordinationAuthority(workOrderId?: string): Promise<{
     readonly store: ParticipationStore
     readonly sessionId: string
     readonly workOrderId: string
-  } {
+  }> {
     const store = this.requireStore()
-    const { session, workOrderId } = this.requireAgentJoined()
-    return { store, sessionId: session.sessionId, workOrderId }
+    const target = workOrderId ?? this.agentWorkOrderId ?? this.resolveDefaultWorkOrder().workOrderId
+    if (target === undefined) {
+      throw new CollabHonestError(
+        'WORK_ORDER_NOT_FOUND',
+        'No Work Order was named and none could be resolved for this workspace, so there is nothing to coordinate about.',
+      )
+    }
+    // Re-join when the surface moved to a different order: a session opened
+    // under one Work Order is not authority over another.
+    if (this.agentSession === null || this.agentClient === null || this.agentWorkOrderId !== target) {
+      await this.openAgentWorkContext(target)
+    }
+    const { session, workOrderId: joined } = this.requireAgentJoined()
+    return { store, sessionId: session.sessionId, workOrderId: joined }
   }
 
   /**
@@ -1205,12 +1237,13 @@ export class CollabWorkspaceService {
   }
 
   /** Open a coordination thread (§8, §35). */
-  openCoordinationThread(input: {
+  async openCoordinationThread(input: {
     readonly subject: string
     readonly anchors?: readonly CollabThreadAnchorV1[]
     readonly participantPrincipalIds?: readonly string[]
-  }): { readonly threadId: string, readonly outcome: string } {
-    const { store, sessionId, workOrderId } = this.requireCoordinationAuthority()
+    readonly workOrderId?: string
+  }): Promise<{ readonly threadId: string, readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
     const human = this.requireHumanPrincipal()
     const result = store.openCollabThread({
       sessionId,
@@ -1234,15 +1267,16 @@ export class CollabWorkspaceService {
    * double-clicked Send, or a retried request after a dropped response,
    * resolves to the SAME message rather than a second one.
    */
-  postCoordinationMessage(input: {
+  async postCoordinationMessage(input: {
     readonly threadId: string
     readonly body: string
     readonly intent?: CoordinationIntent
     readonly packetId?: string
     readonly parentMessageId?: string
     readonly requestId: string
-  }): { readonly messageId: string, readonly outcome: string, readonly sequence: number } {
-    const { store, sessionId, workOrderId } = this.requireCoordinationAuthority()
+    readonly workOrderId?: string
+  }): Promise<{ readonly messageId: string, readonly outcome: string, readonly sequence: number }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
     const human = this.requireHumanPrincipal()
     const result = store.postCollabMessage({
       sessionId,
@@ -1278,7 +1312,7 @@ export class CollabWorkspaceService {
     readonly compareLineIndex?: number
     readonly workOrderId?: string
   } = {}): Promise<{ readonly packetId: string, readonly outcome: string }> {
-    const { store, sessionId, workOrderId } = this.requireCoordinationAuthority()
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
     const human = this.requireHumanPrincipal()
     /*
      * The Work Order is named explicitly from the JOINED AGENT context.
@@ -1399,12 +1433,13 @@ export class CollabWorkspaceService {
   }
 
   /** §29 — acknowledge one message, explicitly. */
-  acknowledgeCoordinationMessage(input: {
+  async acknowledgeCoordinationMessage(input: {
     readonly threadId: string
     readonly messageId: string
     readonly kind: 'READ' | 'ACKNOWLEDGED'
-  }): { readonly outcome: string } {
-    const { store, sessionId, workOrderId } = this.requireCoordinationAuthority()
+    readonly workOrderId?: string
+  }): Promise<{ readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
     const human = this.requireHumanPrincipal()
     const result = store.acknowledgeCollabMessage({
       sessionId,
@@ -1418,11 +1453,12 @@ export class CollabWorkspaceService {
   }
 
   /** §33 — archive or reopen. Nothing is erased. */
-  setCoordinationThreadLifecycle(input: {
+  async setCoordinationThreadLifecycle(input: {
     readonly threadId: string
     readonly lifecycle: 'ACTIVE' | 'ARCHIVED'
-  }): { readonly outcome: string } {
-    const { store, sessionId, workOrderId } = this.requireCoordinationAuthority()
+    readonly workOrderId?: string
+  }): Promise<{ readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
     const result = store.setCollabThreadLifecycle({
       sessionId,
       authorisingWorkOrderId: workOrderId,
@@ -1441,15 +1477,16 @@ export class CollabWorkspaceService {
    * the alternatives that genuinely existed; the canonical `DecisionV1` is
    * what gets written (§49).
    */
-  recordDecisionFromThread(input: {
+  async recordDecisionFromThread(input: {
     readonly threadId: string
     readonly subject: string
     readonly options: readonly { readonly optionId: string, readonly label: string }[]
     readonly selectedOptionId: string
     readonly rationale?: string
     readonly messageIds?: readonly string[]
-  }): { readonly decisionId: string, readonly outcome: string } {
-    const { store, sessionId, workOrderId } = this.requireCoordinationAuthority()
+    readonly workOrderId?: string
+  }): Promise<{ readonly decisionId: string, readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
     const human = this.requireHumanPrincipal()
     const decision = store.recordDecision({
       sessionId,
