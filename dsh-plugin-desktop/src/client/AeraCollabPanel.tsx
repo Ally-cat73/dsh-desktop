@@ -30,7 +30,15 @@ export interface AeraCollabPanelInjected {
   readonly api: AeraCollabApi
 }
 
-/** Renderer-composed props for the Collab conversation view. */
+/**
+ * Renderer-composed props for the Collab conversation view.
+ *
+ * Kept as the shape the details-column props derive from. The centre-column
+ * REGISTRATION is gone (§4); `AeraCollabPanel` below is no longer registered
+ * anywhere and exists only as the named counterpart of
+ * `AeraCollabDetailsTab`, so the two seats cannot drift apart if the centre is
+ * ever legitimately wanted again.
+ */
 export type AeraCollabPanelProps =
   PropsRuntime<'conversation.view'>
   & PropsLocale<'aera.collab'>
@@ -45,8 +53,10 @@ export type AeraCollabDetailsTabProps =
 /**
  * The same entry, in the conversation tab strip.
  *
- * Two registrations render one component because they are the same surface
- * seen from two places, and a second implementation would drift.
+ * NOT REGISTERED (§4, and R2's dead-code note). The centre-column tab was
+ * removed; this remains as the single-implementation counterpart of the
+ * details-column seat below, and is exported so a reader grepping for the old
+ * surface finds the explanation rather than silence.
  */
 export function AeraCollabPanel({ api, t }: AeraCollabPanelProps) {
   return <CollabEntry api={api} t={t} />

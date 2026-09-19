@@ -1,30 +1,33 @@
 /**
  * Registration of Aera Code's owner-visible Collab entry points.
  *
- * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, owner entry-point direction.
+ * Read-First order, revised by §4 of the superseding order (R2-NB-A: this
+ * header described the registration that §4 removed).
  *
- * Owner acceptance failed on a build whose Collab route was complete and whose
- * only affordances were a macOS tray item the system laid out off-screen and a
- * view switch inside the window that tray item opened. The lesson is recorded
- * in the shape of this file: Collab is registered into the SAME slots the
- * product's own views use, so it is as discoverable as Chat and Trajectory and
- * cannot drift out of the shell without a test noticing.
+ * Owner acceptance once failed on a build whose Collab route was complete and
+ * whose only affordances were a macOS tray item the system laid out off-screen
+ * and a view switch inside the window that tray item opened. The answer then
+ * was to register Collab into the SAME slots the product's own views use,
+ * including a `conversation.view` tab beside Chat and Trajectory.
  *
- * Two registrations, deliberately:
+ * §4 reverses that half: "COLLAB MUST NO LONGER REPLACE THE MAIN WORK
+ * SURFACE". The centre belongs to the work. Discoverability is still the
+ * governing constraint — it is what the earlier failure was about — so it is
+ * carried by three registrations that do not take the centre:
  *
- * - `conversation.view` — the tab strip beside Chat and Trajectory. This is
- *   where the owner asked for it and where a person looks for another view of
- *   the work in front of them. The slot is declared `scope: 'session'` by
- *   `dsh-client-ui-conversation`, so the strip exists wherever a Session is
- *   open; the tab is registered unconditionally so that it is present for every
- *   one of them.
+ * - `conversation.details.collab` — the Collaborate tab of the right-hand
+ *   details column, beside tool inspection rather than over it. Declared by
+ *   this fork's patch to `dsh-client-ui-conversation`; `scope: 'session'`.
  * - `sidebar.footer.action` — the always-present way in. That slot is
- *   `scope: 'root'`, so unlike the tab strip it renders with no Session at all,
- *   which is what makes "Open Collab…" reachable from a cold start.
+ *   `scope: 'root'`, so unlike the details column it renders with no Session at
+ *   all, which is what makes "Open Collab…" reachable from a cold start. It
+ *   opens the column AND selects Collaborate.
+ * - `shell.overlay` — the cold-start picker, for the case where there is no
+ *   Session and therefore no column to open.
  *
- * Neither registration is conditional on configuration. A Collab entry that
- * appears only when a store happens to be configured is an entry point that
- * disappears exactly when the reader most needs to be told why.
+ * No registration is conditional on configuration. A Collab entry that appears
+ * only when a store happens to be configured is an entry point that disappears
+ * exactly when the reader most needs to be told why.
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'

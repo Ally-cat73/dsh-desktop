@@ -17,6 +17,21 @@ import { AeraCollabWorkspace } from '../src/client/AeraCollabWorkspace.tsx'
 import type { CollabPacketCard, CollabSurfaceView } from '../src/client/aera-collab-api.ts'
 import { toPacketCardView } from '../src/aera-collab-code-view.ts'
 
+
+/**
+ * Everything the reader sees without opening anything: the markup with every
+ * `<details>` subtree removed, innermost first so nesting cannot smuggle a
+ * value through.
+ */
+function stripDetails(markup: string): string {
+  let out = markup
+  for (;;) {
+    const next = out.replace(/<details\b(?:(?!<details\b)[\s\S])*?<\/details>/g, '')
+    if (next === out) return out
+    out = next
+  }
+}
+
 const t = (key: string): string => key
 
 const THREAD_ID = 'aera:collab-thread:1a2b3c4d'
@@ -217,25 +232,35 @@ describe('§22–§25 — Collaborate and Record are different compositions', ()
     expect(markup).toContain('No checkpoints have been minted for this Work Order.')
   })
 
-  it('the workspace offers both modes and starts in Collaborate', () => {
-    const markup = renderToStaticMarkup(createElement(AeraCollabWorkspace, {
-      api: api(), workOrderId: 'WO-TEST-001', t,
-    } as never))
-    expect(markup).toContain('viewCollaborate')
-    expect(markup).toContain('viewRecord')
-    expect(markup).toContain('role="tablist"')
+  it('the workspace offers both modes, and Collaborate is the one selected by default', () => {
     /*
-     * Round-1 review NB-5: both labels render in either mode, so the old
-     * assertions survived flipping the default. Assert the SELECTION, which is
-     * the half that was actually claimed.
+     * R2 finding 3(b): the previous assertions passed with the default flipped
+     * to RECORD, because `aria-selected="true"` is emitted BEFORE the button's
+     * text, so index arithmetic said nothing. Assert per button instead — the
+     * attribute and the label in one match — and assert both states, so the
+     * test distinguishes the default from a switch rather than describing the
+     * markup twice.
      */
-    const collaborateAt = markup.indexOf('viewCollaborate')
-    const recordAt = markup.indexOf('viewRecord')
-    const selectedAt = markup.indexOf('aria-selected="true"')
-    expect(selectedAt).toBeGreaterThan(-1)
-    expect(selectedAt).toBeLessThan(recordAt)
-    expect(collaborateAt).toBeLessThan(recordAt)
-    expect(markup.slice(recordAt).includes('aria-selected="true"')).toBe(false)
+    const render = (initialMode?: 'COLLABORATE' | 'RECORD'): string =>
+      renderToStaticMarkup(createElement(AeraCollabWorkspace, {
+        api: api(), workOrderId: 'WO-TEST-001', t,
+        ...(initialMode === undefined ? {} : { initialMode }),
+      } as never))
+
+    const selected = (markup: string): string[] =>
+      [...markup.matchAll(/aria-selected="true"[^>]*>([^<]+)</g)].map(match => match[1]!)
+    const offered = (markup: string): string[] =>
+      [...markup.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(match => match[1]!)
+
+    const byDefault = render()
+    expect(offered(byDefault)).toEqual(['viewCollaborate', 'viewRecord'])
+    // Exactly one tab is selected, and it is Collaborate.
+    expect(selected(byDefault)).toEqual(['viewCollaborate'])
+
+    // And the assertion can tell the difference: with Record selected, it moves.
+    const onRecord = render('RECORD')
+    expect(offered(onRecord)).toEqual(['viewCollaborate', 'viewRecord'])
+    expect(selected(onRecord)).toEqual(['viewRecord'])
   })
 })
 
@@ -331,18 +356,60 @@ describe('§13/§17 BL-1 — the state card face on the LIVE packet shape', () =
     expect(card.technical.join(' ')).toContain(LIVE_TARGET)
   })
 
-  it('and the rendered rail shows no 40-hex value outside a <details> block', () => {
+  it('and NO 40-hex value appears anywhere on the rail outside a <details> subtree', () => {
+    /*
+     * R2 finding 3(a): the previous version of this assertion was vacuous, and
+     * the reviewer disproved it by execution rather than by reading. It scanned
+     * `markup.slice(0, markup.indexOf('<details'))` — and the FIRST `<details>`
+     * in the rail is the thread header's Technical block, which renders before
+     * the message stream. So the scanned prefix was the header alone and every
+     * state card was exempt; a card whose operands were two literal 40-hex
+     * values passed all three assertions.
+     *
+     * The property that was always meant is simple and is now asserted
+     * directly: strip every `<details>` subtree, and no 40-hex value may remain
+     * anywhere in what is left. That covers the card face, the message face,
+     * the header, and any surface added later — the assertion does not need to
+     * know where the faces are.
+     */
     const markup = renderToStaticMarkup(createElement(AeraCollabRail, {
       surface: withLivePacket(), api: api(), t, onChanged: () => {},
     } as never))
-    const detailsAt = markup.indexOf('<details')
-    expect(detailsAt).toBeGreaterThan(-1)
-    for (const sha of [LIVE_SOURCE, LIVE_TARGET]) {
-      const at = markup.indexOf(sha)
-      // Present (canonical values are never dropped) but only after the
-      // Technical details boundary, never on the face.
-      expect(at).toBeGreaterThan(detailsAt)
-    }
-    expect(markup.slice(0, detailsAt)).not.toMatch(/[0-9a-f]{40}/)
+    expect(markup).toContain('<details')
+
+    const faces = stripDetails(markup)
+    expect(faces).not.toMatch(/[0-9a-f]{40}/)
+    // The short forms are what the reader sees instead, so the scan is
+    // stripping decoration rather than stripping the card away.
+    expect(faces).toContain('6e0d2da')
+    expect(faces).toContain('aera-stack')
+    // And the canonical values are still present in full, inside the details.
+    for (const sha of [LIVE_SOURCE, LIVE_TARGET]) expect(markup).toContain(sha)
+  })
+
+  it('that scan fails on the reviewer\'s probe — two literal 40-hex operands on a card face', () => {
+    /*
+     * The guard is only worth its line count if it can fail. This renders the
+     * exact shape the reviewer used to disprove the old assertion; the scan
+     * must catch it.
+     */
+    const base = withLivePacket()
+    const leaky = {
+      ...base,
+      threads: [{
+        ...base.threads[0]!,
+        messages: [{
+          ...base.threads[0]!.messages[0]!,
+          packets: [{
+            ...base.threads[0]!.messages[0]!.packets[0]!,
+            operands: `${LIVE_SOURCE} → ${LIVE_TARGET}`,
+          }],
+        }],
+      }],
+    } as CollabSurfaceView
+    const markup = renderToStaticMarkup(createElement(AeraCollabRail, {
+      surface: leaky, api: api(), t, onChanged: () => {},
+    } as never))
+    expect(stripDetails(markup)).toMatch(/[0-9a-f]{40}/)
   })
 })
