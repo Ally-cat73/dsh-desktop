@@ -33,7 +33,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { AeraCollabOverlay } from './AeraCollabOverlay.tsx'
-import { AeraCollabDetailsTab, AeraCollabPanel } from './AeraCollabPanel.tsx'
+import { AeraCollabDetailsTab } from './AeraCollabPanel.tsx'
 import { AeraCollabSidebarAction } from './AeraCollabSidebarAction.tsx'
 import {
   createAeraCollabEntryController,
@@ -46,12 +46,6 @@ import { installAeraCollabStyles } from './aera-collab-styles.ts'
 
 /** Locale namespace owned by the Aera Collab entry points. */
 export const AERA_COLLAB_LOCALE_NAMESPACE = 'aera.collab'
-
-/** Position in the conversation tab strip: after Chat (0) and Trajectory (10). */
-export const AERA_COLLAB_VIEW_ORDER = 20
-
-/** Stable slot id for the Collab tab. */
-export const AERA_COLLAB_VIEW_ID = 'collab'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   /**
@@ -96,6 +90,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
  * close. A button that closes a column the reader did not know was open is
  * worse than a button that only ever opens one.
  */
+/** Ask the details column to show Collaborate. Safe to call when it is closed. */
+export const AERA_DETAILS_TAB_EVENT = 'aera:details-tab'
+
+export function selectCollaborateTab(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(AERA_DETAILS_TAB_EVENT, { detail: { tab: 'collab' } }))
+}
+
 export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
   const face = (): {
     openDetails?: () => void
@@ -112,6 +114,13 @@ export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
       const open = face()?.openDetails
       if (open === undefined) return false
       open()
+      /*
+       * Round-1 review BL-3: opening the column landed the reader on tool
+       * inspection and asked them to find the second tab. The patched panel
+       * listens for this event and selects the tab; it is a plain DOM event so
+       * neither side depends on the other's module.
+       */
+      selectCollaborateTab()
       return true
     },
     close: () => { face()?.closeDetails?.() },
@@ -123,7 +132,6 @@ export function applyAeraCollabEntryPoints(
   api: AeraCollabApi = createAeraCollabApi(),
   controller: AeraCollabEntryController = createAeraCollabEntryController(),
 ): void {
-  const t = ctx.locale.bind(AERA_COLLAB_LOCALE_NAMESPACE)
   controller.attachColumn(shellDetailsColumn(ctx))
 
   ctx.effect(
@@ -134,20 +142,21 @@ export function applyAeraCollabEntryPoints(
     () => installAeraCollabStyles(),
     'dsh-plugin-desktop: Aera Collab styles',
   )
-  ctx.slots.inject('conversation.view', () => ctx.slots.register({
-    name: 'conversation.view',
-    id: AERA_COLLAB_VIEW_ID,
-    order: AERA_COLLAB_VIEW_ORDER,
-    locale: AERA_COLLAB_LOCALE_NAMESPACE,
-    label: () => t('tab'),
-    /*
-     * The tab takes NOTHING from the Session. Collab is a viewpoint over
-     * durable work, not over this conversation's record stream, so `inject`
-     * cannot fail the way a session-derived view can — which is exactly why
-     * the tab can promise never to throw and never to disappear.
-     */
-    inject: () => ({ api }),
-  }, AeraCollabPanel))
+  /*
+   * §4 — COLLAB MUST NO LONGER REPLACE THE MAIN WORK SURFACE.
+   *
+   * A `conversation.view` tab rendering the whole workspace in the CENTRE
+   * column used to be registered here at order 20. It was ratified under the
+   * earlier Read-First order, and the superseding order supersedes that
+   * ratification: the centre belongs to the work, and Collab belongs beside
+   * it. The registration is gone rather than hidden behind a flag, because a
+   * disabled centre-replacing surface is still a centre-replacing surface
+   * waiting to be re-enabled.
+   *
+   * Discoverability (§6) is not lost: the sidebar affordance below opens the
+   * right-hand column directly on Collaborate, and the cold-start picker still
+   * serves the no-Session case.
+   */
   /*
    * The Collaborate tab of the right-hand details column (controller ruling,
    * Option B / path 2). It sits BESIDE tool inspection rather than over it:

@@ -13,6 +13,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createAeraCollabEntryController } from '../src/client/aera-collab-entry-controller.ts'
+import { AERA_DETAILS_TAB_EVENT, selectCollaborateTab } from '../src/client/aera-collab-panel.ts'
 import {
   CENTER_MIN,
   DETAILS_DEFAULT,
@@ -74,6 +75,27 @@ function harness(render: (props: Record<string, unknown>) => unknown) {
   }
   let pending: (() => void)[] = []
 
+  /*
+   * The patched wrapper subscribes to the selection channel in an effect, so
+   * the harness supplies the minimum window that needs. Handlers are kept so a
+   * test can drive the channel the way the affordance does.
+   */
+  const handlers = new Map<string, ((event: unknown) => void)[]>()
+  const fakeWindow = {
+    addEventListener: (name: string, fn: (event: unknown) => void) => {
+      handlers.set(name, [...(handlers.get(name) ?? []), fn])
+    },
+    removeEventListener: (name: string, fn: (event: unknown) => void) => {
+      handlers.set(name, (handlers.get(name) ?? []).filter(entry => entry !== fn))
+    },
+  }
+  const scope = globalThis as unknown as { window?: unknown }
+  const hadWindow = 'window' in scope
+  const previousWindow = scope.window
+  // Always ours for the harness's lifetime: the environment may already define
+  // a partial `window`, and the listener must land where the test can reach it.
+  scope.window = fakeWindow
+
   const jsx = (type: unknown, props: unknown) => ({ type, props })
   const runtime = { jsx, jsxs: jsx, Fragment: 'Fragment' }
 
@@ -106,6 +128,14 @@ function harness(render: (props: Record<string, unknown>) => unknown) {
     },
     component,
     stock: DetailsToolPanel,
+    /** Drive the external selection channel, as the affordance does. */
+    selectTab(tab: string) {
+      for (const fn of handlers.get('aera:details-tab') ?? []) fn({ detail: { tab } })
+    },
+    dispose() {
+      if (hadWindow) scope.window = previousWindow
+      else delete scope.window
+    },
   }
   void render
 }
@@ -294,6 +324,80 @@ describe('§61 host tests — the three rails, and what opening Collab costs the
     })
     controller.reveal()
     controller.reveal()
-    expect(Object.keys(layout.getSnapshot()).some(key => key.toLowerCase().includes('thread'))).toBe(false)
+    /*
+     * Round-1 review NB-5: the old assertion was a substring scan for `thread`,
+     * which only fails if someone adds a key literally named that. State the
+     * real invariant instead — the column snapshot carries GEOMETRY and
+     * nothing else, so there is no seat in it for conversation state to hide.
+     */
+    expect(Object.keys(layout.getSnapshot()).sort())
+      .toEqual(['details', 'narrow', 'narrowExpanded', 'sidebar'])
+    // And the controller's own surface offers no thread operation to entangle.
+    expect(Object.keys(controller).sort())
+      .toEqual(['attachColumn', 'close', 'isOpen', 'open', 'reveal', 'subscribe', 'toggle'])
+  })
+})
+
+describe('BL-3 — the affordance lands on Collaborate, not on tool inspection', () => {
+  it('the wrapper subscribes to the selection channel and switches on it', () => {
+    /*
+     * Round-1 review BL-3: opening the column left the reader on Details and
+     * asked them to find the second tab. The patched wrapper now listens for a
+     * plain DOM event; this asserts against the REAL patched source, lifted
+     * from the installed bundle, not against a description of it.
+     */
+    const wrapper = patchedWrapperSource()
+    expect(wrapper).toContain('window.addEventListener("aera:details-tab"')
+    expect(wrapper).toContain('window.removeEventListener("aera:details-tab"')
+    // It only honours the two real tabs, and it uses the same `show` that
+    // clears the indicator — a selection is a look.
+    expect(wrapper).toContain('if (next !== "details" && next !== "collab") return;')
+    expect(wrapper).toContain('show(next);')
+  })
+
+  it('the label is translated, not hardcoded English (NB-13)', () => {
+    expect(patchedWrapperSource()).toContain('t("details.collab")')
+    expect(patchedWrapperSource()).not.toContain('children: "Collaborate"')
+    // Both dictionaries carry the key.
+    expect(source).toContain('"details.collab": "Collaborate"')
+    expect(source).toContain('"details.collab": "协作"')
+  })
+
+  it('opening the column emits the Collaborate selection, and the real wrapper switches on it', () => {
+    const scope = globalThis as unknown as { window?: unknown }
+    const had = 'window' in scope
+    const previous = scope.window
+    // The harness environment already defines a partial `window`; swap in a
+    // real EventTarget for the duration and put the original back after.
+    scope.window = new EventTarget()
+    const seen: unknown[] = []
+    const listener = (event: Event): void => { seen.push((event as CustomEvent).detail) }
+    try {
+      ;(scope.window as EventTarget).addEventListener(AERA_DETAILS_TAB_EVENT, listener)
+      selectCollaborateTab()
+      expect(seen).toEqual([{ tab: 'collab' }])
+    } finally {
+      ;(scope.window as EventTarget).removeEventListener(AERA_DETAILS_TAB_EVENT, listener)
+      if (had) scope.window = previous
+      else delete scope.window
+    }
+
+    // And the patched panel acts on it: the column lands on Collaborate
+    // without the reader pressing a second tab.
+    const h = harness(() => undefined)
+    const collab = { type: 'Fragment', props: { children: { type: 'Collab', props: {} } } }
+    const props = {
+      useStore: () => null,
+      renderSlot: () => collab,
+      t: (key: string) => key,
+    }
+    h.render(props)
+    h.selectTab('collab')
+    const shown = nodes(h.render(props))
+    const tabs = shown.filter(node => node['role'] === 'tab')
+    expect(tabs[0]?.['aria-selected']).toBe(false)
+    expect(tabs[1]?.['aria-selected']).toBe(true)
+    expect(shown.some(node => node['__type'] === h.stock)).toBe(false)
+    h.dispose()
   })
 })

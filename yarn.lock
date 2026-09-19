@@ -39,24 +39,24 @@ __metadata:
 
 "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::hash=7deedf&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::hash=3e8671&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/cis-contracts": "npm:0.1.0"
     "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
-  checksum: 10c0/93f6258168b06a2c5b94314c3b09b579403ad150ad2b5ebc495bcb94315a52d9eb9454eb9720619a7255c61963425d91d0aa981d399ecf3bd3b1d262bf736c6f
+  checksum: 10c0/2efe0cf79813028dfadf66f4870b79d34bdc9a7f13020b2168a99af5dd959a7cbaf062b813f147ee180ff29fe1a9b9c10ec57022c8c0f7e48d7436132ade8d5c
   languageName: node
   linkType: hard
 
 "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=131d3a&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/participation-runtime@file:./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-runtime-0.1.0.tgz::hash=8f2c12&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/cis-contracts": "npm:0.1.0"
     "@aera/evidentiary-work-graph": "npm:0.1.0"
     "@aera/evidentiary-work-graph-contracts": "npm:0.1.0"
     "@aera/harness": "npm:0.1.0"
     "@aera/participation-contracts": "npm:0.1.0"
-  checksum: 10c0/5217bfd6ca6bf938647a76ce008354899175f2390b13c4b6b7ec486385b857f6835ef51a98c35a13ddca31eddb6b98cc51f4b9482cb0611f5226691c9dc033ee
+  checksum: 10c0/d1641c01d1ad1775da4e3452e87cad8663624d24649cf879a682b6dc1a2168a82a5743e4c1741fd74658f7eeb3679585713c4d6f254c657df4068cda655cadb7
   languageName: node
   linkType: hard
 
@@ -1673,7 +1673,7 @@ __metadata:
 
 "@deepseek-ai/dsh-client-ui-conversation@patch:@deepseek-ai/dsh-client-ui-conversation@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-ui-conversation-npm-0.1.1-rc.2-941ef6a7f5.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-client-ui-conversation@patch:@deepseek-ai/dsh-client-ui-conversation@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-ui-conversation-npm-0.1.1-rc.2-941ef6a7f5.patch::version=0.1.1-rc.2&hash=77d052&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-client-ui-conversation@patch:@deepseek-ai/dsh-client-ui-conversation@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-ui-conversation-npm-0.1.1-rc.2-941ef6a7f5.patch::version=0.1.1-rc.2&hash=7f78b8&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@deepseek-ai/schemastery": "npm:^3.18.1"
     clsx: "npm:^2.0.0"
@@ -1701,7 +1701,7 @@ __metadata:
     "@deepseek-ai/dsh-token-meter": ^0.1.1-rc.2
     "@deepseek-ai/dsh-tool-todo": ^0.1.1-rc.2
     "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
-  checksum: 10c0/4b9fad9f159481b19bab070b802f01b8f4ab446653ab2ead46146893aa0433f5b219c4adfe0f35c57eef981571f02fa1f84554e66db2d707370aaf326fce7bb9
+  checksum: 10c0/485995bb98f0ff812c7d088d27e5dfd0d37acb7c70149891b325bf7bfa2a98e0837c598fcbb1c32581310cfa4da8e0cdacb10dcaf21ccfedbbebb38fd3635e20
   languageName: node
   linkType: hard
 

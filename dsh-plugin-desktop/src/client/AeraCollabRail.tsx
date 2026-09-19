@@ -212,6 +212,29 @@ function StateInspector({ card, t, onClose }: {
 }
 
 /** §10/§11 — the composer. Two verbs, no schema, no ids. */
+/**
+ * The write a Share Current State press would perform. Pure, exported, and
+ * separate from the component for a reason: §55 requires "cancel writes
+ * nothing", and a claim about what a control does not do is only worth
+ * something if the thing it would have done is nameable. Building the request
+ * and sending it are now two acts, so a test can prove the first happened and
+ * the second did not.
+ */
+export function shareCurrentStateRequest(input: {
+  readonly workOrderId: string
+  readonly threadId: string
+  readonly compareLineIndex?: number
+  readonly note?: string
+}): Record<string, unknown> {
+  return {
+    action: 'SHARE_COMPARE_TO_THREAD',
+    workOrderId: input.workOrderId,
+    threadId: input.threadId,
+    ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+    ...(input.note === undefined || input.note === '' ? {} : { note: input.note }),
+  }
+}
+
 function Composer({ workOrderId, threadId, canShareState, compareLineIndex, api, t, onDone }: {
   readonly workOrderId: string
   readonly threadId: string
@@ -224,6 +247,12 @@ function Composer({ workOrderId, threadId, canShareState, compareLineIndex, api,
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  /*
+   * §11/§55 — sharing state is an act, so it gets a moment. The first press
+   * says what is about to be shared; the second performs it; Cancel returns to
+   * the composer having written nothing at all.
+   */
+  const [confirming, setConfirming] = useState(false)
 
   const run = useCallback((request: Record<string, unknown>) => {
     setBusy(true)
@@ -271,22 +300,38 @@ function Composer({ workOrderId, threadId, canShareState, compareLineIndex, api,
           ? (
               <button
                 type="button"
+                className="aera-rail-share"
                 disabled={busy}
-                onClick={() => {
-                  run({
-                    action: 'SHARE_COMPARE_TO_THREAD',
-                    workOrderId,
-                    threadId,
-                    ...(compareLineIndex === undefined ? {} : { compareLineIndex }),
-                    ...(text === '' ? {} : { note: text }),
-                  })
-                }}
+                onClick={() => { setConfirming(true) }}
               >
                 {text === '' ? t('shareCurrentState') : t('sendWithCurrentState')}
               </button>
             )
           : null}
       </div>
+      {confirming
+        ? (
+            <div className="aera-rail-confirm" role="group" aria-label={t('shareCurrentState')}>
+              <p>{t('shareConfirm')}</p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setConfirming(false)
+                  run(shareCurrentStateRequest({
+                    workOrderId,
+                    threadId,
+                    ...(compareLineIndex === undefined ? {} : { compareLineIndex }),
+                    ...(text === '' ? {} : { note: text }),
+                  }))
+                }}
+              >
+                {t('shareConfirmYes')}
+              </button>
+              <button type="button" onClick={() => { setConfirming(false) }}>{t('cancel')}</button>
+            </div>
+          )
+        : null}
       {error === undefined ? null : <p className="aera-rail-error">{error}</p>}
     </form>
   )

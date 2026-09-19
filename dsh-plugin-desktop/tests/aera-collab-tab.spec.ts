@@ -7,16 +7,13 @@
  * DEFAULT owner configuration, is Collab offered where a person is looking?
  *
  * "Beside Chat and Trajectory" is asserted against the ids and orders the
- * upstream packages actually register, read out of the installed bundles, so
- * the guarantee survives upstream renumbering its own tabs instead of quietly
- * decaying into a hard-coded number that used to be true.
+ * §4 of the superseding order removed the centre-column tab these tests were
+ * originally written to protect; what remains asserts the registrations that
+ * replaced it, and records the supersession rather than deleting the history.
  */
-import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  AERA_COLLAB_VIEW_ID,
-  AERA_COLLAB_VIEW_ORDER,
   applyAeraCollabEntryPoints,
 } from '../src/client/aera-collab-panel.ts'
 import { createAeraCollabEntryController } from '../src/client/aera-collab-entry-controller.ts'
@@ -34,14 +31,6 @@ interface Registration {
 }
 
 /** Read what a package actually registers into the conversation tab strip. */
-function upstreamTab(packageName: string): { id: string, order: number } {
-  const source = readFileSync(`node_modules/@deepseek-ai/${packageName}/lib/client.js`, 'utf8')
-  const match = /name:\s*"conversation\.view",\s*id:\s*"([a-z-]+)",\s*order:\s*(\d+)/.exec(source)
-  if (match?.[1] === undefined || match[2] === undefined) {
-    throw new Error(`${packageName} no longer registers a conversation.view tab`)
-  }
-  return { id: match[1], order: Number(match[2]) }
-}
 
 function harness(api: Partial<AeraCollabApi> = {}) {
   const registrations: Registration[] = []
@@ -81,38 +70,32 @@ function harness(api: Partial<AeraCollabApi> = {}) {
 }
 
 describe('Collab in the default shell', () => {
-  it('offers a Collab tab in the same strip as Chat and Trajectory', () => {
-    const { registrations, injected } = harness()
-    const tab = registrations.find(entry => entry.options.name === 'conversation.view')
-
-    expect(injected).toContain('conversation.view')
-    expect(tab).toBeDefined()
-    expect(tab?.options.id).toBe(AERA_COLLAB_VIEW_ID)
-    expect(tab?.options.label?.()).toBe('tab')
-    expect(tab?.component).toBeTypeOf('function')
-  })
-
-  it('sits beside Chat and Trajectory, after both, as upstream numbers them', () => {
-    const chat = upstreamTab('dsh-client-ui-conversation')
-    const trajectory = upstreamTab('dsh-client-ui-trajectory')
-
-    expect(chat.id).toBe('chat')
-    expect(trajectory.id).toBe('trajectory')
-    // One strip, one ordering: the tab is a peer of the product's own views.
-    expect(AERA_COLLAB_VIEW_ORDER).toBeGreaterThan(chat.order)
-    expect(AERA_COLLAB_VIEW_ORDER).toBeGreaterThan(trajectory.order)
-  })
-
-  it('never throws when the strip renders it, with or without a Session', () => {
+  /*
+   * SUPERSEDED, deliberately, and recorded rather than deleted.
+   *
+   * Under the Read-First order this file asserted that Collab occupied a
+   * `conversation.view` tab beside Chat and Trajectory — a CENTRE-column
+   * surface — and that ratification was correct at the time. §4 of the
+   * superseding order reverses it: "COLLAB MUST NO LONGER REPLACE THE MAIN
+   * WORK SURFACE". So the assertions below are inverted, and the §6
+   * discoverability they were protecting is now carried by the sidebar
+   * affordance and the details column.
+   */
+  it('no longer takes a centre-column view slot (§4, supersedes the Read-First ratification)', () => {
     const { registrations } = harness()
-    const tab = registrations.find(entry => entry.options.name === 'conversation.view')
+    expect(registrations.some(entry => entry.options.name === 'conversation.view')).toBe(false)
+  })
 
-    // A view that reads the Session can fail when the Session is gone. Collab
-    // is a viewpoint over durable work and takes nothing from it, so this
-    // cannot throw - which is what lets the tab promise never to disappear.
-    expect(() => tab?.options.inject?.('session-1')).not.toThrow()
-    expect(() => tab?.options.inject?.(undefined)).not.toThrow()
-    expect(() => tab?.options.inject?.('no-such-session')).not.toThrow()
+  it('registers into the details column instead, beside tool inspection', () => {
+    const { registrations, injected } = harness()
+    const seat = registrations.find(entry => entry.options.name === 'conversation.details.collab')
+
+    expect(injected).toContain('conversation.details.collab')
+    expect(seat).toBeDefined()
+    expect(seat?.component).toBeTypeOf('function')
+    // It takes nothing from the Session, so it cannot fail when one is absent.
+    expect(() => seat?.options.inject?.('session-1')).not.toThrow()
+    expect(() => seat?.options.inject?.(undefined)).not.toThrow()
   })
 
   it('is registered unconditionally, not only when a store happens to exist', () => {
@@ -121,7 +104,7 @@ describe('Collab in the default shell', () => {
     }
     const { registrations } = harness()
 
-    expect(registrations.some(entry => entry.options.name === 'conversation.view')).toBe(true)
+    expect(registrations.some(entry => entry.options.name === 'conversation.details.collab')).toBe(true)
   })
 
   it('also offers a way in that needs no Session at all', () => {
@@ -186,8 +169,8 @@ describe('Collab in the default shell', () => {
   it('opens the Collab view when the reader asks, and not before', async () => {
     const openCollab = vi.fn(async () => {})
     const { registrations } = harness({ openCollab })
-    const tab = registrations.find(entry => entry.options.name === 'conversation.view')
-    const injectedFace = tab?.options.inject?.() as { api: AeraCollabApi }
+    const seat = registrations.find(entry => entry.options.name === 'conversation.details.collab')
+    const injectedFace = seat?.options.inject?.() as { api: AeraCollabApi }
 
     // Rendering the tab joins nothing: joining writes a session record, so it
     // must be an explicit act, never a side effect of a tab being drawn.

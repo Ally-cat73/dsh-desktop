@@ -888,18 +888,28 @@ export function toPacketCardView(
   return {
     title: packet.subject === 'WORKING_LINE_COMPARE' ? 'Working-Line compare' : 'Shared reference',
     /*
-     * §56: "which Working Lines" — a reader should see `Jordan → Integration`,
-     * not two hex revisions. Names are resolved by the caller from the ids the
-     * packet carries.
+     * §13/§17/§43 — round-1 review BL-1.
      *
-     * The fallback to a revision is deliberate and is NOT a name: where the
-     * compared side has no durable Working Line record there is no name to
-     * show, and printing a revision is the truthful thing to do rather than
-     * inventing a label for something that has none.
+     * This line used to fall back to the raw revision whenever a side had no
+     * durable Working Line, and since Working Lines are a TRUE ZERO for this
+     * Work Order, that was every packet in the live store. The face printed
+     * two full 40-hex SHAs — one of them the literal string the owner used as
+     * the §17 anti-example. "Truthful" was the defence, and it was true and
+     * still wrong: a human surface owes the reader a readable operand, not the
+     * rawest available one.
+     *
+     * So the ladder is: the durable Working Line name where one exists; then
+     * the repository and short refs, which are readable and still exact enough
+     * to recognise; and the full revisions under Technical details, where §43
+     * says canonical values belong. Nothing is invented — no Working Line is
+     * conjured for a side that has none.
      */
     operands: comparison === undefined
       ? packet.subject
-      : `${names.source ?? comparison.sourceRevision} → ${names.target ?? comparison.targetRevision}`,
+      : [
+          comparison.repositoryId === undefined ? '' : repositoryDisplayName(comparison.repositoryId),
+          `${names.source ?? shortRevision(comparison.sourceRevision)} → ${names.target ?? shortRevision(comparison.targetRevision)}`,
+        ].filter(part => part !== '').join(' · '),
     facts,
     capturedAt: packet.observedAt,
     ...(assessment === undefined ? {} : { stateNote: assessment.humanSummary }),
@@ -907,9 +917,31 @@ export function toPacketCardView(
     technical: [
       packet.packetId,
       packet.packetDigest,
+      // §43: the full revisions live here, in full, never shortened.
+      ...(comparison === undefined ? [] : [
+        `source revision ${comparison.sourceRevision}`,
+        `target revision ${comparison.targetRevision}`,
+        ...(comparison.repositoryId === undefined ? [] : [`repository ${comparison.repositoryId}`]),
+      ]),
       ...(comparison?.mergeBase === undefined ? [] : [`merge base ${comparison.mergeBase}`]),
     ],
   }
+}
+
+/**
+ * A revision short enough to read, long enough to recognise. Seven characters
+ * is git's own convention; anything that is not a 40-hex revision is returned
+ * untouched, because shortening something that is not a SHA would misrepresent
+ * it.
+ */
+export function shortRevision(revision: string): string {
+  return /^[0-9a-f]{40}$/.test(revision) ? revision.slice(0, 7) : revision
+}
+
+/** `aera-repo:aera-stack` → `aera-stack`. The prefix is machinery, not a name. */
+export function repositoryDisplayName(repositoryId: string): string {
+  const separator = repositoryId.lastIndexOf(':')
+  return separator === -1 ? repositoryId : repositoryId.slice(separator + 1)
 }
 
 export function toMessageRowView(

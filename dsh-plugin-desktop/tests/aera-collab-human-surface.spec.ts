@@ -10,15 +10,62 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AeraCollabRail } from '../src/client/AeraCollabRail.tsx'
+import { readFileSync } from 'node:fs'
+import { AeraCollabRail, shareCurrentStateRequest } from '../src/client/AeraCollabRail.tsx'
 import { AeraCollabRecord } from '../src/client/AeraCollabRecord.tsx'
 import { AeraCollabWorkspace } from '../src/client/AeraCollabWorkspace.tsx'
 import type { CollabPacketCard, CollabSurfaceView } from '../src/client/aera-collab-api.ts'
+import { toPacketCardView } from '../src/aera-collab-code-view.ts'
 
 const t = (key: string): string => key
 
 const THREAD_ID = 'aera:collab-thread:1a2b3c4d'
 const MESSAGE_ID = 'aera:collab-message:9f8e7d6c'
+
+/*
+ * Round-1 review BL-1: the fixture used to hardcode branch names, exercising
+ * only the favourable branch. This one is derived from the LIVE store's packet
+ * shape — no `sourceWorkingLineId`, no `targetWorkingLineId`, which is every
+ * packet on this Work Order because Working Lines are a true zero here — and
+ * is built through the real projection rather than typed by hand.
+ */
+const LIVE_SOURCE = '6e0d2da34774507f48f7d7f0dbc8e7074fff6ad0'
+const LIVE_TARGET = '0c6281687c0e38fe9a65cdb0e47db214a6c7e7e7'
+
+const livePacket = (): CollabPacketCard => toPacketCardView(
+  {
+    packetVersion: 'CoordinationPacketV1',
+    packetId: 'aera:coordination-packet:c8b42f2d',
+    workOrderId: 'WO-TEST-001',
+    subject: 'WORKING_LINE_COMPARE',
+    observedAt: '2026-09-19T10:00:00.000Z',
+    observedBy: { principalId: 'p', principalKind: 'HUMAN', displayName: 'Alyshia Daley' },
+    comparison: {
+      repositoryId: 'aera-repo:aera-stack',
+      sourceRevision: LIVE_SOURCE,
+      targetRevision: LIVE_TARGET,
+      mergeBase: '2fbef61596abd5310843441106dbaaefd832e3e7',
+      filesChanged: 11,
+      filesChangedOnBothLines: 0,
+      filesChangedOnlyOnSource: 11,
+      filesChangedOnlyOnTarget: 0,
+      linesAdded: 1,
+      linesRemoved: 3550,
+      textualConflicts: 0,
+      structuralDeltaAvailable: false,
+    },
+    packetDigest: 'sha256:cb572411403cdc4af2cb391c32ea6423a8cb1f6d6cc6bbf1f7c7298e330bbc32',
+    decisionIds: [],
+    evidenceIds: [],
+    authority: {
+      authorisingWorkOrderId: 'WO-TEST-001',
+      authorityMode: 'RECORDED_NOT_ENFORCED',
+      recordedByPrincipalId: 'p',
+    },
+  } as never,
+  undefined,
+  {},
+) as unknown as CollabPacketCard
 
 const packet: CollabPacketCard = {
   title: 'Current state',
@@ -177,18 +224,125 @@ describe('§22–§25 — Collaborate and Record are different compositions', ()
     expect(markup).toContain('viewCollaborate')
     expect(markup).toContain('viewRecord')
     expect(markup).toContain('role="tablist"')
+    /*
+     * Round-1 review NB-5: both labels render in either mode, so the old
+     * assertions survived flipping the default. Assert the SELECTION, which is
+     * the half that was actually claimed.
+     */
+    const collaborateAt = markup.indexOf('viewCollaborate')
+    const recordAt = markup.indexOf('viewRecord')
+    const selectedAt = markup.indexOf('aria-selected="true"')
+    expect(selectedAt).toBeGreaterThan(-1)
+    expect(selectedAt).toBeLessThan(recordAt)
+    expect(collaborateAt).toBeLessThan(recordAt)
+    expect(markup.slice(recordAt).includes('aria-selected="true"')).toBe(false)
   })
 })
 
-describe('§11 — sharing current state is an act, not a side effect', () => {
-  it('renders the share affordance without calling any write path', () => {
-    const calls = api() as unknown as { coordinate: ReturnType<typeof vi.fn> }
-    renderToStaticMarkup(createElement(AeraCollabRail, {
-      surface: surfaceOf(), api: calls, t, onChanged: () => {},
+describe('§11/§55 — sharing current state is an act, and cancel writes nothing', () => {
+  const shareable = (): CollabSurfaceView => ({
+    ...surfaceOf(),
+    compare: {
+      summary: '3 files changed',
+      lines: [],
+      files: [],
+    },
+  } as unknown as CollabSurfaceView)
+
+  it('renders the share affordance when there is state to share', () => {
+    /*
+     * Round-1 review NB-5: the old fixture left `compare` undefined, so
+     * `canShareState` was false and the control under test never rendered —
+     * the assertion could not fail. This one renders it.
+     */
+    const markup = renderToStaticMarkup(createElement(AeraCollabRail, {
+      surface: shareable(), api: api(), t, onChanged: () => {},
     } as never))
-    // Drawing the composer must not write. The only thing that writes is the
-    // reader pressing the button — which is what "cancel writes nothing" means
-    // at this level: nothing happens until the act happens.
+    expect(markup).toContain('aera-rail-share')
+    expect(markup).toContain('shareCurrentState')
+  })
+
+  it('the request a share would send is nameable — so "cancel wrote nothing" means something', () => {
+    // The write is built by a pure function, separately from performing it.
+    expect(shareCurrentStateRequest({ workOrderId: 'WO-TEST-001', threadId: THREAD_ID })).toEqual({
+      action: 'SHARE_COMPARE_TO_THREAD',
+      workOrderId: 'WO-TEST-001',
+      threadId: THREAD_ID,
+    })
+    expect(shareCurrentStateRequest({
+      workOrderId: 'WO-TEST-001', threadId: THREAD_ID, note: 'have a look', compareLineIndex: 2,
+    })).toEqual({
+      action: 'SHARE_COMPARE_TO_THREAD',
+      workOrderId: 'WO-TEST-001',
+      threadId: THREAD_ID,
+      compareLineIndex: 2,
+      note: 'have a look',
+    })
+    // An empty note is not a note; it must not travel as one.
+    expect(shareCurrentStateRequest({ workOrderId: 'W', threadId: 'T', note: '' })).not.toHaveProperty('note')
+  })
+
+  it('there IS a cancel control, and the first press does not write', () => {
+    const calls = api() as unknown as { coordinate: ReturnType<typeof vi.fn> }
+    const markup = renderToStaticMarkup(createElement(AeraCollabRail, {
+      surface: shareable(), api: calls, t, onChanged: () => {},
+    } as never))
+    // §55 needs something to cancel: pressing Share opens a confirm step whose
+    // second control is Cancel. The confirm markup is in the component (it is
+    // state-gated, so not in this first render), and the write happens only on
+    // the confirm press — never on draw.
+    expect(markup).not.toContain('aera-rail-confirm')
     expect(calls.coordinate).not.toHaveBeenCalled()
+    const source = readFileSync(new URL('../src/client/AeraCollabRail.tsx', import.meta.url), 'utf8')
+    expect(source).toContain("t('cancel')")
+    expect(source).toContain('aera-rail-confirm')
+    // The cancel branch sets state and calls nothing.
+    expect(source).toContain("onClick={() => { setConfirming(false) }}")
+  })
+})
+
+describe('§13/§17 BL-1 — the state card face on the LIVE packet shape', () => {
+  const withLivePacket = (): CollabSurfaceView => {
+    const base = surfaceOf()
+    return {
+      ...base,
+      threads: [{
+        ...base.threads[0]!,
+        messages: [{ ...base.threads[0]!.messages[0]!, packets: [livePacket()] }],
+      }],
+    } as CollabSurfaceView
+  }
+
+  it('prints no full SHA on the face when the packet has no Working Line ids', () => {
+    const card = livePacket()
+    // The unfavourable branch — the only branch the live store can take.
+    expect(card.operands).not.toContain(LIVE_SOURCE)
+    expect(card.operands).not.toContain(LIVE_TARGET)
+    expect(card.operands).toContain('aera-stack')
+    expect(card.operands).toContain('6e0d2da')
+    expect(card.operands).toContain('0c62816')
+    // Nothing was invented: no Working Line name appears for a side that has none.
+    expect(card.operands.toLowerCase()).not.toContain('working line')
+  })
+
+  it('the full revisions are still available, in full, under Technical details', () => {
+    const card = livePacket()
+    expect(card.technical.join(' ')).toContain(LIVE_SOURCE)
+    expect(card.technical.join(' ')).toContain(LIVE_TARGET)
+  })
+
+  it('and the rendered rail shows no 40-hex value outside a <details> block', () => {
+    const markup = renderToStaticMarkup(createElement(AeraCollabRail, {
+      surface: withLivePacket(), api: api(), t, onChanged: () => {},
+    } as never))
+    const detailsAt = markup.indexOf('<details')
+    expect(detailsAt).toBeGreaterThan(-1)
+    for (const sha of [LIVE_SOURCE, LIVE_TARGET]) {
+      const at = markup.indexOf(sha)
+      // Present (canonical values are never dropped) but only after the
+      // Technical details boundary, never on the face.
+      expect(at).toBeGreaterThan(detailsAt)
+    }
+    expect(markup.slice(0, detailsAt)).not.toMatch(/[0-9a-f]{40}/)
   })
 })
