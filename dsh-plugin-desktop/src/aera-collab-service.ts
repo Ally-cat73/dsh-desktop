@@ -29,7 +29,7 @@
  * context, never a silently created second store.
  */
 
-import { classifyDisplayedZeros } from './aera-collab-zero-classifier.ts'
+import { classifyDisplayedZeros, countsAsRendered } from './aera-collab-zero-classifier.ts'
 import { execFileSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, resolve, sep } from 'node:path'
@@ -1910,7 +1910,14 @@ export class CollabWorkspaceService {
      */
     const threads = this.projectCoordinationThreads(workOrderId)
 
-    return {
+    /*
+     * §30 / §46 review BL-2 — build the view FIRST, then derive the counts and
+     * the classification from it. The classifier used to be handed numbers
+     * assembled here while Record rendered its own expressions, and the two
+     * disagreed on three of five categories. One object, one derivation, no
+     * second opinion.
+     */
+    const view = {
       workOrderId: context.workOrderId,
       ...(context.workOrderLabel === undefined ? {} : { workOrderTitle: context.workOrderLabel }),
       repositories: repositories.map(repository => `${repository.displayName} (${repository.role})`),
@@ -2026,20 +2033,6 @@ export class CollabWorkspaceService {
         : {}),
       threads,
       ...(threads.length === 0 ? { threadsEmptyReason: NO_COORDINATION_THREADS } : {}),
-      /*
-       * §30 — every displayed zero, mechanically classified against the store
-       * rather than asserted in prose. Rendered under Technical details.
-       */
-      zeroClassifications: classifyDisplayedZeros(store, workOrderId, {
-        workingLines: lines.length,
-        checkpoints: surface.checkpoints.length,
-        activity: surface.institutional.activityBlocks.length,
-        discussionsDecisions:
-          surface.institutional.discussions.length
-          + surface.institutional.threadDiscussions.length
-          + surface.institutional.decisionContexts.length,
-        evidence: context.evidence.length + surface.institutional.evidenceCards.length,
-      }),
       coordinationDeliveryNote: COORDINATION_DELIVERY_NOTE,
       ...(liveProviderState === undefined ? {} : { liveProviderState }),
       discussionNote: DISCUSSION_NOTE,
@@ -2047,6 +2040,20 @@ export class CollabWorkspaceService {
       ...(compare === undefined ? {} : { compare }),
       ...(compareUnavailableReason === undefined ? {} : { compareUnavailableReason }),
       projectedAt: surface.projectedAt,
+    }
+
+    /*
+     * The counts Record will display, computed once. Both the view and the
+     * classifier read this same object, so "displayed zero" and "classified
+     * zero" are the same set by construction rather than by agreement between
+     * two call sites.
+     */
+    const recordCounts = countsAsRendered(view)
+
+    return {
+      ...view,
+      recordCounts,
+      zeroClassifications: classifyDisplayedZeros(store, workOrderId, recordCounts),
     }
   }
 

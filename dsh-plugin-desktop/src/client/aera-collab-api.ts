@@ -129,6 +129,15 @@ export interface CollabCompare {
   readonly computedAt: string
 }
 
+/** §30 — the five counts Record displays, derived once by the service. */
+export interface CollabRecordCounts {
+  readonly workingLines: number
+  readonly checkpoints: number
+  readonly activity: number
+  readonly discussionsDecisions: number
+  readonly evidence: number
+}
+
 /**
  * §30 — one displayed zero, classified against the store.
  *
@@ -329,6 +338,13 @@ export interface CollabSurfaceView {
   readonly participants: readonly CollabParticipantRow[]
   readonly lines: readonly CollabLineRow[]
   readonly linesEmptyReason?: string
+  /**
+   * §30 — the counts Record renders. Single source, shared with the classifier.
+   *
+   * Optional so an older service cannot blank the surface; Record falls back to
+   * computing them the same way, from the same fields.
+   */
+  readonly recordCounts?: CollabRecordCounts
   /** §30 — every displayed zero, mechanically classified against the store. */
   readonly zeroClassifications: readonly CollabZeroClassification[]
   readonly rail: readonly CollabRailTab[]
@@ -655,6 +671,17 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
       })
     })),
     ...(linesEmptyReason === undefined ? {} : { linesEmptyReason }),
+    ...(isObject(value.recordCounts)
+      ? {
+          recordCounts: Object.freeze({
+            workingLines: Number(value.recordCounts.workingLines ?? 0),
+            checkpoints: Number(value.recordCounts.checkpoints ?? 0),
+            activity: Number(value.recordCounts.activity ?? 0),
+            discussionsDecisions: Number(value.recordCounts.discussionsDecisions ?? 0),
+            evidence: Number(value.recordCounts.evidence ?? 0),
+          }),
+        }
+      : {}),
     /*
      * §30. Absent is tolerated so an older service does not blank the surface,
      * but a malformed entry is rejected: a classification the reader cannot

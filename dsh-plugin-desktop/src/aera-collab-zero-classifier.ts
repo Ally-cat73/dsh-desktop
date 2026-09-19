@@ -84,6 +84,62 @@ function kindOf(row: unknown): string | undefined {
     : typeof record.eventKind === 'string' ? record.eventKind : undefined
 }
 
+/**
+ * The five counts the Record view puts on screen.
+ *
+ * §46 review BL-2: the classifier used to be fed numbers assembled at the call
+ * site while Record rendered different expressions, and the two disagreed.
+ * EVIDENCE was told `context.evidence.length + evidenceCards.length` while the
+ * view rendered `evidenceCards.length` alone, so on a Work Order with ambient
+ * evidence the classifier was told the category was non-zero and stayed silent
+ * while the reader looked at a zero. WORKING_LINES and DISCUSSIONS_DECISIONS
+ * diverged the same way — the view counts only DURABLE lines, and pairs
+ * discussions with decisions rather than with thread discussions.
+ *
+ * It was not one wrong number; it was two independent definitions of the same
+ * five counts. This is now the ONLY definition. The service computes it once,
+ * puts it on the view, renders from it, and classifies from it — so a
+ * displayed zero and a classified zero cannot be different things.
+ */
+export interface RenderedRecordCounts {
+  readonly workingLines: number
+  readonly checkpoints: number
+  readonly activity: number
+  readonly discussionsDecisions: number
+  readonly evidence: number
+}
+
+/** The shape of the projected view these counts are derived from. */
+export interface RecordCountSource {
+  readonly lines: readonly { readonly provenance: string }[]
+  readonly checkpoints: readonly unknown[]
+  readonly activityBlocks: readonly unknown[]
+  readonly discussions: readonly unknown[]
+  readonly decisions: readonly unknown[]
+  readonly evidenceCards: readonly unknown[]
+}
+
+/**
+ * Derive the five Record counts from the projected view.
+ *
+ * Every number the Record view displays comes from here, and so does every
+ * number the classifier is given. Keep it that way: a second expression for
+ * any of these five is how BL-2 happened.
+ *
+ * @param view - the projected surface about to be sent to the renderer.
+ * @returns exactly what Record will display.
+ */
+export function countsAsRendered(view: RecordCountSource): RenderedRecordCounts {
+  return {
+    // Record splits durable from observed and counts only the durable rows.
+    workingLines: view.lines.filter(line => line.provenance === 'DURABLE').length,
+    checkpoints: view.checkpoints.length,
+    activity: view.activityBlocks.length,
+    discussionsDecisions: view.discussions.length + view.decisions.length,
+    evidence: view.evidenceCards.length,
+  }
+}
+
 /** Counts the projection actually put on the surface. */
 export interface ProjectedCounts {
   readonly workingLines: number
@@ -153,7 +209,7 @@ function classifyOne(input: {
 export function classifyDisplayedZeros(
   store: ZeroClassifierStore,
   workOrderId: string,
-  projected: ProjectedCounts,
+  projected: ProjectedCounts | RenderedRecordCounts,
 ): readonly ZeroClassificationView[] {
   const events = forWorkOrder(store.listEvents(), workOrderId)
   const eventRef = (kinds: readonly string[]): readonly string[] =>

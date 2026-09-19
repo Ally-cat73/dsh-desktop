@@ -248,6 +248,19 @@ export interface CollabCodeView {
   /** Why a requested Compare was refused. Said, never silently dropped. */
   readonly compareUnavailableReason?: string
   readonly projectedAt: string
+  /**
+   * §30 — the five counts Record displays, derived once by `countsAsRendered`.
+   *
+   * Both the view and the zero classifier read this, so a displayed zero and a
+   * classified zero are the same set by construction (§46 review BL-2).
+   */
+  readonly recordCounts?: {
+    readonly workingLines: number
+    readonly checkpoints: number
+    readonly activity: number
+    readonly discussionsDecisions: number
+    readonly evidence: number
+  }
   /** §30 — every displayed zero, mechanically classified against the store. */
   readonly zeroClassifications?: readonly {
     readonly category: string

@@ -22,12 +22,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ParticipationStore } from '@aera/participation-runtime'
 import {
   classifyDisplayedZeros,
+  countsAsRendered,
+  type RecordCountSource,
   type ZeroClassifierStore,
 } from '../src/aera-collab-zero-classifier.ts'
+import { CollabWorkspaceService, resolveCollabConfig } from '../src/aera-collab-service.ts'
 
 const PROFILE = '/Users/Allyd/.dsh/profiles/aera-gateway-agc/aera-collaboration.json'
 const RELAY_WO = 'WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-WORKING-LINE-HANDOFF-001'
 const LINEAGE_WO = 'WO-AERA-COLLAB-DURABLE-WORKING-LINE-LINEAGE-DECISIONS-AND-CHECKPOINTS-001'
+const BENCHMARK_WO = 'WO-AERA-CODE-EDITOR-ENGINE-RESOURCE-BENCHMARK-001'
 
 const NO_RECORDS: ZeroClassifierStore = {
   listCodeWorkingLines: () => [],
@@ -188,5 +192,91 @@ describe('§30 against the REAL fixture, on a read-only copy', () => {
 
     // The copy is what we assert on; the live store is never opened by this file.
     expect(store).toContain('aera-collab-zero-')
+  })
+})
+
+describe('§30 the classified set is exactly the displayed set (§46 review BL-2)', () => {
+  let store: string | undefined
+
+  beforeEach(() => {
+    const env = environment()
+    if (env?.AERA_COLLAB_STORE_DIR === undefined) return
+    store = mkdtempSync(join(tmpdir(), 'aera-collab-zeroset-'))
+    cpSync(env.AERA_COLLAB_STORE_DIR, store, { recursive: true })
+  })
+
+  afterEach(() => {
+    if (store !== undefined) rmSync(store, { recursive: true, force: true })
+    store = undefined
+  })
+
+  const CATEGORY_OF: Record<keyof ReturnType<typeof countsAsRendered>, string> = {
+    workingLines: 'WORKING_LINES',
+    checkpoints: 'CHECKPOINTS',
+    activity: 'ACTIVITY',
+    discussionsDecisions: 'DISCUSSIONS_DECISIONS',
+    evidence: 'EVIDENCE',
+  }
+
+  /*
+   * THE ASSERTION BL-2 NEEDED.
+   *
+   * The classifier was correct and its call site was not: it was fed
+   * `context.evidence.length + evidenceCards.length` while Record rendered
+   * `evidenceCards.length`, so a displayed `EVIDENCE 0` was never classified —
+   * on the only category that can report RECORDING_GAP. Nine passing tests
+   * missed it because every one of them exercised the function directly and
+   * none went through the call site.
+   *
+   * This runs the REAL service over the REAL fixture and asserts the two sets
+   * are equal in both directions, for every Work Order in the store.
+   */
+  it('every displayed zero is classified, and every classification is a displayed zero', async ({ skip }) => {
+    const env = environment()
+    if (env === undefined || store === undefined) return skip()
+    const service = new CollabWorkspaceService(
+      resolveCollabConfig({ ...env, AERA_COLLAB_STORE_DIR: store }, env.AERA_COLLAB_WORKSPACE_ROOT),
+    )
+
+    for (const workOrderId of [RELAY_WO, LINEAGE_WO, BENCHMARK_WO]) {
+      const view = await service.collabView({ workOrderId })
+
+      // The counts the view carries must be the counts its own fields produce.
+      const derived = countsAsRendered(view as unknown as RecordCountSource)
+      expect(view.recordCounts, `${workOrderId}: recordCounts absent`).toEqual(derived)
+
+      const displayedZeros = (Object.keys(CATEGORY_OF) as (keyof typeof CATEGORY_OF)[])
+        .filter(key => derived[key] === 0)
+        .map(key => CATEGORY_OF[key])
+        .sort()
+      const classified = [...(view.zeroClassifications ?? [])]
+        .map(row => row.category)
+        .sort()
+
+      expect(classified, `${workOrderId}: classified set != displayed zeros`)
+        .toEqual(displayedZeros)
+    }
+  })
+
+  it('the benchmark Work Order classifies its EVIDENCE zero — the exact BL-2 case', async ({ skip }) => {
+    const env = environment()
+    if (env === undefined || store === undefined) return skip()
+    const service = new CollabWorkspaceService(
+      resolveCollabConfig({ ...env, AERA_COLLAB_STORE_DIR: store }, env.AERA_COLLAB_WORKSPACE_ROOT),
+    )
+
+    const view = await service.collabView({ workOrderId: BENCHMARK_WO })
+
+    /*
+     * Live, this Work Order displayed four zeros and classified three. If
+     * EVIDENCE is displayed as zero here it must carry a row, because EVIDENCE
+     * is the only category with RECORDING_GAP detection and a silent zero on it
+     * is what produced the owner-acceptance FAIL.
+     */
+    if (view.recordCounts?.evidence === 0) {
+      const evidence = (view.zeroClassifications ?? []).find(row => row.category === 'EVIDENCE')
+      expect(evidence, 'EVIDENCE displayed as 0 but not classified').toBeDefined()
+      expect(['TRUE_ZERO', 'PROJECTION_DEFECT', 'RECORDING_GAP']).toContain(evidence?.classification)
+    }
   })
 })

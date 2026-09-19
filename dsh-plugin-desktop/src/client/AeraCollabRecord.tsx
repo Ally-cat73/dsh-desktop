@@ -80,13 +80,35 @@ export function AeraCollabRecord({ surface, t }: {
   const durable = surface.lines.filter(line => line.provenance === 'DURABLE')
   const observed = surface.lines.filter(line => line.provenance !== 'DURABLE')
 
+  /*
+   * §30 / §46 review BL-2 — the counts come from the projection, not from
+   * expressions written here.
+   *
+   * Record used to compute its own five counts while the service computed a
+   * different five for the zero classifier. They disagreed on three categories,
+   * and the visible consequence was a displayed `EVIDENCE 0` that the
+   * classifier never saw — on the one category that can report RECORDING_GAP.
+   *
+   * `recordCounts` is derived once by `countsAsRendered` and shared with the
+   * classifier, so what is displayed and what is classified are the same
+   * numbers. The fallback keeps an older service renderable and mirrors that
+   * function exactly; it is not a second definition to drift from.
+   */
+  const counts = surface.recordCounts ?? {
+    workingLines: durable.length,
+    checkpoints: surface.checkpoints.length,
+    activity: surface.activityBlocks.length,
+    discussionsDecisions: surface.discussions.length + surface.decisions.length,
+    evidence: surface.evidenceCards.length,
+  }
+
   return (
     <div className="aera-record">
       <p className="aera-record-lede">{t('recordLede')}</p>
 
       <Category
         title={t('workingLines')}
-        count={durable.length}
+        count={counts.workingLines}
         emptyReason={surface.linesEmptyReason ?? t('noDurableLines')}
       >
         <ul className="aera-record-list">
@@ -126,7 +148,7 @@ export function AeraCollabRecord({ surface, t }: {
       {/* §28/§29 — grouped acts with deterministic names, not a message log. */}
       <Category
         title={t('activity')}
-        count={surface.activityBlocks.length}
+        count={counts.activity}
         emptyReason={t('noActivityBlocks')}
       >
         <ul className="aera-record-list">
@@ -157,7 +179,7 @@ export function AeraCollabRecord({ surface, t }: {
 
       <Category
         title={t('checkpoints')}
-        count={surface.checkpoints.length}
+        count={counts.checkpoints}
         emptyReason={surface.checkpointsEmptyReason ?? t('noCheckpoints')}
       >
         <ul className="aera-record-list">
@@ -174,7 +196,7 @@ export function AeraCollabRecord({ surface, t }: {
       {/* §31 — discussions and the decisions they produced, together. */}
       <Category
         title={t('discussionsDecisions')}
-        count={surface.discussions.length + surface.decisions.length}
+        count={counts.discussionsDecisions}
         emptyReason={surface.discussionsDecisionsEmptyReason ?? ''}
       >
         <ul className="aera-record-list">
@@ -215,7 +237,7 @@ export function AeraCollabRecord({ surface, t }: {
       {/* §27 — typed institutional proof. Never a message. */}
       <Category
         title={t('evidence')}
-        count={surface.evidenceCards.length}
+        count={counts.evidence}
         emptyReason={t('noTypedEvidence')}
       >
         <ul className="aera-record-list">
