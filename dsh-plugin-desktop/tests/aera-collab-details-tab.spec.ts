@@ -13,7 +13,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createAeraCollabEntryController } from '../src/client/aera-collab-entry-controller.ts'
-import { AERA_DETAILS_TAB_EVENT, selectCollaborateTab } from '../src/client/aera-collab-panel.ts'
+import { AERA_DETAILS_TAB_EVENT, selectCollaborateTab, shellDetailsColumn } from '../src/client/aera-collab-panel.ts'
 import {
   CENTER_MIN,
   DETAILS_DEFAULT,
@@ -399,5 +399,42 @@ describe('BL-3 — the affordance lands on Collaborate, not on tool inspection',
     expect(tabs[1]?.['aria-selected']).toBe(true)
     expect(shown.some(node => node['__type'] === h.stock)).toBe(false)
     h.dispose()
+  })
+})
+
+describe('§65 — the affordance must survive the real service contract', () => {
+  it('the plugin declares every service the Collab entry points read', async () => {
+    /*
+     * GUI acceptance found the affordance completely inert: cordis throws
+     * `cannot get property "layout" without inject` for any service a plugin
+     * has not declared, so `ctx.layout` threw inside the click handler and the
+     * button did nothing — no column, no picker, no error the reader could see.
+     * Proven from the running product over CDP, not inferred.
+     *
+     * The unit tests could not catch it because they hand `applyAeraCollabEntryPoints`
+     * a plain object as `ctx`, where every property read succeeds. So the
+     * assertion is made where the contract actually lives: the inject list.
+     */
+    const { inject } = await import('../src/client/index.ts') as { inject: readonly string[] }
+    expect(inject).toContain('layout')
+    expect(inject).toContain('slots')
+    expect(inject).toContain('locale')
+  })
+
+  it('a shell whose layout service throws falls back to the picker, never to nothing', () => {
+    // The defence in depth for the same class: if the service is ever
+    // unavailable again, the reader gets the cold-start picker rather than a
+    // button that silently does nothing.
+    const hostile = { get layout() { throw new Error('cannot get property "layout" without inject') } }
+    const column = shellDetailsColumn(hostile as never)
+    expect(() => column.isOpen()).not.toThrow()
+    expect(column.isOpen()).toBe(false)
+    expect(column.open()).toBe(false)
+    expect(() => column.close()).not.toThrow()
+
+    const controller = createAeraCollabEntryController()
+    controller.attachColumn(column)
+    expect(controller.reveal()).toBe('PICKER')
+    expect(controller.isOpen()).toBe(true)
   })
 })

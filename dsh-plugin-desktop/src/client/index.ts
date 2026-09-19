@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { applyAdvancedShell } from './advanced-shell.ts'
 import { applyAeraBrand } from './aera-brand.tsx'
 import { startRendererBootReporter } from './boot-health.ts'
+import type { CurrentSessionSource } from './gateway-readiness.ts'
 import { applyAeraCollabEntryPoints } from './aera-collab-panel.ts'
 import { applyDesktopSettings } from './desktop-settings.ts'
 import { installDesktopDirectoryPickerBridge, requestDesktopDirectoryValidation } from './directory-picker.ts'
@@ -74,6 +75,22 @@ export const inject = [
   'locale',
   'connection',
   'conversation',
+  /*
+   * §65 GUI acceptance found the Collab affordance completely inert: cordis
+   * refuses any service a plugin has not declared, so reading `ctx.layout` at
+   * press time threw `cannot get property "layout" without inject` out of the
+   * click handler — no column, no picker, no error a reader could see. Proven
+   * over CDP against the installed product.
+   *
+   * Declaring it has one known side effect, disclosed rather than hidden: the
+   * inject list also selects the typed shape of the other services, and adding
+   * `layout` makes TypeScript resolve `ctx.sessions` to ui-layout's
+   * `SessionStore` instead of the runtime's sessions service. That is an
+   * upstream augmentation conflict, not a behaviour change — the runtime object
+   * is the same one either way — and it is absorbed at the single call site
+   * below rather than by dropping the service this product needs.
+   */
+  'layout',
   'remote',
   'settingsScope',
   'sessions',
@@ -104,7 +121,10 @@ export function apply(ctx: ClientContext): void {
   )
   ctx.effect(
     () => installAeraGatewayReadinessClient({
-      current: ctx.sessions.currentProvideInfo,
+      // See the `layout` note in `inject` above: `ctx.sessions` is typed as
+      // ui-layout's `SessionStore` once `layout` is declared, while the runtime
+      // value is the sessions service that really does carry this member.
+      current: (ctx.sessions as unknown as { currentProvideInfo: CurrentSessionSource }).currentProvideInfo,
       blocks: ctx.conversation.blocks,
     }),
     'dsh-plugin-desktop: Aera Gateway Session readiness',

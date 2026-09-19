@@ -102,11 +102,28 @@ export function selectCollaborateTab(): void {
 }
 
 export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
-  const face = (): {
+  type LayoutFace = {
     openDetails?: () => void
     closeDetails?: () => void
     getSnapshot?: () => { details?: number }
-  } | undefined => (ctx as { layout?: unknown }).layout as never
+  }
+  /*
+   * Defensive on top of the `layout` declaration in the plugin's inject list.
+   *
+   * cordis THROWS for an undeclared service — `cannot get property "layout"
+   * without inject` — and §65 acceptance caught exactly that escaping the click
+   * handler, leaving the affordance inert with no error anywhere a reader could
+   * see. A button that silently does nothing is the worst failure an affordance
+   * can have, so if the service is ever unavailable again the reader gets the
+   * cold-start picker instead of nothing at all.
+   */
+  const face = (): LayoutFace | undefined => {
+    try {
+      return (ctx as { layout?: unknown }).layout as LayoutFace | undefined
+    } catch {
+      return undefined
+    }
+  }
 
   return Object.freeze({
     isOpen: () => {
