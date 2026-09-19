@@ -1673,7 +1673,7 @@ __metadata:
 
 "@deepseek-ai/dsh-client-ui-conversation@patch:@deepseek-ai/dsh-client-ui-conversation@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-ui-conversation-npm-0.1.1-rc.2-941ef6a7f5.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-client-ui-conversation@patch:@deepseek-ai/dsh-client-ui-conversation@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-ui-conversation-npm-0.1.1-rc.2-941ef6a7f5.patch::version=0.1.1-rc.2&hash=7f78b8&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-client-ui-conversation@patch:@deepseek-ai/dsh-client-ui-conversation@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-client-ui-conversation-npm-0.1.1-rc.2-941ef6a7f5.patch::version=0.1.1-rc.2&hash=431601&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@deepseek-ai/schemastery": "npm:^3.18.1"
     clsx: "npm:^2.0.0"
@@ -1701,7 +1701,7 @@ __metadata:
     "@deepseek-ai/dsh-token-meter": ^0.1.1-rc.2
     "@deepseek-ai/dsh-tool-todo": ^0.1.1-rc.2
     "@deepseek-ai/dsh-tools": ^0.1.1-rc.2
-  checksum: 10c0/485995bb98f0ff812c7d088d27e5dfd0d37acb7c70149891b325bf7bfa2a98e0837c598fcbb1c32581310cfa4da8e0cdacb10dcaf21ccfedbbebb38fd3635e20
+  checksum: 10c0/75fff3c332bcf14062f2992173e90bcee186c99e4a52d29f724401f3a1ddff825dd3d2c2c33ef310b886b85a4baf22800c3999bfd213003a77dadded88c76b4b
   languageName: node
   linkType: hard
 

@@ -242,34 +242,65 @@ const CSS = `
   font-family: var(--dsw-font-mono, ui-monospace, monospace);
   word-break: break-all;
 }
-.aera-collab-overlay {
+/*
+ * THE COLLAB DRAWER (Option B host).
+ *
+ * The shell overlay layer is "position:absolute; inset:0; pointer-events:none"
+ * with "> * { pointer-events:auto }". This drawer is one of those children, so
+ * it must anchor itself -- it is NOT laid out by the layer.
+ *
+ * Anchored to the right edge and the full height beneath the titlebar band, so
+ * it reads as a right rail. There is deliberately NO backdrop element: the
+ * layer stays click-through everywhere this box is not, which is what keeps the
+ * centre work surface interactive while Collab is open (see order sections 18
+ * and 49C).
+ */
+.aera-collab-drawer {
   position: absolute;
-  inset: 0;
+  top: var(--aera-collab-drawer-top, 0);
+  right: 0;
+  bottom: 0;
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 48px 24px;
-  background: rgba(0, 0, 0, 0.42);
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 18px 20px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-left: 1px solid var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.3));
+  background: var(--dsw-alias-background-primary, #202124);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: -14px 0 36px rgba(0, 0, 0, 0.32);
   pointer-events: auto;
   z-index: 40;
 }
-.aera-collab-overlay-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(100%, 760px);
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 18px 20px 24px;
-  border: 1px solid var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.3));
-  border-radius: 14px;
-  background: var(--dsw-alias-background-primary, #202124);
-  color: var(--dsw-alias-label-primary);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+/* The desktop frame owns a titlebar band in its own modes; clear it. */
+[data-dsh-desktop-mode='extended'] .aera-collab-drawer,
+[data-dsh-desktop-mode='advanced'] .aera-collab-drawer {
+  --aera-collab-drawer-top: 38px;
 }
-.aera-collab-overlay-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.aera-collab-overlay-title { margin: 0; font-size: 16px; font-weight: 600; }
-.aera-collab-overlay-close {
+/* Drag the left edge to resize. Sits inside the drawer's own padding. */
+.aera-collab-drawer-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 8px;
+  cursor: col-resize;
+  background: transparent;
+}
+.aera-collab-drawer-grip:hover {
+  background: var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.28));
+}
+.aera-collab-drawer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+.aera-collab-drawer-title { margin: 0; font-size: 15px; font-weight: 600; }
+.aera-collab-drawer-close {
   border: 1px solid var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.35));
   border-radius: 8px;
   background: transparent;
@@ -279,9 +310,15 @@ const CSS = `
   font-size: 12px;
   padding: 4px 12px;
 }
-.aera-collab-overlay-body { display: flex; flex-direction: column; gap: 12px; }
-.aera-collab-overlay-body .aera-collab-panel,
-.aera-collab-overlay-body .aera-collab-surface { padding-bottom: 0; }
+.aera-rail-share-why {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-secondary);
+}
+.aera-collab-drawer-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.aera-collab-drawer-body .aera-collab-panel,
+.aera-collab-drawer-body .aera-collab-surface { padding-bottom: 0; }
 .aera-collab-context-group { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .aera-collab-context-title {
   margin: 0;

@@ -1,29 +1,41 @@
 /**
  * Registration of Aera Code's owner-visible Collab entry points.
  *
- * Read-First order, revised by §4 of the superseding order (R2-NB-A: this
- * header described the registration that §4 removed).
+ * Owner superseding continuation `CONTINUE_HOST_RECOVERY.md`, §13 Option B,
+ * selected by §14 and ratified by the §16 architecture review.
  *
- * Owner acceptance once failed on a build whose Collab route was complete and
- * whose only affordances were a macOS tray item the system laid out off-screen
- * and a view switch inside the window that tray item opened. The answer then
- * was to register Collab into the SAME slots the product's own views use,
- * including a `conversation.view` tab beside Chat and Trajectory.
+ * ## What changed, and why the previous design is gone rather than disabled
  *
- * §4 reverses that half: "COLLAB MUST NO LONGER REPLACE THE MAIN WORK
- * SURFACE". The centre belongs to the work. Discoverability is still the
- * governing constraint — it is what the earlier failure was about — so it is
- * carried by three registrations that do not take the centre:
+ * Collab has had three hosts in this Work Order's history, and the first two
+ * are now closed by order rather than by preference:
  *
- * - `conversation.details.collab` — the Collaborate tab of the right-hand
- *   details column, beside tool inspection rather than over it. Declared by
- *   this fork's patch to `dsh-client-ui-conversation`; `scope: 'session'`.
- * - `sidebar.footer.action` — the always-present way in. That slot is
- *   `scope: 'root'`, so unlike the details column it renders with no Session at
- *   all, which is what makes "Open Collab…" reachable from a cold start. It
- *   opens the column AND selects Collaborate.
- * - `shell.overlay` — the cold-start picker, for the case where there is no
- *   Session and therefore no column to open.
+ * - a `conversation.view` tab rendering the workspace in the CENTRE column —
+ *   removed by §4: "COLLAB MUST NO LONGER REPLACE THE MAIN WORK SURFACE";
+ * - a Collaborate tab inside the right-hand details column, reached by adding
+ *   a `conversation.details.collab` child seat through a patch to
+ *   `@deepseek-ai/dsh-client-ui-conversation` — removed by §12, which forbids
+ *   any further vendored DSH patch for hosting Collab, and by §14, which found
+ *   no clean route to the right region at all: `details` is `kind: 'single'`,
+ *   `scope: 'session'`, occupied by the vendor's own panel, whose `chatStore`
+ *   is a closure local the package never exports. Co-hosting needed more
+ *   vendor surgery; taking the seat would have destroyed ordinary tool Details
+ *   (§15). The patch is reverted to its 13-line branding-only base in the same
+ *   change as this one, so tool Details is now EXACTLY stock.
+ *
+ * What remains is two registrations, neither of which touches the centre, the
+ * details column, or any vendor package:
+ *
+ * - `sidebar.footer.action` — the always-present way in. `scope: 'root'`, so it
+ *   renders with no Session at all, which is what makes "Open Collab…"
+ *   reachable from a cold start. One press opens the drawer; it never closes
+ *   it (see the entry controller on open-means-open).
+ * - `shell.overlay` — the drawer itself. Declared by
+ *   `@deepseek-ai/dsh-client-ui-layout` as `{ kind: 'list', scope: 'root' }`,
+ *   rendered into AppFrame's click-through overlay layer, and declared
+ *   identically in every shell mode, so Collab does not have to be re-hosted if
+ *   the mode ever changes. `kind: 'list'` means it coexists with the desktop
+ *   titlebar (`order: -1000`) rather than displacing anything; this drawer
+ *   takes `order: 10`, well clear of it.
  *
  * No registration is conditional on configuration. A Collab entry that appears
  * only when a store happens to be configured is an entry point that disappears
@@ -32,15 +44,12 @@
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { AeraCollabOverlay } from './AeraCollabOverlay.tsx'
-import { AeraCollabDetailsTab } from './AeraCollabPanel.tsx'
 import { AeraCollabSidebarAction } from './AeraCollabSidebarAction.tsx'
 import {
   createAeraCollabEntryController,
-  type AeraCollabColumn,
   type AeraCollabEntryController,
 } from './aera-collab-entry-controller.ts'
 import { createAeraCollabApi, type AeraCollabApi } from './aera-collab-api.ts'
@@ -51,24 +60,6 @@ import { installAeraCollabStyles } from './aera-collab-styles.ts'
 export const AERA_COLLAB_LOCALE_NAMESPACE = 'aera.collab'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
-  /**
-   * The Collaborate seat inside the details column.
-   *
-   * Declared at runtime by our patch to `@deepseek-ai/dsh-client-ui-conversation`
-   * (`.yarn/patches/…-941ef6a7f5.patch`), which leaves the stock DetailsPanel
-   * intact and merely gives it a second tab. The patch cannot ship types into
-   * the package's own `.d.ts`, so the declaration lives here — beside the only
-   * registration that fills it — and must be deleted in the same change that
-   * ever removes the patch.
-   */
-  interface SlotMap {
-    'conversation.details.collab': {
-      kind: 'single'
-      scope: 'session'
-      owner: Record<string, never>
-    }
-  }
-
   interface LocaleNamespaceMap {
     /** Aera Collab entry-point copy. */
     'aera.collab': AeraCollabLocaleKey
@@ -76,144 +67,24 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /**
- * Register the Collab tab and the sidebar way in for one client generation.
+ * Register the Collab drawer and the sidebar way in for one client generation.
  *
  * @param ctx - browser Cordis context.
  * @param api - injectable for tests; defaults to the same-origin loopback API.
+ * @param controller - injectable for tests; shared open/closed drawer state.
  */
-/**
- * The shell's details column, as an affordance target.
- *
- * Resolved lazily, at press time rather than at apply time, because the shell
- * that provides `ctx.layout` is installed after the entry points are.
- *
- * `isOpen` is only answered where the layout exposes its own state — which is
- * the desktop-owned `DesktopLayoutState` in advanced mode. Where it does not,
- * this reports closed, so the button opens and never guesses that it should
- * close. A button that closes a column the reader did not know was open is
- * worse than a button that only ever opens one.
- */
-/** Ask the details column to show Collaborate. Safe to call when it is closed. */
-export const AERA_DETAILS_TAB_EVENT = 'aera:details-tab'
-
-export function selectCollaborateTab(): void {
-  /*
-   * Never allowed to throw. This runs inside the affordance's click handler,
-   * immediately after the column has been opened, and §65 twice showed what a
-   * throw in that handler costs: the reader presses a button and nothing
-   * happens, with no error anywhere they can see. Selecting a tab is the least
-   * important thing this path does; it must never cost the column.
-   */
-  try {
-    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
-    window.dispatchEvent(new CustomEvent(AERA_DETAILS_TAB_EVENT, { detail: { tab: 'collab' } }))
-  } catch {
-    // The column is open; the reader can press the Collaborate tab themselves.
-  }
-}
-
-export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
-  type LayoutFace = {
-    openDetails?: () => void
-    closeDetails?: () => void
-    getSnapshot?: () => { details?: number }
-  }
-
-  /*
-   * TWO ways of holding the layout service, because §65 acceptance proved that
-   * one of them is not enough — twice, on two different builds.
-   *
-   * Run 1: reading `ctx.layout` at press time threw `cannot get property
-   * "layout" without inject`. Fixed by declaring the service.
-   *
-   * Run 2: the read then succeeded and the CALL threw, inside ui-layout:
-   *   TypeError: Cannot read properties of undefined (reading 'anonymous')
-   *       at openDetails (…/dsh-client-ui-layout/client.js:331)
-   * A service method invoked through a proxy resolved long after its fiber was
-   * active does not carry the scope the bound store action needs.
-   *
-   * The shape that demonstrably works in this product is ui-conversation's:
-   * `const layout = ctx.layout` captured inside `apply()`, called later from a
-   * click handler — that is how the details panel's own close button works
-   * (`dsh-client-ui-conversation/lib/client.js`, `apply()` → `inject: () => ({
-   * closeDetails: () => { layout.closeDetails() } })`). So this captures the
-   * service eagerly, the way the shell itself does.
-   *
-   * The live read is still tried FIRST, because in advanced and extended mode
-   * this product provides its own `DesktopLayoutState` AFTER these entry points
-   * are registered, and the eager capture there would be the superseded
-   * upstream controller. Whichever call succeeds wins; if both fail the reader
-   * gets the cold-start picker rather than a button that does nothing.
-   */
-  const read = (): LayoutFace | undefined => {
-    try {
-      return (ctx as { layout?: unknown }).layout as LayoutFace | undefined
-    } catch {
-      return undefined
-    }
-  }
-  const captured = read()
-
-  const invoke = (method: 'openDetails' | 'closeDetails'): boolean => {
-    for (const candidate of [read(), captured]) {
-      const fn = candidate?.[method]
-      if (fn === undefined) continue
-      try {
-        fn.call(candidate)
-        return true
-      } catch {
-        // Try the other holder before giving up on the column entirely.
-      }
-    }
-    return false
-  }
-
-  return Object.freeze({
-    isOpen: () => {
-      for (const candidate of [read(), captured]) {
-        try {
-          const snapshot = candidate?.getSnapshot?.()
-          if (snapshot !== undefined) return snapshot.details !== 0
-        } catch {
-          // Same fallback discipline as `invoke`.
-        }
-      }
-      return false
-    },
-    open: () => {
-      if (!invoke('openDetails')) return false
-      /*
-       * Round-1 review BL-3: opening the column landed the reader on tool
-       * inspection and asked them to find the second tab. The patched panel
-       * listens for this event and selects the tab; it is a plain DOM event so
-       * neither side depends on the other's module.
-       */
-      selectCollaborateTab()
-      return true
-    },
-    close: () => { invoke('closeDetails') },
-  })
-}
-
 export function applyAeraCollabEntryPoints(
   ctx: ClientContext,
   api: AeraCollabApi = createAeraCollabApi(),
   controller: AeraCollabEntryController = createAeraCollabEntryController(),
 ): void {
-  controller.attachColumn(shellDetailsColumn(ctx))
-
   /*
    * Make a crashed contribution audible (round-1 review NB-14, and §65 run 2).
    *
    * A slot entry that throws during render is retired from its cell by the
-   * renderer, and the patched details panel then reads the seat as simply
-   * unoccupied and renders the stock panel alone — no tab strip, no error, no
-   * difference from "nobody registered". Acceptance run 2 found the Collaborate
-   * seat empty in the product and could not tell those two states apart from
-   * outside, which is the cost of a degrade nobody reports.
-   *
-   * This reports it. It changes no behaviour: the degrade is still the degrade,
-   * and the reader still gets tool inspection rather than a broken column.
+   * renderer. For a `kind: 'list'` seat that means the drawer simply stops
+   * appearing, with no error anywhere the reader can see — the same silence
+   * that cost two acceptance runs. This reports it. It changes no behaviour.
    */
   ctx.effect(
     () => {
@@ -221,8 +92,7 @@ export function applyAeraCollabEntryPoints(
       // that is missing must cost a diagnostic, never the registration itself.
       if (typeof ctx.slots.onEntryError !== 'function') return () => {}
       return ctx.slots.onEntryError((key, entry, error, info) => {
-        if (!key.startsWith('conversation.details.collab')
-          && entry.registrant !== 'dsh-plugin-desktop') return
+        if (entry.registrant !== 'dsh-plugin-desktop') return
         console.error(
           `[aera-collab] slot entry crashed in ${key}`,
           { abdicated: info.abdicated, registrant: entry.registrant },
@@ -241,34 +111,6 @@ export function applyAeraCollabEntryPoints(
     () => installAeraCollabStyles(),
     'dsh-plugin-desktop: Aera Collab styles',
   )
-  /*
-   * §4 — COLLAB MUST NO LONGER REPLACE THE MAIN WORK SURFACE.
-   *
-   * A `conversation.view` tab rendering the whole workspace in the CENTRE
-   * column used to be registered here at order 20. It was ratified under the
-   * earlier Read-First order, and the superseding order supersedes that
-   * ratification: the centre belongs to the work, and Collab belongs beside
-   * it. The registration is gone rather than hidden behind a flag, because a
-   * disabled centre-replacing surface is still a centre-replacing surface
-   * waiting to be re-enabled.
-   *
-   * Discoverability (§6) is not lost: the sidebar affordance below opens the
-   * right-hand column directly on Collaborate, and the cold-start picker still
-   * serves the no-Session case.
-   */
-  /*
-   * The Collaborate tab of the right-hand details column (controller ruling,
-   * Option B / path 2). It sits BESIDE tool inspection rather than over it:
-   * the Details tab still renders the stock panel, reading the same private
-   * chatStore it always did, so a tool selection behaves exactly as before.
-   * A selection arriving while Collaborate is showing marks the Details tab
-   * and does not steal it.
-   */
-  ctx.slots.inject('conversation.details.collab', () => ctx.slots.register({
-    name: 'conversation.details.collab',
-    locale: AERA_COLLAB_LOCALE_NAMESPACE,
-    inject: () => ({ api }),
-  }, AeraCollabDetailsTab))
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
     id: 'aera-collab',
@@ -277,14 +119,13 @@ export function applyAeraCollabEntryPoints(
     inject: () => ({ controller }),
   }, AeraCollabSidebarAction))
   /*
-   * The cold-start surface (D2). `shell.overlay` is declared by
-   * `dsh-client-ui-layout` as `{ kind: 'list', scope: 'root' }` and rendered by
-   * AppFrame's overlay layer, so it exists with no Session — which is exactly
-   * the case the sidebar has to serve. It renders nothing until opened.
+   * The drawer. `order: 10` keeps it clear of the desktop titlebar's -1000, so
+   * the titlebar renders first and the drawer never competes with the window
+   * controls.
    */
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
-    id: 'aera-collab-picker',
+    id: 'aera-collab-drawer',
     order: 10,
     locale: AERA_COLLAB_LOCALE_NAMESPACE,
     inject: () => ({ api, controller }),

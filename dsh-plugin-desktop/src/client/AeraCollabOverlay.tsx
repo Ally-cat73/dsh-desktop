@@ -1,23 +1,48 @@
 /**
- * The cold-start way into Collab, inside the main shell.
+ * The Collab drawer — Aera Collab's V1 host surface.
  *
- * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, review finding D2.
+ * Owner superseding continuation `CONTINUE_HOST_RECOVERY.md` §13 Option B,
+ * selected by the §14 decision rule and ratified by the §16 architecture
+ * review (`AERA_COLLAB_HOST_ARCHITECTURE_PASS`).
  *
- * The conversation tab strip is `scope: 'session'`: with no Session open, the
- * Collab tab does not exist, and the sidebar is the ONLY way in. That path used
- * to open the native window on an empty WorkOrderId field — a typed route, and
- * the continuation order forbids requiring anyone to type an id.
+ * ## Where this sits, and why it is safe
  *
- * It now opens this. `shell.overlay` is declared by
- * `@deepseek-ai/dsh-client-ui-layout` as `{ kind: 'list', scope: 'root' }` and
- * is rendered by `AppFrame` in the shell's own overlay layer, so it is present
- * with no Session and needs no upstream patch. The overlay lands on the picker
- * with the search field focused and ACTIVE work already listed; choosing a row
- * renders that Work Order's surface in place. At no point is a WorkOrderId
- * typed, and at no point does a separate window open.
+ * `shell.overlay` is declared by `@deepseek-ai/dsh-client-ui-layout` as
+ * `{ kind: 'list', scope: 'root' }` and rendered by `AppFrame` into its own
+ * overlay layer, whose stylesheet is:
  *
- * Read-first throughout: the picker and the surface both project the durable
- * store and join nothing.
+ *     .overlayLayer { z-index: 20; pointer-events: none; position: absolute; inset: 0 }
+ *     .overlayLayer > *  { pointer-events: auto }
+ *
+ * A full-bleed, CLICK-THROUGH layer above the three-column grid whose children
+ * are individually interactive. Three consequences this component is built to
+ * exploit, rather than work around:
+ *
+ * 1. Anchoring to the right edge of `inset: 0` puts Collab exactly where the
+ *    owner asked a rail to be (§13's "RIGHT: who am I working with?"), while
+ *    remaining the pre-authorised Option B drawer.
+ * 2. Because the layer is click-through and this drawer paints ONLY its own
+ *    band, the centre work surface stays visible AND interactive the whole time
+ *    Collab is open. There is deliberately NO backdrop: a full-bleed scrim
+ *    would re-enable pointer events across the shell and make the drawer modal,
+ *    which is precisely the centre-blocking §18 forbids. The earlier picker had
+ *    one; it is gone.
+ * 3. The centre is never unmounted or re-laid-out, so §49C ("close restores
+ *    current work") holds structurally — closing removes an absolutely
+ *    positioned box and nothing else. Collaboration state survives too: the
+ *    reader's chosen Work Order is held here, above the mount/unmount of the
+ *    body, so reopening returns them where they were.
+ *
+ * `order` is 10. The desktop window titlebar is the other contributor to this
+ * seat at `order: -1000` (`extended-shell.ts`), so it renders first and this
+ * drawer never competes with it; the drawer's own top inset clears the
+ * titlebar band rather than covering the window controls.
+ *
+ * ## One surface, two projections
+ *
+ * The body is `AeraCollabWorkspace` — Collaborate and Record as two separate
+ * component trees over one `CollabSurfaceView` read once. The legacy
+ * `AeraCollabSurface` is not used here; it is the pre-split surface.
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -25,9 +50,9 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type { AeraCollabApi } from './aera-collab-api.ts'
 import type { AeraCollabEntryController } from './aera-collab-entry-controller.ts'
 import { AeraCollabPicker } from './AeraCollabPicker.tsx'
-import { AeraCollabSurface } from './AeraCollabSurface.tsx'
+import { AeraCollabWorkspace } from './AeraCollabWorkspace.tsx'
 
-/** Registration-side capabilities for the shell-level Collab overlay. */
+/** Registration-side capabilities for the shell-level Collab drawer. */
 export interface AeraCollabOverlayInjected {
   readonly api: AeraCollabApi
   readonly controller: AeraCollabEntryController
@@ -39,20 +64,29 @@ export type AeraCollabOverlayProps =
   & PropsLocale<'aera.collab'>
   & InjectFace<AeraCollabOverlayInjected>
 
-/** The shell-level Collab picker, opened from the sidebar. */
+/** Drawer width bounds, in px. Narrow enough to leave the centre usable. */
+const MIN_WIDTH = 320
+const MAX_WIDTH = 720
+const DEFAULT_WIDTH = 420
+
+/** The Collab drawer, opened from the sidebar and closed from its own header. */
 export function AeraCollabOverlay({ api, controller, t }: AeraCollabOverlayProps) {
   const open = useSyncExternalStore(
     controller.subscribe,
     controller.isOpen,
     controller.isOpen,
   )
+  /*
+   * Held ABOVE the early return, so the reader's Work Order and drawer width
+   * survive close/reopen. §45 asks that close/reopen work and that
+   * collaboration state is not lost; keeping this here is what makes that true
+   * rather than merely tested.
+   */
   const [chosen, setChosen] = useState<string>()
-  const panel = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(DEFAULT_WIDTH)
+  const dragging = useRef(false)
 
-  const close = useCallback(() => {
-    controller.close()
-    setChosen(undefined)
-  }, [controller])
+  const close = useCallback(() => { controller.close() }, [controller])
 
   // Escape closes, as it does for every other transient surface in the shell.
   useEffect(() => {
@@ -64,43 +98,83 @@ export function AeraCollabOverlay({ api, controller, t }: AeraCollabOverlayProps
     return () => { window.removeEventListener('keydown', onKey) }
   }, [open, close])
 
-  // Closed is the default, and closed renders nothing at all: an overlay layer
-  // that always occupied the shell would sit over the product.
+  /*
+   * Resize by dragging the drawer's left edge. Listeners live on `window` for
+   * the duration of the drag so the pointer may leave the 12px handle — and,
+   * more importantly, may cross OVER the centre column, which is exactly where
+   * a leftward drag goes.
+   */
+  useEffect(() => {
+    if (!open) return undefined
+    const onMove = (event: MouseEvent): void => {
+      if (!dragging.current) return
+      const next = window.innerWidth - event.clientX
+      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, next)))
+    }
+    const onUp = (): void => { dragging.current = false }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [open])
+
+  // Closed renders nothing at all — not a hidden box. An overlay contribution
+  // that always occupied the layer would sit over the product forever.
   if (!open) return null
 
   return (
-    <div className="aera-collab-overlay" role="presentation" onClick={close}>
+    <aside
+      className="aera-collab-drawer"
+      style={{ width: `${width}px` }}
+      role="complementary"
+      aria-label={t('overlayTitle')}
+    >
       <div
-        ref={panel}
-        className="aera-collab-overlay-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('overlayTitle')}
-        onClick={event => { event.stopPropagation() }}
-      >
-        <header className="aera-collab-overlay-head">
-          <h2 className="aera-collab-overlay-title">{t('overlayTitle')}</h2>
-          <button type="button" className="aera-collab-overlay-close" onClick={close}>
-            {t('closeOverlay')}
-          </button>
-        </header>
-        <div className="aera-collab-overlay-body">
-          {chosen === undefined
-            ? <AeraCollabPicker api={api} t={t} onChoose={setChosen} />
-            : (
-                <>
-                  <button
-                    type="button"
-                    className="aera-collab-change"
-                    onClick={() => { setChosen(undefined) }}
-                  >
-                    {t('changeWorkOrder')}
-                  </button>
-                  <AeraCollabSurface api={api} workOrderId={chosen} t={t} />
-                </>
-              )}
-        </div>
+        className="aera-collab-drawer-grip"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('resizeDrawer')}
+        onMouseDown={event => {
+          event.preventDefault()
+          dragging.current = true
+        }}
+      />
+      <header className="aera-collab-drawer-head">
+        <h2 className="aera-collab-drawer-title">{t('overlayTitle')}</h2>
+        {/*
+          * No `aria-label` here on purpose. Carrying BOTH an aria-label and the
+          * same visible text left the button with an EMPTY accessible name in
+          * the real renderer — found by walking the live AX tree of the dev
+          * runtime, where this control reported `label: ""` while the other
+          * drawer controls named themselves correctly. The visible text is the
+          * accessible name; adding the attribute only competed with it.
+          */}
+        <button
+          type="button"
+          className="aera-collab-drawer-close"
+          onClick={close}
+        >
+          {t('closeOverlay')}
+        </button>
+      </header>
+      <div className="aera-collab-drawer-body">
+        {chosen === undefined
+          ? <AeraCollabPicker api={api} t={t} onChoose={setChosen} />
+          : (
+              <>
+                <button
+                  type="button"
+                  className="aera-collab-change"
+                  onClick={() => { setChosen(undefined) }}
+                >
+                  {t('changeWorkOrder')}
+                </button>
+                <AeraCollabWorkspace api={api} workOrderId={chosen} t={t} />
+              </>
+            )}
       </div>
-    </div>
+    </aside>
   )
 }

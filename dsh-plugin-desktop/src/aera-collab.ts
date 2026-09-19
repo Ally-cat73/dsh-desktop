@@ -262,15 +262,30 @@ export function apply(ctx: Context): void {
       label: () => 'Aera: Work Context',
       invoke: () => { window.openView('CONTEXT') },
     })
-    const collab = ctx.desktopRuntime.registerTrayItem({
-      group: 'tools',
-      order: 21,
-      label: () => 'Aera: Collab',
-      invoke: () => { window.openView('COLLAB') },
-    })
+    /*
+     * The `Aera: Collab` tray item is deliberately NOT registered.
+     *
+     * It invoked `window.openView('COLLAB')` — the LEGACY native Collab view,
+     * a different surface from the drawer the §14 decision selected. Shipping
+     * both would leave the product with two unrelated Collab surfaces reached
+     * by two different controls, which is the confusion §18 ("no route
+     * hunting") and the architecture review's advisory 2 both call out.
+     *
+     * It is removed rather than rewired because there is no channel to rewire
+     * it through: tray invocation runs in the Electron main process, the
+     * drawer's open state lives in the renderer's client plugin, and
+     * `ctx.desktopRuntime` exposes no main-to-renderer command path
+     * (`exportDiagnostics`, `locale`, `openProfileCreateWindow`, `openTerminal`,
+     * `platform`, `registerTrayItem`, `updates` — and nothing else). Inventing
+     * one to preserve a duplicate entry point would be more host surgery in
+     * service of the surface we just decided against.
+     *
+     * Collab's single entry point is the sidebar affordance, which is
+     * `scope: 'root'` and therefore present with no Session — the cold-start
+     * case the tray item was originally added to serve.
+     */
     return () => {
       workContext.dispose()
-      collab.dispose()
       window.close()
       void service.closeWorkContext().catch(() => {})
     }

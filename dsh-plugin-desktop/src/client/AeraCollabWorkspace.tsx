@@ -102,17 +102,37 @@ export function AeraCollabWorkspace({ api, workOrderId, t, initialMode = 'COLLAB
                 * §11 needs a comparison in hand before it can share one. This
                 * is the only place that asks for one, and only on request.
                 */}
-              {surface.compare === undefined && surface.lines.length > 0
-                ? (
-                    <button
-                      type="button"
-                      className="aera-collab-prepare-state"
-                      onClick={() => { setCompareLineIndex(0) }}
-                    >
-                      {t('prepareCurrentState')}
-                    </button>
-                  )
-                : null}
+              {(() => {
+                /*
+                 * Which line can actually be compared.
+                 *
+                 * This used to be `lines.length > 0` and `setCompareLineIndex(0)`,
+                 * which is wrong twice. Compare is only ever available for the
+                 * line OBSERVED from this checkout — the service refuses a
+                 * durable Working Line outright, because it cannot observe that
+                 * line's checkout — so index 0 could ask for a comparison that
+                 * can never be computed. And gating on `lines.length` meant that
+                 * on a Work Order with no observable checkout the reader was
+                 * shown nothing at all: no button, no reason. The composer now
+                 * always carries the share affordance and says why it is
+                 * unavailable (§21, §30); this offers the preparation step only
+                 * where there is genuinely something to prepare.
+                 */
+                if (surface.compare !== undefined) return null
+                const observed = surface.lines.findIndex(
+                  line => line.provenance === 'OBSERVED' && line.compareAvailable,
+                )
+                if (observed < 0) return null
+                return (
+                  <button
+                    type="button"
+                    className="aera-collab-prepare-state"
+                    onClick={() => { setCompareLineIndex(observed) }}
+                  >
+                    {t('prepareCurrentState')}
+                  </button>
+                )
+              })()}
               <AeraCollabRail
                 surface={surface}
                 api={api}

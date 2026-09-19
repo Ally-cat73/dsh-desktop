@@ -78,34 +78,47 @@ describe('Collab is reachable by a person, not only by a route', () => {
     openWindow.mockClear()
   })
 
-  it('offers Collab from a top-level menu-bar menu in the default owner launch', async () => {
+  /*
+   * SUPERSEDED, and asserted in the negative rather than deleted.
+   *
+   * These two tests protected an 'Aera: Collab' menu-bar item that invoked
+   * window.openView('COLLAB') — the LEGACY native Collab view. The section 14
+   * host decision selected a drawer on shell.overlay instead, and shipping both
+   * would leave two unrelated Collab surfaces behind two different controls,
+   * which is the 'no route hunting' problem of section 18. The tray item is
+   * removed (src/aera-collab.ts), and it is not rewired because tray
+   * invocation runs in the Electron main process while the drawer's state lives
+   * in the renderer, and ctx.desktopRuntime exposes no main-to-renderer command
+   * path.
+   *
+   * Discoverability — the thing the original acceptance failure was about — is
+   * carried by the sidebar affordance, which is scope:'root' and therefore
+   * present with no Session at all. That is asserted in
+   * tests/aera-collab-tab.spec.ts.
+   */
+  it('no longer offers the legacy Collab view from the menu bar (section 14, section 18)', async () => {
     const contributions = await applyCollabPluginInDefaultConfiguration()
     const additions = desktopApplicationMenuItems(contributions, invoke => () => { void invoke() })
     const template = macApplicationMenuTemplate('Aera Code', 'en', additions)
 
-    // The application menu (template[0]) is NOT a discoverable home: it sits
-    // behind the product's own name, below "About". Require a menu whose own
-    // label is drawn in the menu bar.
-    const topLevel = template.slice(1)
-    const carriers = topLevel.filter(menu => submenuOf(menu)
+    const carriers = template.slice(1).filter(menu => submenuOf(menu)
       .some(entry => entry.label === 'Aera: Collab'))
 
-    expect(carriers.map(menu => menu.label)).toEqual(['Tools'])
+    expect(carriers).toEqual([])
   })
 
-  it('opens the Collab view when that menu-bar item is activated', async () => {
+  it('opens no legacy Collab view from anywhere in the menu bar', async () => {
     const contributions = await applyCollabPluginInDefaultConfiguration()
     const additions = desktopApplicationMenuItems(contributions, invoke => () => { void invoke() })
     const template = macApplicationMenuTemplate('Aera Code', 'en', additions)
 
-    const tools = template.slice(1).find(menu => menu.label === 'Tools')
-    expect(tools).toBeDefined()
-    const collab = submenuOf(tools!).find(entry => entry.label === 'Aera: Collab')
-    expect(collab).toBeDefined()
-    expect(collab?.enabled).toBe(true)
+    for (const menu of template.slice(1)) {
+      for (const entry of submenuOf(menu)) {
+        entry.click?.(undefined as never, undefined as never, undefined as never)
+      }
+    }
 
-    collab?.click?.(undefined as never, undefined as never, undefined as never)
-    expect(openView).toHaveBeenCalledWith('COLLAB')
+    expect(openView).not.toHaveBeenCalledWith('COLLAB')
   })
 
   it('never lets the tray be the only way in', async () => {
@@ -126,7 +139,7 @@ describe('Collab is reachable by a person, not only by a route', () => {
       expect(reachable).toContain(item.label())
     }
     expect(contributions.map(item => item.label()))
-      .toEqual(['Aera: Work Context', 'Aera: Collab'])
+      .toEqual(['Aera: Work Context'])
   })
 
   it('contributes no menu-bar menu when no Host plugin registered a command', () => {

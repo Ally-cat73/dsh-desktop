@@ -235,10 +235,23 @@ export function shareCurrentStateRequest(input: {
   }
 }
 
-function Composer({ workOrderId, threadId, canShareState, compareLineIndex, api, t, onDone }: {
+function Composer({ workOrderId, threadId, canShareState, shareUnavailableReason, compareLineIndex, api, t, onDone }: {
   readonly workOrderId: string
   readonly threadId: string
   readonly canShareState: boolean
+  /**
+   * Why current state cannot be shared right now, when it cannot.
+   *
+   * §21 requires a Share current state affordance, and §30 forbids a displayed
+   * falsehood. This control used to be rendered ONLY when a comparison was
+   * already in hand, so on the real fixture — where this Work Order binds no
+   * repository and there is therefore no observable checkout — the reader saw
+   * no share control at all and no reason for its absence. A silently missing
+   * affordance is indistinguishable from an unimplemented one, which is the
+   * same class of untruth as a false zero. The control is now always present
+   * and says, in the reader's words, why it is unavailable.
+   */
+  readonly shareUnavailableReason?: string
   readonly compareLineIndex?: number
   readonly api: Pick<AeraCollabApi, 'coordinate'>
   readonly t: Translate
@@ -296,19 +309,23 @@ function Composer({ workOrderId, threadId, canShareState, compareLineIndex, api,
           * supplies nothing but, optionally, a sentence. When they have typed
           * one the verb changes to say what will actually happen.
           */}
-        {canShareState
-          ? (
-              <button
-                type="button"
-                className="aera-rail-share"
-                disabled={busy}
-                onClick={() => { setConfirming(true) }}
-              >
-                {text === '' ? t('shareCurrentState') : t('sendWithCurrentState')}
-              </button>
-            )
-          : null}
+        <button
+          type="button"
+          className="aera-rail-share"
+          disabled={busy || !canShareState}
+          {...(canShareState ? {} : { 'aria-describedby': `${threadId}-share-why` })}
+          onClick={() => { setConfirming(true) }}
+        >
+          {text === '' ? t('shareCurrentState') : t('sendWithCurrentState')}
+        </button>
       </div>
+      {canShareState
+        ? null
+        : (
+            <p className="aera-rail-share-why" id={`${threadId}-share-why`}>
+              {shareUnavailableReason ?? t('shareUnavailable')}
+            </p>
+          )}
       {confirming
         ? (
             <div className="aera-rail-confirm" role="group" aria-label={t('shareCurrentState')}>
@@ -461,6 +478,12 @@ export function AeraCollabRail({ surface, api, t, onChanged, compareLineIndex }:
                       workOrderId={surface.workOrderId}
                       threadId={threadId}
                       canShareState={surface.compare !== undefined}
+                      {...(surface.compare !== undefined
+                        ? {}
+                        : {
+                            shareUnavailableReason:
+                              surface.compareUnavailableReason ?? surface.linesEmptyReason,
+                          })}
                       {...(compareLineIndex === undefined ? {} : { compareLineIndex })}
                       api={api}
                       t={t}

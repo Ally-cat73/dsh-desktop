@@ -88,16 +88,48 @@ describe('Collab in the default shell', () => {
     expect(registrations.some(entry => entry.options.name === 'conversation.view')).toBe(false)
   })
 
-  it('registers into the details column instead, beside tool inspection', () => {
+  it('takes no details-column seat either (§12, §14 — the vendor patch is reverted)', () => {
+    /*
+     * The details-column host is gone, and this asserts the absence rather than
+     * merely stopping testing the presence. §14 found no clean route to the
+     * right region: `details` is kind:'single', scope:'session', occupied by
+     * the vendor, and its chatStore is a closure local the package never
+     * exports. The only co-hosting route was a further vendored DSH patch,
+     * which §12 forbids. If this assertion ever fails, the product has drifted
+     * back onto a host the order rules out.
+     */
     const { registrations, injected } = harness()
-    const seat = registrations.find(entry => entry.options.name === 'conversation.details.collab')
 
-    expect(injected).toContain('conversation.details.collab')
+    expect(registrations.some(e => e.options.name === 'conversation.details.collab')).toBe(false)
+    expect(injected).not.toContain('conversation.details.collab')
+  })
+
+  it('hosts Collab on the public shell.overlay seat instead', () => {
+    const { registrations, injected } = harness()
+    const seat = registrations.find(entry => entry.options.name === 'shell.overlay')
+
+    expect(injected).toContain('shell.overlay')
     expect(seat).toBeDefined()
     expect(seat?.component).toBeTypeOf('function')
-    // It takes nothing from the Session, so it cannot fail when one is absent.
+    expect(seat?.options.id).toBe('aera-collab-drawer')
+    // scope:'root' — it takes nothing from the Session, so it cannot fail when
+    // one is absent, which is the cold-start case.
     expect(() => seat?.options.inject?.('session-1')).not.toThrow()
     expect(() => seat?.options.inject?.(undefined)).not.toThrow()
+  })
+
+  it('keeps the drawer clear of the desktop titlebar in the same seat', () => {
+    /*
+     * `shell.overlay` is kind:'list', so Collab coexists with the desktop
+     * window titlebar rather than displacing it. The titlebar registers at
+     * order -1000 (extended-shell.ts); anything at or below that would fight
+     * it for the top band and could cover the window controls.
+     */
+    const { registrations } = harness()
+    const seat = registrations.find(entry => entry.options.name === 'shell.overlay')
+
+    expect(seat?.options.order).toBeDefined()
+    expect(seat!.options.order!).toBeGreaterThan(-1000)
   })
 
   it('is registered unconditionally, not only when a store happens to exist', () => {
@@ -106,7 +138,7 @@ describe('Collab in the default shell', () => {
     }
     const { registrations } = harness()
 
-    expect(registrations.some(entry => entry.options.name === 'conversation.details.collab')).toBe(true)
+    expect(registrations.some(entry => entry.options.name === 'shell.overlay')).toBe(true)
   })
 
   it('also offers a way in that needs no Session at all', () => {
@@ -135,7 +167,7 @@ describe('Collab in the default shell', () => {
      */
     expect(injected).toContain('shell.overlay')
     expect(overlay).toBeDefined()
-    expect(overlay?.options.id).toBe('aera-collab-picker')
+    expect(overlay?.options.id).toBe('aera-collab-drawer')
 
     const sidebarFace = action?.options.inject?.() as { controller?: unknown, api?: unknown }
     // The sidebar action is handed no API at all: it cannot open a window, and
@@ -150,7 +182,7 @@ describe('Collab in the default shell', () => {
     // The overlay is closed until something opens it, so it never sits over the
     // product uninvited.
     expect(controller.isOpen()).toBe(false)
-    controller.toggle()
+    controller.open()
     expect(controller.isOpen()).toBe(true)
     controller.close()
     expect(controller.isOpen()).toBe(false)
@@ -171,11 +203,11 @@ describe('Collab in the default shell', () => {
   it('opens the Collab view when the reader asks, and not before', async () => {
     const openCollab = vi.fn(async () => {})
     const { registrations } = harness({ openCollab })
-    const seat = registrations.find(entry => entry.options.name === 'conversation.details.collab')
+    const seat = registrations.find(entry => entry.options.name === 'shell.overlay')
     const injectedFace = seat?.options.inject?.() as { api: AeraCollabApi }
 
-    // Rendering the tab joins nothing: joining writes a session record, so it
-    // must be an explicit act, never a side effect of a tab being drawn.
+    // Rendering the drawer joins nothing: joining writes a session record, so
+    // it must be an explicit act, never a side effect of a surface appearing.
     expect(openCollab).not.toHaveBeenCalled()
     await injectedFace.api.openCollab('WO-TEST-001')
     expect(openCollab).toHaveBeenCalledWith('WO-TEST-001')
