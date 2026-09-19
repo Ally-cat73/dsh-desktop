@@ -34,6 +34,7 @@ interface Registration {
 
 function harness(api: Partial<AeraCollabApi> = {}) {
   const registrations: Registration[] = []
+  const entryErrorHandlers: unknown[] = []
   const injected: string[] = []
   const controller = createAeraCollabEntryController()
   const ctx = {
@@ -47,6 +48,7 @@ function harness(api: Partial<AeraCollabApi> = {}) {
         register()
         return () => {}
       },
+      onEntryError: (fn: unknown) => { entryErrorHandlers.push(fn); return () => {} },
       register: (options: Registration['options'], component: unknown) => {
         registrations.push({ options, component })
         return () => {}
@@ -66,7 +68,7 @@ function harness(api: Partial<AeraCollabApi> = {}) {
     packetState: vi.fn(async () => ({ verdict: 'UNRESOLVABLE', humanSummary: 'no store in this harness' })),
     ...api,
   }, controller)
-  return { registrations, injected, controller }
+  return { registrations, injected, controller, entryErrorHandlers }
 }
 
 describe('Collab in the default shell', () => {
@@ -177,5 +179,19 @@ describe('Collab in the default shell', () => {
     expect(openCollab).not.toHaveBeenCalled()
     await injectedFace.api.openCollab('WO-TEST-001')
     expect(openCollab).toHaveBeenCalledWith('WO-TEST-001')
+  })
+})
+
+describe('a crashed Collab contribution is reported, not silently degraded (NB-14, §65 run 2)', () => {
+  it('subscribes to slot entry crashes', () => {
+    /*
+     * Acceptance run 2 found the Collaborate seat empty in the running product
+     * and could not tell "nobody registered" from "the entry crashed and was
+     * retired" — the patched panel renders the stock panel either way. A
+     * degrade nobody reports costs a whole diagnostic round.
+     */
+    const { entryErrorHandlers } = harness()
+    expect(entryErrorHandlers).toHaveLength(1)
+    expect(entryErrorHandlers[0]).toBeTypeOf('function')
   })
 })

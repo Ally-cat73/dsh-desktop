@@ -97,8 +97,19 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const AERA_DETAILS_TAB_EVENT = 'aera:details-tab'
 
 export function selectCollaborateTab(): void {
-  if (typeof window === 'undefined') return
-  window.dispatchEvent(new CustomEvent(AERA_DETAILS_TAB_EVENT, { detail: { tab: 'collab' } }))
+  /*
+   * Never allowed to throw. This runs inside the affordance's click handler,
+   * immediately after the column has been opened, and §65 twice showed what a
+   * throw in that handler costs: the reader presses a button and nothing
+   * happens, with no error anywhere they can see. Selecting a tab is the least
+   * important thing this path does; it must never cost the column.
+   */
+  try {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
+    window.dispatchEvent(new CustomEvent(AERA_DETAILS_TAB_EVENT, { detail: { tab: 'collab' } }))
+  } catch {
+    // The column is open; the reader can press the Collaborate tab themselves.
+  }
 }
 
 export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
@@ -107,33 +118,70 @@ export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
     closeDetails?: () => void
     getSnapshot?: () => { details?: number }
   }
+
   /*
-   * Defensive on top of the `layout` declaration in the plugin's inject list.
+   * TWO ways of holding the layout service, because §65 acceptance proved that
+   * one of them is not enough — twice, on two different builds.
    *
-   * cordis THROWS for an undeclared service — `cannot get property "layout"
-   * without inject` — and §65 acceptance caught exactly that escaping the click
-   * handler, leaving the affordance inert with no error anywhere a reader could
-   * see. A button that silently does nothing is the worst failure an affordance
-   * can have, so if the service is ever unavailable again the reader gets the
-   * cold-start picker instead of nothing at all.
+   * Run 1: reading `ctx.layout` at press time threw `cannot get property
+   * "layout" without inject`. Fixed by declaring the service.
+   *
+   * Run 2: the read then succeeded and the CALL threw, inside ui-layout:
+   *   TypeError: Cannot read properties of undefined (reading 'anonymous')
+   *       at openDetails (…/dsh-client-ui-layout/client.js:331)
+   * A service method invoked through a proxy resolved long after its fiber was
+   * active does not carry the scope the bound store action needs.
+   *
+   * The shape that demonstrably works in this product is ui-conversation's:
+   * `const layout = ctx.layout` captured inside `apply()`, called later from a
+   * click handler — that is how the details panel's own close button works
+   * (`dsh-client-ui-conversation/lib/client.js`, `apply()` → `inject: () => ({
+   * closeDetails: () => { layout.closeDetails() } })`). So this captures the
+   * service eagerly, the way the shell itself does.
+   *
+   * The live read is still tried FIRST, because in advanced and extended mode
+   * this product provides its own `DesktopLayoutState` AFTER these entry points
+   * are registered, and the eager capture there would be the superseded
+   * upstream controller. Whichever call succeeds wins; if both fail the reader
+   * gets the cold-start picker rather than a button that does nothing.
    */
-  const face = (): LayoutFace | undefined => {
+  const read = (): LayoutFace | undefined => {
     try {
       return (ctx as { layout?: unknown }).layout as LayoutFace | undefined
     } catch {
       return undefined
     }
   }
+  const captured = read()
+
+  const invoke = (method: 'openDetails' | 'closeDetails'): boolean => {
+    for (const candidate of [read(), captured]) {
+      const fn = candidate?.[method]
+      if (fn === undefined) continue
+      try {
+        fn.call(candidate)
+        return true
+      } catch {
+        // Try the other holder before giving up on the column entirely.
+      }
+    }
+    return false
+  }
 
   return Object.freeze({
     isOpen: () => {
-      const snapshot = face()?.getSnapshot?.()
-      return snapshot !== undefined && snapshot.details !== 0
+      for (const candidate of [read(), captured]) {
+        try {
+          const snapshot = candidate?.getSnapshot?.()
+          if (snapshot !== undefined) return snapshot.details !== 0
+        } catch {
+          // Same fallback discipline as `invoke`.
+        }
+      }
+      return false
     },
     open: () => {
-      const open = face()?.openDetails
-      if (open === undefined) return false
-      open()
+      if (!invoke('openDetails')) return false
       /*
        * Round-1 review BL-3: opening the column landed the reader on tool
        * inspection and asked them to find the second tab. The patched panel
@@ -143,7 +191,7 @@ export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
       selectCollaborateTab()
       return true
     },
-    close: () => { face()?.closeDetails?.() },
+    close: () => { invoke('closeDetails') },
   })
 }
 
@@ -153,6 +201,37 @@ export function applyAeraCollabEntryPoints(
   controller: AeraCollabEntryController = createAeraCollabEntryController(),
 ): void {
   controller.attachColumn(shellDetailsColumn(ctx))
+
+  /*
+   * Make a crashed contribution audible (round-1 review NB-14, and §65 run 2).
+   *
+   * A slot entry that throws during render is retired from its cell by the
+   * renderer, and the patched details panel then reads the seat as simply
+   * unoccupied and renders the stock panel alone — no tab strip, no error, no
+   * difference from "nobody registered". Acceptance run 2 found the Collaborate
+   * seat empty in the product and could not tell those two states apart from
+   * outside, which is the cost of a degrade nobody reports.
+   *
+   * This reports it. It changes no behaviour: the degrade is still the degrade,
+   * and the reader still gets tool inspection rather than a broken column.
+   */
+  ctx.effect(
+    () => {
+      // Guarded for the same reason everything on this path now is: a member
+      // that is missing must cost a diagnostic, never the registration itself.
+      if (typeof ctx.slots.onEntryError !== 'function') return () => {}
+      return ctx.slots.onEntryError((key, entry, error, info) => {
+        if (!key.startsWith('conversation.details.collab')
+          && entry.registrant !== 'dsh-plugin-desktop') return
+        console.error(
+          `[aera-collab] slot entry crashed in ${key}`,
+          { abdicated: info.abdicated, registrant: entry.registrant },
+          error,
+        )
+      })
+    },
+    'dsh-plugin-desktop: Aera Collab slot entry crash reporting',
+  )
 
   ctx.effect(
     () => ctx.locale.register(AERA_COLLAB_LOCALE_NAMESPACE, { zh, en }),

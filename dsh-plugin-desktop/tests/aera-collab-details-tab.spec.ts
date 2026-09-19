@@ -421,6 +421,42 @@ describe('§65 — the affordance must survive the real service contract', () =>
     expect(inject).toContain('locale')
   })
 
+  it('a service whose method throws is retried on the eagerly captured holder (§65 run 2)', () => {
+    /*
+     * Acceptance run 2: the property read succeeded and the CALL threw inside
+     * ui-layout — a service method invoked through a proxy resolved long after
+     * its fiber was active does not carry the scope the bound store action
+     * needs. ui-conversation's own close button works because it captures the
+     * service in `apply()`. This asserts the fallback: the live read is tried
+     * first, and when its call throws the captured holder is used.
+     */
+    const calls: string[] = []
+    let live = 0
+    const ctx = {
+      get layout() {
+        live += 1
+        // The first read is the eager capture inside shellDetailsColumn; it
+        // returns a working holder. Every later read returns one whose methods
+        // throw, exactly as the product did.
+        return live === 1
+          ? { openDetails: () => { calls.push('captured') }, closeDetails: () => { calls.push('captured-close') } }
+          : { openDetails: () => { throw new TypeError("Cannot read properties of undefined (reading 'anonymous')") } }
+      },
+    }
+    const column = shellDetailsColumn(ctx as never)
+    expect(column.open()).toBe(true)
+    expect(calls).toEqual(['captured'])
+  })
+
+  it('when neither holder can open the column, the reader still gets the picker', () => {
+    const dead = { get layout() { return { openDetails: () => { throw new Error('nope') } } } }
+    const column = shellDetailsColumn(dead as never)
+    expect(column.open()).toBe(false)
+    const controller = createAeraCollabEntryController()
+    controller.attachColumn(column)
+    expect(controller.reveal()).toBe('PICKER')
+  })
+
   it('a shell whose layout service throws falls back to the picker, never to nothing', () => {
     // The defence in depth for the same class: if the service is ever
     // unavailable again, the reader gets the cold-start picker rather than a
