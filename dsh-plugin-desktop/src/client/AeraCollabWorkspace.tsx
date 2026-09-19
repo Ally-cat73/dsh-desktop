@@ -21,13 +21,26 @@ type Translate = (key: AeraCollabLocaleKey) => string
 
 export type CollabMode = 'COLLABORATE' | 'RECORD'
 
-export function AeraCollabWorkspace({ api, workOrderId, t, initialMode = 'COLLABORATE' }: {
+export function AeraCollabWorkspace({ api, workOrderId, t, initialMode = 'COLLABORATE', mode: controlledMode, onModeChange }: {
   readonly api: Pick<AeraCollabApi, 'view' | 'coordinate' | 'packetState'>
   readonly workOrderId: string
   readonly t: Translate
   readonly initialMode?: CollabMode
+  /**
+   * Which projection to show, when the container wants to own it.
+   *
+   * The drawer does, so that closing on Record and reopening returns to
+   * Record. Held uncontrolled otherwise, which is what the tests use.
+   */
+  readonly mode?: CollabMode
+  readonly onModeChange?: (next: CollabMode) => void
 }) {
-  const [mode, setMode] = useState<CollabMode>(initialMode)
+  const [uncontrolledMode, setUncontrolledMode] = useState<CollabMode>(initialMode)
+  const mode = controlledMode ?? uncontrolledMode
+  const setMode = (next: CollabMode): void => {
+    setUncontrolledMode(next)
+    onModeChange?.(next)
+  }
   const [surface, setSurface] = useState<CollabSurfaceView>()
   const [unavailable, setUnavailable] = useState<string>()
   const [loading, setLoading] = useState(true)
@@ -97,50 +110,27 @@ export function AeraCollabWorkspace({ api, workOrderId, t, initialMode = 'COLLAB
     <>
       {mode === 'COLLABORATE'
         ? (
-            <>
-              {/*
-                * §11 needs a comparison in hand before it can share one. This
-                * is the only place that asks for one, and only on request.
-                */}
-              {(() => {
-                /*
-                 * Which line can actually be compared.
-                 *
-                 * This used to be `lines.length > 0` and `setCompareLineIndex(0)`,
-                 * which is wrong twice. Compare is only ever available for the
-                 * line OBSERVED from this checkout — the service refuses a
-                 * durable Working Line outright, because it cannot observe that
-                 * line's checkout — so index 0 could ask for a comparison that
-                 * can never be computed. And gating on `lines.length` meant that
-                 * on a Work Order with no observable checkout the reader was
-                 * shown nothing at all: no button, no reason. The composer now
-                 * always carries the share affordance and says why it is
-                 * unavailable (§21, §30); this offers the preparation step only
-                 * where there is genuinely something to prepare.
-                 */
-                if (surface.compare !== undefined) return null
-                const observed = surface.lines.findIndex(
-                  line => line.provenance === 'OBSERVED' && line.compareAvailable,
-                )
-                if (observed < 0) return null
-                return (
-                  <button
-                    type="button"
-                    className="aera-collab-prepare-state"
-                    onClick={() => { setCompareLineIndex(observed) }}
-                  >
-                    {t('prepareCurrentState')}
-                  </button>
-                )
-              })()}
-              <AeraCollabRail
+            <AeraCollabRail
                 surface={surface}
                 api={api}
                 t={t}
                 onChanged={() => { void read(compareLineIndex) }}
-                {...(compareLineIndex === undefined ? {} : { compareLineIndex })}
-              />
-            </>
+                capturing={loading && compareLineIndex !== undefined}
+                onCaptureState={() => {
+                  /*
+                   * §22 — capturing is part of the share action now, not a
+                   * separate button the reader has to know to press first.
+                   * The index is the OBSERVED, comparable line; a durable
+                   * Working Line cannot be compared from here, and index 0 is
+                   * not reliably the right row.
+                   */
+                  const index = surface.lines.findIndex(
+                    line => line.provenance === 'OBSERVED' && line.compareAvailable,
+                  )
+                  if (index >= 0) setCompareLineIndex(index)
+                }}
+              {...(compareLineIndex === undefined ? {} : { compareLineIndex })}
+            />
           )
         : <AeraCollabRecord surface={surface} t={t} />}
     </>,

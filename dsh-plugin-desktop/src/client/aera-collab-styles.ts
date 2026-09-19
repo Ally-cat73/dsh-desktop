@@ -310,6 +310,12 @@ const CSS = `
   font-size: 12px;
   padding: 4px 12px;
 }
+.aera-rail-share-progress {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-secondary);
+}
 .aera-rail-share-why {
   margin: 4px 0 0;
   font-size: 11px;

@@ -190,6 +190,10 @@ export interface CollabCompareView {
   readonly directionSentence: string
   readonly headline: string
   readonly files: readonly CollabChangedFileRowView[]
+  /** §36 — the real file count when the rows were withheld at the source. */
+  readonly filesWithheldTotal?: number
+  /** §36 — why the rows are absent, with the aggregate counts still complete. */
+  readonly filesUnavailableReason?: string
   readonly unrepresentable: readonly string[]
   readonly structuralDeltaNote?: string
   readonly technical: readonly string[]
@@ -244,6 +248,14 @@ export interface CollabCodeView {
   /** Why a requested Compare was refused. Said, never silently dropped. */
   readonly compareUnavailableReason?: string
   readonly projectedAt: string
+  /** §30 — every displayed zero, mechanically classified against the store. */
+  readonly zeroClassifications?: readonly {
+    readonly category: string
+    readonly classification: 'TRUE_ZERO' | 'PROJECTION_DEFECT' | 'RECORDING_GAP'
+    readonly storeRecords: number
+    readonly gapEvidence?: readonly string[]
+    readonly sentence: string
+  }[]
 }
 
 /**
@@ -494,6 +506,21 @@ export function toCompareView(input: {
   readonly summary: CodeCompareSummaryV1
   readonly fromName: string
   readonly toName: string
+  /**
+   * How many per-file rows are worth putting on the wire (§36).
+   *
+   * The client has always capped what it RENDERS, but the service used to send
+   * the whole array regardless — a 2003-entry payload shipped so the surface
+   * could draw three numbers (§46 review NB-4). Above this budget the rows are
+   * withheld here, at the source, and the true total is sent instead so the
+   * reader is told the real number rather than the truncated one. The
+   * aggregate counts in `headline` are unaffected and stay complete, which is
+   * §36's actual requirement.
+   *
+   * Omitted means no budget — the existing behaviour, which the unit tests and
+   * the explicit-inspection path rely on.
+   */
+  readonly fileBudget?: number
 }): CollabCompareView {
   const { summary } = input
   const totals = summary.totals
@@ -516,7 +543,8 @@ export function toCompareView(input: {
     )
   }
 
-  const files: CollabChangedFileRowView[] = summary.files.map((file: CodeFileChangeV1) => {
+  const withheld = input.fileBudget !== undefined && fileCount > input.fileBudget
+  const files: CollabChangedFileRowView[] = (withheld ? [] : summary.files).map((file: CodeFileChangeV1) => {
     const kindWord = KIND_WORD[file.kind]
     const counts = file.linesAdded === undefined
       ? undefined
@@ -565,6 +593,14 @@ export function toCompareView(input: {
     directionSentence: codeCompareDirectionSentence(input.fromName, input.toName),
     headline: headlineParts.join(' · '),
     files,
+    ...(withheld
+      ? {
+          filesWithheldTotal: fileCount,
+          filesUnavailableReason:
+            `This comparison changed ${plural(fileCount, 'file')}. The counts above are complete; `
+            + 'the per-file list is not sent by default and is fetched only on explicit inspection.',
+        }
+      : {}),
     unrepresentable: summary.unrepresentable.map((entry: { humanSummary: string }) => entry.humanSummary),
     ...(structuralNote === undefined ? {} : { structuralDeltaNote: structuralNote }),
     technical,

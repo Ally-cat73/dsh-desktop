@@ -74,22 +74,55 @@ function clientSources(): { file: string, text: string }[] {
   return out
 }
 
+/** Strip comments — a member named in prose is not a read. */
+function codeOf(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+}
+
 /**
- * Collect `ctx.<identifier>` reads, ignoring comments — a member named only in
- * a prose explanation is not a read, and treating it as one would make the
- * check punish documentation.
+ * Collect service names reached from `ctx`, by all three routes.
+ *
+ * The first version matched only `ctx.<name>`. A mutation test in the §46
+ * review found the two ways round it, and both are ordinary TypeScript that a
+ * future author would write without meaning to evade anything:
+ *
+ *   const { layout } = ctx          // destructuring
+ *   const c = ctx; c.layout         // aliasing
+ *
+ * Neither was caught, so the guard closed only the direct-member class. It now
+ * follows all three. Aliases are resolved one hop — `const c = ctx` then
+ * `c.<name>` — which is the shape that actually occurs; deeper chains are not
+ * modelled, and that limit is stated rather than left to be discovered.
  */
 function ctxMembers(): Map<string, string[]> {
   const found = new Map<string, string[]>()
+  const note = (name: string, file: string): void => {
+    const sites = found.get(name) ?? []
+    if (!sites.includes(file)) sites.push(file)
+    found.set(name, sites)
+  }
   for (const { file, text } of clientSources()) {
-    const code = text
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1')
-    for (const match of code.matchAll(/\bctx\.([a-zA-Z_][a-zA-Z0-9_]*)/g)) {
-      const name = match[1]!
-      const sites = found.get(name) ?? []
-      if (!sites.includes(file)) sites.push(file)
-      found.set(name, sites)
+    const code = codeOf(text)
+
+    // 1. direct member reads: ctx.layout
+    for (const m of code.matchAll(/\bctx\.([a-zA-Z_][a-zA-Z0-9_]*)/g)) note(m[1]!, file)
+
+    // 2. destructuring: const { layout, slots: s } = ctx
+    for (const m of code.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*ctx\b/g)) {
+      for (const part of m[1]!.split(',')) {
+        const name = part.split(':')[0]!.trim().replace(/^\.\.\./, '')
+        if (name !== '') note(name, file)
+      }
+    }
+
+    // 3. one-hop aliases: const c = ctx  →  c.layout
+    for (const m of code.matchAll(/(?:const|let|var)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*ctx\b(?![.(])/g)) {
+      const alias = m[1]!
+      if (alias === 'ctx') continue
+      const re = new RegExp(`\\b${alias}\\.([a-zA-Z_][a-zA-Z0-9_]*)`, 'g')
+      for (const hit of code.matchAll(re)) note(hit[1]!, file)
     }
   }
   return found
@@ -112,6 +145,43 @@ describe('§44 static ctx service contract', () => {
       + 'invisibly (§65). Declare it in src/client/index.ts `inject`, or add it to '
       + 'ROOT_PROVIDED with the provider that makes it root-provided.',
     ).toEqual([])
+  })
+
+  it('follows destructuring and one-hop aliases, not just direct member reads', () => {
+    /*
+     * The §46 review mutation-tested the first version of this check and found
+     * both escapes. This asserts the collector itself on the two shapes, so the
+     * closure is exercised rather than assumed.
+     */
+    const collect = (src: string): string[] => {
+      const found: string[] = []
+      const code = codeOf(src)
+      for (const m of code.matchAll(/\bctx\.([a-zA-Z_][a-zA-Z0-9_]*)/g)) found.push(m[1]!)
+      for (const m of code.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*ctx\b/g)) {
+        for (const part of m[1]!.split(',')) {
+          const name = part.split(':')[0]!.trim().replace(/^\.\.\./, '')
+          if (name !== '') found.push(name)
+        }
+      }
+      for (const m of code.matchAll(/(?:const|let|var)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*ctx\b(?![.(])/g)) {
+        const alias = m[1]!
+        if (alias === 'ctx') continue
+        for (const hit of code.matchAll(new RegExp(`\\b${alias}\\.([a-zA-Z_][a-zA-Z0-9_]*)`, 'g'))) {
+          found.push(hit[1]!)
+        }
+      }
+      return found
+    }
+    expect(collect('const { layout } = ctx')).toContain('layout')
+    expect(collect('const { slots: s, layout } = ctx')).toContain('layout')
+    expect(collect('const c = ctx;\nc.layout')).toContain('layout')
+    // The cast form is how this is actually written in TypeScript.
+    expect(collect('const c = ctx as Face\nc.layout')).toContain('layout')
+    // An assignment OF a member is not an alias of ctx itself.
+    expect(collect('const c = ctx.slots\nc.register')).not.toContain('register')
+    expect(collect('ctx.layout')).toContain('layout')
+    // Prose must not count as a read.
+    expect(collect('// we removed ctx.layout on purpose')).not.toContain('layout')
   })
 
   it('detects an undeclared service — the check can actually fail', () => {

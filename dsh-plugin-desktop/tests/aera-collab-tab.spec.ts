@@ -63,7 +63,6 @@ function harness(api: Partial<AeraCollabApi> = {}) {
     })),
     resolve: vi.fn(async () => ({ source: 'NONE' as const })),
     view: vi.fn(async () => ({ unavailableReason: 'no store in this harness' })),
-    openCollab: vi.fn(async () => {}),
     coordinate: vi.fn(async () => ({})),
     packetState: vi.fn(async () => ({ verdict: 'UNRESOLVABLE', humanSummary: 'no store in this harness' })),
     ...api,
@@ -189,28 +188,29 @@ describe('Collab in the default shell', () => {
   })
 
   it('opens no window from the cold-start path', () => {
-    const openCollab = vi.fn(async () => {})
-    const { registrations } = harness({ openCollab })
+    const { registrations } = harness()
     const action = registrations.find(entry => entry.options.name === 'sidebar.footer.action')
     const face = action?.options.inject?.() as { controller: { open: () => void } }
 
     face.controller.open()
 
-    // Opening the picker joins nothing and launches nothing.
-    expect(openCollab).not.toHaveBeenCalled()
+    // Opening the drawer joins nothing and launches nothing.
+    expect(face.controller).toBeDefined()
   })
 
-  it('opens the Collab view when the reader asks, and not before', async () => {
-    const openCollab = vi.fn(async () => {})
-    const { registrations } = harness({ openCollab })
+  it('carries no route to the legacy native Collab window (§18, §46 review NB-6)', () => {
+    /*
+     * `openCollab()` POSTed `{ view: 'COLLAB' }` to the work-context window —
+     * the legacy native surface the §14 decision replaced. It had no caller,
+     * but it left the rejected surface one edit away from being reachable
+     * again. It is deleted, and this asserts the absence.
+     */
+    const { registrations } = harness()
     const seat = registrations.find(entry => entry.options.name === 'shell.overlay')
-    const injectedFace = seat?.options.inject?.() as { api: AeraCollabApi }
+    const injectedFace = seat?.options.inject?.() as { api: Record<string, unknown> }
 
-    // Rendering the drawer joins nothing: joining writes a session record, so
-    // it must be an explicit act, never a side effect of a surface appearing.
-    expect(openCollab).not.toHaveBeenCalled()
-    await injectedFace.api.openCollab('WO-TEST-001')
-    expect(openCollab).toHaveBeenCalledWith('WO-TEST-001')
+    expect(injectedFace.api).toBeDefined()
+    expect('openCollab' in injectedFace.api).toBe(false)
   })
 })
 

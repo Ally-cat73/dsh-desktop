@@ -111,7 +111,20 @@ describe('the Collab surface read path', () => {
     expect(compare?.to.name).toBeTruthy()
     expect(compare?.directionSentence).toBeTruthy()
     expect(compare?.headline).toBeTruthy()
-    expect(compare?.files.length ?? 0).toBeGreaterThan(0)
+    /*
+     * §36 — the service now withholds the per-file rows above its wire budget
+     * rather than shipping thousands of them so the surface can draw three
+     * numbers. So a comparison presents EITHER rows OR a reason, never
+     * silently neither, and the aggregate counts are complete in both cases.
+     */
+    const withheld = compare?.filesUnavailableReason
+    if (withheld === undefined) {
+      expect(compare?.files.length ?? 0).toBeGreaterThan(0)
+    } else {
+      expect(compare?.files.length ?? 0).toBe(0)
+      expect(withheld).toMatch(/counts above are complete/)
+      expect(compare?.headline).toMatch(/\d+ files?/)
+    }
     for (const file of compare?.files.slice(0, 20) ?? []) {
       // The kind is a WORD, never colour alone, and the accessible name
       // repeats every fact the eye is given.

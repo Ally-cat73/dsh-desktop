@@ -251,6 +251,30 @@ export function AeraCollabRecord({ surface, t }: {
             </section>
           )}
 
+      {/*
+        * §30 — every displayed zero, mechanically classified against the store.
+        *
+        * Under Technical details, collapsed, because it answers an auditor's
+        * question rather than the reader's: the reader already has the plain
+        * sentence beside each empty category. What this adds is the mechanism
+        * — whether a zero is TRUE_ZERO, a PROJECTION_DEFECT or a RECORDING_GAP
+        * — computed from the store instead of asserted in prose, so a category
+        * that silently stops projecting can no longer keep claiming nothing
+        * was ever recorded.
+        */}
+      {(surface.zeroClassifications ?? []).length === 0
+        ? null
+        : (
+            <Technical
+              label={t('zeroClassification')}
+              lines={(surface.zeroClassifications ?? []).map(
+                row => `${row.category}: ${row.classification} — ${row.sentence}`
+                  + (row.storeRecords > 0 ? ` [store records: ${String(row.storeRecords)}]` : '')
+                  + (row.gapEvidence.length > 0 ? ` [events: ${row.gapEvidence.join(', ')}]` : ''),
+              )}
+            />
+          )}
+
       <p className="aera-record-foot">
         {`${t('projectedAt')} `}<When value={surface.projectedAt} />
       </p>

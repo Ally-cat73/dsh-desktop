@@ -62,22 +62,16 @@ describe('Aera Collab renderer API', () => {
     expect((fetcher.mock.calls[0] as unknown as [string])[0]).toBe(aeraCollabPaths.directory)
   })
 
-  it('opens Collab with an explicit POST, because joining writes a session', async () => {
-    const fetcher = vi.fn(async () => jsonResponse({ ok: true }))
-    await createAeraCollabApi(fetcher as never).openCollab('WO-TEST-001')
+  it('exposes no route to the legacy native Collab window (§18, §46 review NB-6)', () => {
+    /*
+     * `openCollab()` POSTed `{ view: 'COLLAB' }` to the work-context window —
+     * the legacy surface the §14 decision replaced. Callerless, but one edit
+     * away from reachable. Deleted; this asserts the absence rather than just
+     * dropping the old test.
+     */
+    const api = createAeraCollabApi((async () => jsonResponse({ ok: true })) as never)
 
-    const [path, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit]
-    expect(path).toBe(aeraCollabPaths.open)
-    expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toEqual({ view: 'COLLAB', workOrderId: 'WO-TEST-001' })
-  })
-
-  it('opens the picker when no Work Order is named', async () => {
-    const fetcher = vi.fn(async () => jsonResponse({ ok: true }))
-    await createAeraCollabApi(fetcher as never).openCollab()
-
-    const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit]
-    expect(JSON.parse(String(init.body))).toEqual({ view: 'COLLAB' })
+    expect('openCollab' in (api as unknown as Record<string, unknown>)).toBe(false)
   })
 
   it('refuses a directory response it cannot vouch for', () => {

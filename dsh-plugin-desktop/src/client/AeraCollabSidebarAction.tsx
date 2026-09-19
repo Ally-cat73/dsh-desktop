@@ -9,9 +9,10 @@
  * the one that must not ask anyone to type a WorkOrderId.
  *
  * It used to open the native window on an empty id field. It now asks the
- * controller to reveal Collab by the best route available: the details column
- * on its Collaborate tab where the shell has one, and the shell-level picker
- * on a cold start, where there is no Session and therefore no column.
+ * controller to open the Collab drawer, which is hosted on `shell.overlay` —
+ * itself `scope: 'root'`, so the drawer exists with no Session just as this
+ * button does. `reveal()` opens and never closes; the drawer carries its own
+ * Close.
  */
 
 import { useSyncExternalStore } from 'react'

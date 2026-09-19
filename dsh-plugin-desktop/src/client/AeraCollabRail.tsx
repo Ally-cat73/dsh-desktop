@@ -235,23 +235,49 @@ export function shareCurrentStateRequest(input: {
   }
 }
 
-function Composer({ workOrderId, threadId, canShareState, shareUnavailableReason, compareLineIndex, api, t, onDone }: {
+function Composer({
+  workOrderId, threadId, canShareState, shareUnavailableReason,
+  compareReady, capturing, onCaptureState, compareLineIndex, api, t, onDone,
+}: {
   readonly workOrderId: string
   readonly threadId: string
+  /**
+   * Whether a share is possible at all — a comparison is already in hand, or
+   * there is an observable checkout from which one can be captured.
+   */
   readonly canShareState: boolean
   /**
-   * Why current state cannot be shared right now, when it cannot.
+   * Why current state cannot be shared, when it cannot — and ONLY ever the
+   * projection's own words.
    *
-   * §21 requires a Share current state affordance, and §30 forbids a displayed
-   * falsehood. This control used to be rendered ONLY when a comparison was
-   * already in hand, so on the real fixture — where this Work Order binds no
-   * repository and there is therefore no observable checkout — the reader saw
-   * no share control at all and no reason for its absence. A silently missing
-   * affordance is indistinguishable from an unimplemented one, which is the
-   * same class of untruth as a false zero. The control is now always present
-   * and says, in the reader's words, why it is unavailable.
+   * §21 requires a Share current state affordance and §30 forbids a displayed
+   * falsehood. Both halves of that have now been got wrong once each, in
+   * opposite directions, and the history is worth keeping:
+   *
+   *   - First the control rendered only when a comparison was already in hand,
+   *     so on a Work Order with nothing to compare the reader saw no control
+   *     and no reason. A silently missing affordance is indistinguishable from
+   *     an unimplemented one.
+   *   - The fix for that added a locale fallback for when the projection
+   *     supplied no reason. On a repository-bound Work Order whose comparison
+   *     simply had not been computed yet, that fallback asserted — as a
+   *     specific, checkable fact — that the Work Order had no observable
+   *     checkout. It was false, and the control that disproved it sat directly
+   *     above the sentence (§46 review BL-1).
+   *
+   * There is no fallback any more. This paragraph renders only when the
+   * projection actually produced a reason, so the surface cannot invent a
+   * cause. The not-yet-computed state that produced the false sentence no
+   * longer exists as a disabled state at all: capturing is now part of the
+   * share action rather than a precondition for it.
    */
   readonly shareUnavailableReason?: string
+  /** A comparison is already in hand, so sharing needs no capture first. */
+  readonly compareReady: boolean
+  /** A capture is in flight right now. */
+  readonly capturing: boolean
+  /** Ask the workspace to capture current state from the observable checkout. */
+  readonly onCaptureState: () => void
   readonly compareLineIndex?: number
   readonly api: Pick<AeraCollabApi, 'coordinate'>
   readonly t: Translate
@@ -261,11 +287,32 @@ function Composer({ workOrderId, threadId, canShareState, shareUnavailableReason
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   /*
-   * §11/§55 — sharing state is an act, so it gets a moment. The first press
-   * says what is about to be shared; the second performs it; Cancel returns to
-   * the composer having written nothing at all.
+   * §22 — SHARING IS ONE ACTION.
+   *
+   * It used to be three: press Prepare, wait ~25 s with no indication that
+   * anything was happening, press Share, then confirm. §22 asks for one
+   * low-friction action and the separate Prepare gate is not something the
+   * order contemplates, so it is gone. Pressing Share captures the state if
+   * that has not happened yet, tells the reader it is doing so and roughly how
+   * long that takes, and then shows the confirmation.
+   *
+   * The confirmation survives, deliberately: sharing writes a durable
+   * institutional packet, so the reader gets one bounded moment to say what it
+   * is for or to back out. Cancel writes nothing at all (§49N).
    */
   const [confirming, setConfirming] = useState(false)
+  const [awaitingCapture, setAwaitingCapture] = useState(false)
+
+  /*
+   * A capture was asked for and has landed — go straight to the confirmation,
+   * so the reader's single press carries all the way through rather than
+   * leaving them to press Share a second time.
+   */
+  useEffect(() => {
+    if (!awaitingCapture || capturing || !compareReady) return
+    setAwaitingCapture(false)
+    setConfirming(true)
+  }, [awaitingCapture, capturing, compareReady])
 
   const run = useCallback((request: Record<string, unknown>) => {
     setBusy(true)
@@ -312,20 +359,39 @@ function Composer({ workOrderId, threadId, canShareState, shareUnavailableReason
         <button
           type="button"
           className="aera-rail-share"
-          disabled={busy || !canShareState}
-          {...(canShareState ? {} : { 'aria-describedby': `${threadId}-share-why` })}
-          onClick={() => { setConfirming(true) }}
+          disabled={busy || !canShareState || awaitingCapture}
+          {...(canShareState || shareUnavailableReason === undefined
+            ? {}
+            : { 'aria-describedby': `${threadId}-share-why` })}
+          onClick={() => {
+            if (compareReady) { setConfirming(true); return }
+            setAwaitingCapture(true)
+            onCaptureState()
+          }}
         >
           {text === '' ? t('shareCurrentState') : t('sendWithCurrentState')}
         </button>
       </div>
-      {canShareState
-        ? null
-        : (
-            <p className="aera-rail-share-why" id={`${threadId}-share-why`}>
-              {shareUnavailableReason ?? t('shareUnavailable')}
+      {/*
+        * Capture is slow — reading a real comparison out of a real checkout
+        * took about half a minute on the fixture — so it says so rather than
+        * looking hung. The cost is stated honestly instead of being hidden
+        * behind a spinner that implies "any moment now".
+        */}
+      {awaitingCapture
+        ? (
+            <p className="aera-rail-share-progress" role="status" aria-live="polite">
+              {t('capturingCurrentState')}
             </p>
-          )}
+          )
+        : null}
+      {!canShareState && shareUnavailableReason !== undefined
+        ? (
+            <p className="aera-rail-share-why" id={`${threadId}-share-why`}>
+              {shareUnavailableReason}
+            </p>
+          )
+        : null}
       {confirming
         ? (
             <div className="aera-rail-confirm" role="group" aria-label={t('shareCurrentState')}>
@@ -355,13 +421,33 @@ function Composer({ workOrderId, threadId, canShareState, shareUnavailableReason
 }
 
 /** §8 — the rail itself. */
-export function AeraCollabRail({ surface, api, t, onChanged, compareLineIndex }: {
+export function AeraCollabRail({
+  surface, api, t, onChanged, compareLineIndex, capturing = false, onCaptureState = () => {},
+}: {
   readonly surface: CollabSurfaceView
   readonly api: Pick<AeraCollabApi, 'coordinate' | 'packetState'>
   readonly t: Translate
   readonly onChanged: () => void
   readonly compareLineIndex?: number
+  /** A comparison capture is in flight. */
+  readonly capturing?: boolean
+  /** Ask the workspace to capture current state from the observable checkout. */
+  readonly onCaptureState?: () => void
 }) {
+  /*
+   * The one line a comparison can actually be captured from.
+   *
+   * Compare is only ever available for the line OBSERVED from this checkout —
+   * the service refuses a durable Working Line outright, because it cannot
+   * observe that line's checkout. So the presence of this index, not
+   * `lines.length`, is what decides whether sharing is possible at all.
+   */
+  const capturableLineIndex = useMemo(() => {
+    const index = surface.lines.findIndex(
+      line => line.provenance === 'OBSERVED' && line.compareAvailable,
+    )
+    return index < 0 ? undefined : index
+  }, [surface.lines])
   const threads = useMemo(
     () => surface.threads.filter(thread => !thread.archived),
     [surface.threads],
@@ -477,7 +563,10 @@ export function AeraCollabRail({ surface, api, t, onChanged, compareLineIndex }:
                     <Composer
                       workOrderId={surface.workOrderId}
                       threadId={threadId}
-                      canShareState={surface.compare !== undefined}
+                      canShareState={surface.compare !== undefined || capturableLineIndex !== undefined}
+                      compareReady={surface.compare !== undefined}
+                      capturing={capturing}
+                      onCaptureState={onCaptureState}
                       {...(surface.compare !== undefined
                         ? {}
                         : {

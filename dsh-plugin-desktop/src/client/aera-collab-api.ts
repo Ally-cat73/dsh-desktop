@@ -129,6 +129,20 @@ export interface CollabCompare {
   readonly computedAt: string
 }
 
+/**
+ * §30 — one displayed zero, classified against the store.
+ *
+ * TRUE_ZERO / PROJECTION_DEFECT / RECORDING_GAP. Rendered under Technical
+ * details: the reader wants the sentence, an auditor wants the classification.
+ */
+export interface CollabZeroClassification {
+  readonly category: string
+  readonly classification: 'TRUE_ZERO' | 'PROJECTION_DEFECT' | 'RECORDING_GAP'
+  readonly storeRecords: number
+  readonly gapEvidence: readonly string[]
+  readonly sentence: string
+}
+
 /** One rail section and its count, where a count has actually been computed. */
 export interface CollabRailTab {
   readonly section: string
@@ -315,6 +329,8 @@ export interface CollabSurfaceView {
   readonly participants: readonly CollabParticipantRow[]
   readonly lines: readonly CollabLineRow[]
   readonly linesEmptyReason?: string
+  /** §30 — every displayed zero, mechanically classified against the store. */
+  readonly zeroClassifications: readonly CollabZeroClassification[]
   readonly rail: readonly CollabRailTab[]
   readonly activity: readonly CollabActivityRow[]
   readonly checkpoints: readonly CollabCheckpointRow[]
@@ -362,7 +378,6 @@ export interface AeraCollabApi {
   resolve(): Promise<CollabResolutionView>
   /** Project one Work Order's surface WITHOUT joining it. */
   view(input: { workOrderId?: string, compareLineIndex?: number }): Promise<CollabSurfaceResult>
-  openCollab(workOrderId?: string): Promise<void>
   /** §35 coordination writes. Each one changes durable records; none is a read. */
   coordinate(request: Record<string, unknown>): Promise<unknown>
   /** §20 "view current state". A read: it resolves, it never records. */
@@ -527,9 +542,17 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
          * malformed one. Throwing here aborted the whole surface parse and
          * blanked the panel; it is now reported per-section instead.
          */
-        const oversizedFileList = Array.isArray(raw.files) && raw.files.length > MAX_LIST
-          ? `This comparison changed ${String(raw.files.length)} files, more than this surface lists (${String(MAX_LIST)}). The counts above are complete; the per-file list is not shown.`
-          : undefined
+        /*
+         * The service may have withheld the rows itself (§36 wire budget), in
+         * which case it sends the true total and its own reason — use those
+         * rather than inferring from a list that was never sent.
+         */
+        const serviceWithheld = optionalText(raw.filesUnavailableReason, 'reason')
+        const oversizedFileList = serviceWithheld ?? (
+          Array.isArray(raw.files) && raw.files.length > MAX_LIST
+            ? `This comparison changed ${String(raw.files.length)} files, more than this surface lists (${String(MAX_LIST)}). The counts above are complete; the per-file list is not shown.`
+            : undefined
+        )
         const renderableFiles = oversizedFileList === undefined
           ? list(raw.files, 'changed files')
           : []
@@ -632,6 +655,29 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
       })
     })),
     ...(linesEmptyReason === undefined ? {} : { linesEmptyReason }),
+    /*
+     * §30. Absent is tolerated so an older service does not blank the surface,
+     * but a malformed entry is rejected: a classification the reader cannot
+     * trust is worse than none.
+     */
+    zeroClassifications: Object.freeze(
+      list(value.zeroClassifications ?? [], 'zero classifications').map((row): CollabZeroClassification => {
+        if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid zero classification')
+        const classification = text(row.classification, 'classification')
+        if (classification !== 'TRUE_ZERO' && classification !== 'PROJECTION_DEFECT' && classification !== 'RECORDING_GAP') {
+          throw new Error('dsh-plugin-desktop: unknown zero classification')
+        }
+        return Object.freeze({
+          category: text(row.category, 'category'),
+          classification,
+          storeRecords: typeof row.storeRecords === 'number' ? row.storeRecords : 0,
+          gapEvidence: Object.freeze(
+            (Array.isArray(row.gapEvidence) ? row.gapEvidence : []).map(entry => String(entry)),
+          ),
+          sentence: text(row.sentence, 'sentence'),
+        })
+      }),
+    ),
     rail: Object.freeze(list(value.rail ?? [], 'rail').map((tab): CollabRailTab => {
       if (!isObject(tab)) throw new Error('dsh-plugin-desktop: invalid rail tab')
       const reason = optionalText(tab.countUnavailableReason, 'reason')
@@ -926,19 +972,6 @@ export function createAeraCollabApi(
         headers: { 'Accept': 'application/json' },
       })
       return parseCollabSurface(await readResponse(response))
-    },
-    async openCollab(workOrderId?: string) {
-      const response = await fetcher(WORK_CONTEXT_OPEN_PATH, {
-        method: 'POST',
-        credentials: 'same-origin',
-        redirect: 'error',
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ view: 'COLLAB', ...(workOrderId === undefined ? {} : { workOrderId }) }),
-      })
-      const body = await readResponse(response)
-      if (!isObject(body) || body.ok !== true) {
-        throw new Error('dsh-plugin-desktop: invalid Aera Collab open response')
-      }
     },
     async coordinate(request: Record<string, unknown>) {
       const response = await fetcher(COORDINATION_PATH, {

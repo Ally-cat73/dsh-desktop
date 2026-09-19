@@ -50,7 +50,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type { AeraCollabApi } from './aera-collab-api.ts'
 import type { AeraCollabEntryController } from './aera-collab-entry-controller.ts'
 import { AeraCollabPicker } from './AeraCollabPicker.tsx'
-import { AeraCollabWorkspace } from './AeraCollabWorkspace.tsx'
+import { AeraCollabWorkspace, type CollabMode } from './AeraCollabWorkspace.tsx'
 
 /** Registration-side capabilities for the shell-level Collab drawer. */
 export interface AeraCollabOverlayInjected {
@@ -83,6 +83,13 @@ export function AeraCollabOverlay({ api, controller, t }: AeraCollabOverlayProps
    * rather than merely tested.
    */
   const [chosen, setChosen] = useState<string>()
+  /*
+   * The Collaborate/Record choice lives here for the same reason the Work
+   * Order does: closing on Record and reopening used to drop the reader back
+   * on Collaborate (§46 review NB-7). Both are collaboration state, and §45
+   * asks that close/reopen not lose it.
+   */
+  const [mode, setMode] = useState<CollabMode>('COLLABORATE')
   const [width, setWidth] = useState(DEFAULT_WIDTH)
   const dragging = useRef(false)
 
@@ -171,7 +178,13 @@ export function AeraCollabOverlay({ api, controller, t }: AeraCollabOverlayProps
                 >
                   {t('changeWorkOrder')}
                 </button>
-                <AeraCollabWorkspace api={api} workOrderId={chosen} t={t} />
+                <AeraCollabWorkspace
+                  api={api}
+                  workOrderId={chosen}
+                  t={t}
+                  mode={mode}
+                  onModeChange={setMode}
+                />
               </>
             )}
       </div>

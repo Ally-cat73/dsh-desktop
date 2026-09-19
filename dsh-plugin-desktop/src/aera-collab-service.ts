@@ -29,6 +29,7 @@
  * context, never a silently created second store.
  */
 
+import { classifyDisplayedZeros } from './aera-collab-zero-classifier.ts'
 import { execFileSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, resolve, sep } from 'node:path'
@@ -259,6 +260,16 @@ export interface CollabAvailability {
 /**
  * Host-side service holding one joined WorkContext at a time.
  */
+/**
+ * §36 — how many per-file comparison rows the service puts on the wire.
+ *
+ * 200 matches the client's own render cap (`MAX_RENDERED_FILES`), so nothing
+ * that would have been drawn is lost; above it the rows are withheld at the
+ * source and the true total is sent in their place. Before this, a 2003-entry
+ * array was shipped so the surface could draw three numbers.
+ */
+const COMPARE_FILE_WIRE_BUDGET = 200
+
 export class CollabWorkspaceService {
   private store: ParticipationStore | null = null
   private baseProjection: EngineeringWorkGraphProjectionV1 | null = null
@@ -1785,6 +1796,13 @@ export class CollabWorkspaceService {
     return {
       summary,
       compare: toCompareView({
+        /*
+         * §36 — the surface renders at most a couple of hundred rows and shows
+         * a bounded summary by default, so sending thousands is pure waste.
+         * The aggregate counts are unaffected; only the per-file rows are held
+         * back, and the reader is told the true total.
+         */
+        fileBudget: COMPARE_FILE_WIRE_BUDGET,
         summary,
         fromName: requested.label,
         toName: 'Accepted integration \u2014 Integration',
@@ -2008,6 +2026,20 @@ export class CollabWorkspaceService {
         : {}),
       threads,
       ...(threads.length === 0 ? { threadsEmptyReason: NO_COORDINATION_THREADS } : {}),
+      /*
+       * §30 — every displayed zero, mechanically classified against the store
+       * rather than asserted in prose. Rendered under Technical details.
+       */
+      zeroClassifications: classifyDisplayedZeros(store, workOrderId, {
+        workingLines: lines.length,
+        checkpoints: surface.checkpoints.length,
+        activity: surface.institutional.activityBlocks.length,
+        discussionsDecisions:
+          surface.institutional.discussions.length
+          + surface.institutional.threadDiscussions.length
+          + surface.institutional.decisionContexts.length,
+        evidence: context.evidence.length + surface.institutional.evidenceCards.length,
+      }),
       coordinationDeliveryNote: COORDINATION_DELIVERY_NOTE,
       ...(liveProviderState === undefined ? {} : { liveProviderState }),
       discussionNote: DISCUSSION_NOTE,
