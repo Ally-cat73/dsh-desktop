@@ -647,6 +647,31 @@ const CSS = `
 }
 .aera-collab-prepare-state { margin: 8px 12px; }
 
+/*
+ * Collab inside the details column (controller ruling, Option B).
+ *
+ * The column is roughly 300-520px, so the same content has to survive being
+ * narrow. Nothing is hidden and nothing is restyled into a different surface:
+ * the padding tightens, the header wraps, and the Compare table scrolls inside
+ * itself rather than pushing the column wider.
+ */
+.aera-collab-in-details { min-width: 0; height: 100%; overflow-y: auto; }
+.aera-collab-in-details .aera-collab-mode { padding: 6px 8px 0; }
+.aera-collab-in-details .aera-rail { padding: 8px 10px 14px; }
+.aera-collab-in-details .aera-collab-head { flex-wrap: wrap; gap: 6px; }
+.aera-collab-in-details table { display: block; overflow-x: auto; max-width: 100%; }
+
+/*
+ * The Details tab's unobtrusive indicator, from the patched panel. A dot, at
+ * the host's own muted accent: a tool selection that lands while Collaborate
+ * is showing should be noticeable on a glance back, not demand attention.
+ */
+[data-details-indicator] {
+  margin-left: 6px; font-size: 10px; line-height: 1;
+  color: var(--dsw-alias-text-l3, #888);
+}
+[data-details-pending] { font-weight: 600; }
+
 /* --- the rail ---------------------------------------------------------- */
 .aera-rail { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 16px; min-width: 0; }
 .aera-rail-head { display: flex; flex-direction: column; gap: 4px; }

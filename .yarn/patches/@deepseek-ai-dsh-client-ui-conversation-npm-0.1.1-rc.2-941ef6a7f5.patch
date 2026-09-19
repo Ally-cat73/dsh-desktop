@@ -1,5 +1,5 @@
 diff --git a/lib/client.js b/lib/client.js
-index c6be13412e7a47a3a999b4bd6cc11cb4aa4cf20e..8fcdd04ddae7e86b6a31386b24d9982487043e11 100644
+index c6be13412e7a47a3a999b4bd6cc11cb4aa4cf20e..b651bf5213bc384e681b01a5542a5dd7ce04cc6b 100644
 --- a/lib/client.js
 +++ b/lib/client.js
 @@ -4961,7 +4961,7 @@ window.__ModuleLoader__.load({
@@ -11,3 +11,103 @@ index c6be13412e7a47a3a999b4bd6cc11cb4aa4cf20e..8fcdd04ddae7e86b6a31386b24d99824
  					}),
  					summary !== null && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)("span", {
  						className: ContextInjectionRow_module_css_default.sep,
+@@ -7483,7 +7483,77 @@ window.__ModuleLoader__.load({
+ 			if (parts.length === 0 && block.error !== void 0) parts.push(`${block.error.name}: ${block.error.code}`);
+ 			return parts.join("\n");
+ 		}
+-		function DetailsPanel({ useSession, useSessions, sessionId, useStore, renderSlot, closeDetails, t }) {
++		/*
++ * Aera: the Details column hosts two tabs.
++ *
++ * The original panel is untouched below as DetailsToolPanel — same props, same
++ * chatStore read, same `conversation.details.tool` child — so tool inspection
++ * behaves exactly as it did. This wrapper only chooses which of two children
++ * is mounted, and adds one seat, `conversation.details.collab`, for a plugin
++ * that wants to live beside tool inspection rather than displace it.
++ *
++ * A tool selection arriving while the other tab is showing must not yank the
++ * reader out of what they are doing, so it sets an unobtrusive indicator on the
++ * Details tab instead of switching tabs. The indicator clears when they look.
++ */
++function DetailsPanel(props) {
++	const { useStore, renderSlot, t } = props;
++	const selection = useStore((s) => s.selection);
++	const callId = selection?.callId;
++	const [tab, setTab] = react.useState("details");
++	const [pending, setPending] = react.useState(false);
++	const seen = react.useRef(callId);
++	react.useEffect(() => {
++		if (seen.current === callId) return;
++		seen.current = callId;
++		if (callId !== void 0 && tab !== "details") setPending(true);
++	}, [callId, tab]);
++	const show = (next) => {
++		setTab(next);
++		if (next === "details") setPending(false);
++	};
++	/*
++	 * An unoccupied single seat renders as a Fragment whose only child is the
++	 * fallback, so `null` children means nothing registered — and in that case
++	 * this wrapper gets out of the way entirely and the stock panel renders
++	 * alone, with no stray tab strip in a build that has no Collab plugin.
++	 */
++	const collab = renderSlot("conversation.details.collab", {}, { fallback: null });
++	const occupied = collab !== null && collab !== void 0 && collab.props?.children !== null && collab.props?.children !== void 0;
++	if (!occupied) return (0, react_jsx_runtime.jsx)(DetailsToolPanel, { ...props });
++	return (0, react_jsx_runtime.jsxs)("div", {
++		className: DetailsPanel_module_css_default.root,
++		"data-details-tab": tab,
++		children: [(0, react_jsx_runtime.jsxs)("div", {
++			className: DetailsPanel_module_css_default.header,
++			role: "tablist",
++			children: [(0, react_jsx_runtime.jsxs)("button", {
++				type: "button",
++				role: "tab",
++				"aria-selected": tab === "details",
++				"data-details-pending": pending || void 0,
++				onClick: () => { show("details"); },
++				children: [t("details.title"), pending && (0, react_jsx_runtime.jsx)("span", {
++					"data-details-indicator": true,
++					"aria-label": t("details.title"),
++					children: "\u2022"
++				})]
++			}), (0, react_jsx_runtime.jsx)("button", {
++				type: "button",
++				role: "tab",
++				"aria-selected": tab === "collab",
++				onClick: () => { show("collab"); },
++				children: "Collaborate"
++			})]
++		}), tab === "details"
++			? (0, react_jsx_runtime.jsx)(DetailsToolPanel, { ...props })
++			: (0, react_jsx_runtime.jsx)("div", {
++				className: DetailsPanel_module_css_default.body,
++				children: collab
++			})]
++	});
++}
++function DetailsToolPanel({ useSession, useSessions, sessionId, useStore, renderSlot, closeDetails, t }) {
+ 			const selection = useStore((s) => s.selection);
+ 			const sessionCwd = useSessions((list) => list.byId[sessionId]?.cwd);
+ 			const callId = selection?.callId;
+@@ -10231,10 +10301,16 @@ window.__ModuleLoader__.load({
+ 			slots.register({
+ 				name: "details",
+ 				locale: NS,
+-				children: { "conversation.details.tool": {
+-					kind: "single",
+-					scope: "session"
+-				} },
++				children: {
++					"conversation.details.tool": {
++						kind: "single",
++						scope: "session"
++					},
++					"conversation.details.collab": {
++						kind: "single",
++						scope: "session"
++					}
++				},
+ 				store: chatStore,
+ 				inject: () => ({ closeDetails: () => {
+ 					layout.closeDetails();

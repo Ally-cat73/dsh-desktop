@@ -17,6 +17,24 @@
 /** Notified whenever the picker opens or closes. */
 type Listener = (open: boolean) => void
 
+/**
+ * How an affordance reveals Collab.
+ *
+ * `COLUMN` means the details column opened on the Collaborate tab — the normal
+ * path once a Session exists. `PICKER` means there was no column to open, so
+ * the shell-level picker was used instead; that is the cold start, and it is
+ * the reason the picker cannot simply be deleted now that a column exists.
+ */
+export type AeraCollabReveal = 'COLUMN' | 'PICKER'
+
+/** Opens the right-hand details column, where the shell has one. */
+export interface AeraCollabColumn {
+  /** @returns true when a column was actually opened. */
+  open(): boolean
+  close(): void
+  isOpen(): boolean
+}
+
 /** Shared open/closed state for the shell-level Collab picker. */
 export interface AeraCollabEntryController {
   isOpen(): boolean
@@ -24,11 +42,20 @@ export interface AeraCollabEntryController {
   close(): void
   toggle(): void
   subscribe(listener: Listener): () => void
+  /**
+   * Reveal Collab through the best affordance available, and say which was
+   * used. Toggling: a second press on an already-open column closes it, so the
+   * one button both opens and closes, as the ruling requires.
+   */
+  reveal(): AeraCollabReveal
+  /** Attach the shell's details column once the shell has one. */
+  attachColumn(column: AeraCollabColumn): void
 }
 
 /** Create one controller per client generation. */
 export function createAeraCollabEntryController(): AeraCollabEntryController {
   let open = false
+  let column: AeraCollabColumn | undefined
   const listeners = new Set<Listener>()
   const publish = (): void => {
     for (const listener of [...listeners]) listener(open)
@@ -48,6 +75,24 @@ export function createAeraCollabEntryController(): AeraCollabEntryController {
     toggle: () => {
       open = !open
       publish()
+    },
+    attachColumn: (next: AeraCollabColumn) => { column = next },
+    reveal: (): AeraCollabReveal => {
+      if (column !== undefined) {
+        if (column.isOpen()) {
+          column.close()
+          return 'COLUMN'
+        }
+        if (column.open()) return 'COLUMN'
+      }
+      /*
+       * No column: the details slot is session-scoped, so with no Session open
+       * there is nowhere for Collab to sit. That is precisely the cold start
+       * the picker exists for.
+       */
+      open = !open
+      publish()
+      return 'PICKER'
     },
     subscribe: (listener: Listener) => {
       listeners.add(listener)

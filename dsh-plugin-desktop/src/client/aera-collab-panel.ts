@@ -33,10 +33,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { AeraCollabOverlay } from './AeraCollabOverlay.tsx'
-import { AeraCollabPanel } from './AeraCollabPanel.tsx'
+import { AeraCollabDetailsTab, AeraCollabPanel } from './AeraCollabPanel.tsx'
 import { AeraCollabSidebarAction } from './AeraCollabSidebarAction.tsx'
 import {
   createAeraCollabEntryController,
+  type AeraCollabColumn,
   type AeraCollabEntryController,
 } from './aera-collab-entry-controller.ts'
 import { createAeraCollabApi, type AeraCollabApi } from './aera-collab-api.ts'
@@ -53,6 +54,24 @@ export const AERA_COLLAB_VIEW_ORDER = 20
 export const AERA_COLLAB_VIEW_ID = 'collab'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
+  /**
+   * The Collaborate seat inside the details column.
+   *
+   * Declared at runtime by our patch to `@deepseek-ai/dsh-client-ui-conversation`
+   * (`.yarn/patches/…-941ef6a7f5.patch`), which leaves the stock DetailsPanel
+   * intact and merely gives it a second tab. The patch cannot ship types into
+   * the package's own `.d.ts`, so the declaration lives here — beside the only
+   * registration that fills it — and must be deleted in the same change that
+   * ever removes the patch.
+   */
+  interface SlotMap {
+    'conversation.details.collab': {
+      kind: 'single'
+      scope: 'session'
+      owner: Record<string, never>
+    }
+  }
+
   interface LocaleNamespaceMap {
     /** Aera Collab entry-point copy. */
     'aera.collab': AeraCollabLocaleKey
@@ -65,12 +84,47 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
  * @param ctx - browser Cordis context.
  * @param api - injectable for tests; defaults to the same-origin loopback API.
  */
+/**
+ * The shell's details column, as an affordance target.
+ *
+ * Resolved lazily, at press time rather than at apply time, because the shell
+ * that provides `ctx.layout` is installed after the entry points are.
+ *
+ * `isOpen` is only answered where the layout exposes its own state — which is
+ * the desktop-owned `DesktopLayoutState` in advanced mode. Where it does not,
+ * this reports closed, so the button opens and never guesses that it should
+ * close. A button that closes a column the reader did not know was open is
+ * worse than a button that only ever opens one.
+ */
+export function shellDetailsColumn(ctx: ClientContext): AeraCollabColumn {
+  const face = (): {
+    openDetails?: () => void
+    closeDetails?: () => void
+    getSnapshot?: () => { details?: number }
+  } | undefined => (ctx as { layout?: unknown }).layout as never
+
+  return Object.freeze({
+    isOpen: () => {
+      const snapshot = face()?.getSnapshot?.()
+      return snapshot !== undefined && snapshot.details !== 0
+    },
+    open: () => {
+      const open = face()?.openDetails
+      if (open === undefined) return false
+      open()
+      return true
+    },
+    close: () => { face()?.closeDetails?.() },
+  })
+}
+
 export function applyAeraCollabEntryPoints(
   ctx: ClientContext,
   api: AeraCollabApi = createAeraCollabApi(),
   controller: AeraCollabEntryController = createAeraCollabEntryController(),
 ): void {
   const t = ctx.locale.bind(AERA_COLLAB_LOCALE_NAMESPACE)
+  controller.attachColumn(shellDetailsColumn(ctx))
 
   ctx.effect(
     () => ctx.locale.register(AERA_COLLAB_LOCALE_NAMESPACE, { zh, en }),
@@ -94,6 +148,19 @@ export function applyAeraCollabEntryPoints(
      */
     inject: () => ({ api }),
   }, AeraCollabPanel))
+  /*
+   * The Collaborate tab of the right-hand details column (controller ruling,
+   * Option B / path 2). It sits BESIDE tool inspection rather than over it:
+   * the Details tab still renders the stock panel, reading the same private
+   * chatStore it always did, so a tool selection behaves exactly as before.
+   * A selection arriving while Collaborate is showing marks the Details tab
+   * and does not steal it.
+   */
+  ctx.slots.inject('conversation.details.collab', () => ctx.slots.register({
+    name: 'conversation.details.collab',
+    locale: AERA_COLLAB_LOCALE_NAMESPACE,
+    inject: () => ({ api }),
+  }, AeraCollabDetailsTab))
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
     id: 'aera-collab',

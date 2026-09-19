@@ -36,8 +36,41 @@ export type AeraCollabPanelProps =
   & PropsLocale<'aera.collab'>
   & InjectFace<AeraCollabPanelInjected>
 
-/** The Collab entry panel: the work this checkout is about, or a way to choose. */
+/** Renderer-composed props for the Collaborate tab of the details column. */
+export type AeraCollabDetailsTabProps =
+  PropsRuntime<'conversation.details.collab'>
+  & PropsLocale<'aera.collab'>
+  & InjectFace<AeraCollabPanelInjected>
+
+/**
+ * The same entry, in the conversation tab strip.
+ *
+ * Two registrations render one component because they are the same surface
+ * seen from two places, and a second implementation would drift.
+ */
 export function AeraCollabPanel({ api, t }: AeraCollabPanelProps) {
+  return <CollabEntry api={api} t={t} />
+}
+
+/**
+ * The same entry, in the right-hand details column beside tool inspection
+ * (controller ruling, Option B). The column is narrow, so the subtree marks
+ * itself and the styles tighten — nothing about the content changes, because a
+ * different Collab in a different container is two things to keep true.
+ */
+export function AeraCollabDetailsTab({ api, t }: AeraCollabDetailsTabProps) {
+  return (
+    <div className="aera-collab-in-details">
+      <CollabEntry api={api} t={t} />
+    </div>
+  )
+}
+
+/** The panel body both registrations render. */
+function CollabEntry({ api, t }: {
+  readonly api: AeraCollabApi
+  readonly t: AeraCollabPanelProps['t']
+}) {
   const [resolution, setResolution] = useState<CollabResolutionView>()
   const [chosen, setChosen] = useState<string>()
   const [picking, setPicking] = useState(false)
