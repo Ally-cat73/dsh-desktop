@@ -23,7 +23,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AeraCollabApi, CollabResolutionView } from './aera-collab-api.ts'
 import { AeraCollabPicker } from './AeraCollabPicker.tsx'
-import { AeraCollabSurface } from './AeraCollabSurface.tsx'
+import { AeraCollabWorkspace } from './AeraCollabWorkspace.tsx'
 
 /** Registration-side capabilities for the Collab panel. */
 export interface AeraCollabPanelInjected {
@@ -144,7 +144,7 @@ export function AeraCollabPanel({ api, t }: AeraCollabPanelProps) {
         */}
       {showPicker
         ? <AeraCollabPicker api={api} t={t} onChoose={onChoose} />
-        : <AeraCollabSurface api={api} workOrderId={workOrderId} t={t} />}
+        : <AeraCollabWorkspace api={api} workOrderId={workOrderId} t={t} />}
     </section>
   )
 }
