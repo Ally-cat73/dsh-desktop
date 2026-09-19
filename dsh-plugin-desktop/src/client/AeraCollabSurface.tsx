@@ -31,8 +31,12 @@ import {
   type CollabDecision,
   type CollabEvidenceCard,
   type CollabLineRow,
+  type CollabMessageRow,
   type CollabNodeRef,
+  type CollabPacketCard,
+  type CollabPacketState,
   type CollabSurfaceView,
+  type CollabThreadRow,
 } from './aera-collab-api.ts'
 import type { AeraCollabLocaleKey } from './aera-collab-locales.ts'
 import { displayTime, splitCounts } from './aera-collab-format.ts'
@@ -111,8 +115,126 @@ function ChangedFile({ file }: { readonly file: CollabChangedFileRow }) {
   )
 }
 
+/**
+ * §21 / §35 — SHARE / SEND TO COLLABORATOR, from Compare.
+ *
+ * The recipient step exists because of a real defect: the first version wrote
+ * the packet the instant the button was pressed and only then looked for
+ * somewhere to put it, leaving `aera:coordination-packet:a02ba81a` in the
+ * durable store referenced by nothing and visible to nobody. **Nothing is
+ * written until a recipient is confirmed**, so Cancel costs the store nothing.
+ */
+function ShareCompareToThread({ workOrderId, threads, compareLineIndex, api, onShared, t }: {
+  readonly workOrderId: string
+  readonly threads: readonly CollabThreadRow[]
+  readonly compareLineIndex?: number
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly onShared: () => void
+  readonly t: Translate
+}) {
+  const [open, setOpen] = useState(false)
+  const [threadId, setThreadId] = useState('')
+  const [newSubject, setNewSubject] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const openThreads = threads.filter(thread => !thread.archived)
+  // Exactly one recipient: an existing thread, or a new one. Never both.
+  const recipientChosen = threadId !== '' || newSubject.trim() !== ''
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="aera-collab-share-compare"
+        onClick={() => { setOpen(true); setError(undefined) }}
+      >
+        {t('shareCompare')}
+      </button>
+    )
+  }
+
+  return (
+    <form
+      className="aera-collab-share-form"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!recipientChosen) return
+        setBusy(true)
+        setError(undefined)
+        void api.coordinate({
+          action: 'SHARE_COMPARE_TO_THREAD',
+          workOrderId,
+          ...(compareLineIndex === undefined ? {} : { compareLineIndex }),
+          ...(threadId === ''
+            ? { newThreadSubject: newSubject.trim() }
+            : { threadId }),
+          ...(note.trim() === '' ? {} : { note: note.trim() }),
+        })
+          .then(() => {
+            setOpen(false); setNote(''); setNewSubject(''); setThreadId('')
+            onShared()
+          })
+          .catch((cause: unknown) => {
+            setError(cause instanceof Error ? cause.message : String(cause))
+          })
+          .finally(() => { setBusy(false) })
+      }}
+    >
+      <p className="aera-collab-status">{t('shareRecipientIntro')}</p>
+      {openThreads.length === 0
+        ? null
+        : (
+            <label>
+              {t('shareToThread')}
+              <select
+                value={threadId}
+                onChange={(event) => { setThreadId(event.target.value); setNewSubject('') }}
+              >
+                <option value="">{t('shareNewThread')}</option>
+                {openThreads.map(thread => (
+                  <option key={thread.technical[0] ?? thread.subject} value={thread.technical[0] ?? ''}>
+                    {thread.subject}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+      {threadId === ''
+        ? (
+            <label>
+              {t('threadSubject')}
+              <input
+                value={newSubject}
+                onChange={(event) => { setNewSubject(event.target.value) }}
+              />
+            </label>
+          )
+        : null}
+      <label>
+        {t('shareNote')}
+        <textarea rows={2} value={note} onChange={(event) => { setNote(event.target.value) }} />
+      </label>
+      {error === undefined ? null : <p className="aera-collab-status">{error}</p>}
+      <button type="submit" disabled={busy || !recipientChosen}>{t('shareSend')}</button>
+      {/* Cancel writes nothing, because nothing has been written yet. */}
+      <button type="button" disabled={busy} onClick={() => { setOpen(false); setError(undefined) }}>
+        {t('shareCancel')}
+      </button>
+    </form>
+  )
+}
+
 /** The Compare accordion, rendered under the line whose states it compares. */
-function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView, readonly t: Translate }) {
+function CompareAccordion({ surface, workOrderId, compareLineIndex, api, onShared, t }: {
+  readonly surface: CollabSurfaceView
+  readonly workOrderId: string
+  readonly compareLineIndex?: number
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly onShared: () => void
+  readonly t: Translate
+}) {
   const { compare } = surface
   if (compare === undefined) {
     return surface.compareUnavailableReason === undefined
@@ -126,16 +248,52 @@ function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView,
       <p className="aera-collab-compare-banner">{compare.banner}</p>
       <p className="aera-collab-compare-direction">{compare.directionSentence}</p>
       <p className="aera-collab-compare-headline">{compare.headline}</p>
+      {/* §35 lists "Compare: SHARE". It belongs here, where the reader is. */}
+      <ShareCompareToThread
+        workOrderId={workOrderId}
+        threads={surface.threads}
+        {...(compareLineIndex === undefined ? {} : { compareLineIndex })}
+        api={api}
+        onShared={onShared}
+        t={t}
+      />
+      {/* §6: also a path wall, and also not the headline. */}
       {compare.unrepresentable.length === 0
         ? null
         : (
-            <ul className="aera-collab-unrepresentable">
-              {compare.unrepresentable.map(line => <li key={line}>{line}</li>)}
-            </ul>
+            <details className="aera-collab-files-disclosure">
+              <summary>{`${t('unrepresentableChanges')} (${String(compare.unrepresentable.length)})`}</summary>
+              <ul className="aera-collab-unrepresentable">
+                {compare.unrepresentable.map(line => <li key={line}>{line}</li>)}
+              </ul>
+            </details>
           )}
-      <ul className="aera-collab-files">
-        {shown.map(file => <ChangedFile key={`${file.kindWord}:${file.path}`} file={file} />)}
-      </ul>
+      {/*
+        * A comparison too large to list is still a comparison. The counts
+        * above are complete; saying why the rows are absent beats an empty
+        * list, and beats the panel deleting itself, which is what used to
+        * happen.
+        */}
+      {compare.filesUnavailableReason === undefined
+        ? null
+        : <p className="aera-collab-status">{compare.filesUnavailableReason}</p>}
+      {/*
+        * §6 — PROGRESSIVE DISCLOSURE. The bounded deterministic summary above
+        * is the answer; a wall of paths is not. Owner acceptance found the
+        * Collab surface rendering a giant file list as primary content, which
+        * buries the four numbers a reader actually needs. The list is one
+        * click away and nothing is hidden from anyone who wants it.
+        */}
+      {shown.length === 0
+        ? null
+        : (
+            <details className="aera-collab-files-disclosure">
+              <summary>{`${t('inspectChangedFiles')} (${String(compare.files.length)})`}</summary>
+              <ul className="aera-collab-files">
+                {shown.map(file => <ChangedFile key={`${file.kindWord}:${file.path}`} file={file} />)}
+              </ul>
+            </details>
+          )}
       {/*
         * Owner feedback: "files shown, but it didn't mean no provenance on the
         * data. It should always be timestamped on everything." A count of rows
@@ -160,7 +318,10 @@ function CompareAccordion({ surface, t }: { readonly surface: CollabSurfaceView,
 }
 
 /** One Working Line, expandable in place, with its Compare underneath. */
-function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, onCompare, onCloseCompare }: {
+function WorkingLine({ line, index, expanded, comparing, surface, workOrderId, api, onShared, t, onToggle, onCompare, onCloseCompare }: {
+  readonly workOrderId: string
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly onShared: () => void
   readonly line: CollabLineRow
   readonly index: number
   readonly expanded: boolean
@@ -279,7 +440,18 @@ function WorkingLine({ line, index, expanded, comparing, surface, t, onToggle, o
                     </div>
                   )
                 : null}
-              {comparing ? <CompareAccordion surface={surface} t={t} /> : null}
+              {comparing
+                ? (
+                    <CompareAccordion
+                      surface={surface}
+                      workOrderId={workOrderId}
+                      {...(comparing ? { compareLineIndex: index } : {})}
+                      api={api}
+                      onShared={onShared}
+                      t={t}
+                    />
+                  )
+                : null}
             </div>
           )
         : null}
@@ -546,8 +718,378 @@ function ContextGroup({ title, rows, t }: {
 }
 
 /** The whole read-first surface, inline. */
+/**
+ * §35–§40 — the coordination surface.
+ *
+ * Deliberately lightweight, and deliberately inside the existing rail rather
+ * than beside it: the order says extend the Read-First surface, not redesign
+ * it. Thread identity is never bound to any window or component (§36) — the
+ * component holds a thread id and nothing else, so closing the panel closes
+ * nothing.
+ */
+function PacketCardView({ card, api, t }: {
+  readonly card: CollabPacketCard
+  readonly api: Pick<AeraCollabApi, 'packetState'>
+  readonly t: Translate
+}) {
+  const [live, setLive] = useState<CollabPacketState>()
+  const [busy, setBusy] = useState(false)
+  const packetId = card.technical[0]
+
+  return (
+    <div className="aera-collab-packet-card">
+      <span className="aera-collab-packet-title">{card.title}</span>
+      <span className="aera-collab-packet-operands">{card.operands}</span>
+      {card.facts.length === 0
+        ? null
+        : <p className="aera-collab-packet-facts">{card.facts.join(' · ')}</p>}
+      <p className="aera-collab-packet-captured">
+        {`${t('capturedAt')} `}
+        <Recorded value={card.capturedAt} className="aera-collab-when" />
+      </p>
+      {/*
+        * §19: the movement line. It describes the world, not the packet — the
+        * packet above is the snapshot and has not changed.
+        */}
+      {card.stateNote === undefined
+        ? null
+        : (
+            <p className={card.stateMoved ? 'aera-collab-packet-moved' : 'aera-collab-status'}>
+              {card.stateNote}
+            </p>
+          )}
+      {packetId === undefined
+        ? null
+        : (
+            <button
+              type="button"
+              className="aera-collab-packet-action"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true)
+                void api.packetState(packetId)
+                  .then(setLive)
+                  .catch(() => { setLive(undefined) })
+                  .finally(() => { setBusy(false) })
+              }}
+            >
+              {t('viewCurrentState')}
+            </button>
+          )}
+      {/*
+        * §20: resolved separately and shown BESIDE the snapshot, never in
+        * place of it. Both are on screen at once, which is the whole point.
+        */}
+      {live === undefined
+        ? null
+        : (
+            <p className="aera-collab-packet-live">
+              {live.humanSummary}
+              {live.currentSourceRevision === undefined
+                ? null
+                : <span className="aera-collab-when">{` (${live.currentSourceRevision} → ${live.currentTargetRevision ?? '?'})`}</span>}
+            </p>
+          )}
+      <Technical lines={card.technical} label={t('technicalDetails')} />
+    </div>
+  )
+}
+
+function MessageRowView({ message, api, t }: {
+  readonly message: CollabMessageRow
+  readonly api: Pick<AeraCollabApi, 'packetState'>
+  readonly t: Translate
+}) {
+  return (
+    <li className={`aera-collab-message aera-collab-message-${message.principalKind.toLowerCase()}`}>
+      <span className="aera-collab-message-who">{message.who}</span>
+      {/* §10: the kind is drawn, always. An agent can never look like a person. */}
+      <span className="aera-collab-message-kind">{message.principalKind}</span>
+      {message.intentLabel === undefined
+        ? null
+        : <span className="aera-collab-message-intent">{message.intentLabel}</span>}
+      <Recorded value={message.when} className="aera-collab-when" />
+      {/* §40: an agent's words are labelled as interpretation, above the words. */}
+      {message.authorshipNote === undefined
+        ? null
+        : <p className="aera-collab-message-analysis">{message.authorshipNote}</p>}
+      <p className="aera-collab-message-body">{message.body}</p>
+      {message.packets.map(card => (
+        <PacketCardView key={card.technical[0] ?? card.capturedAt} card={card} api={api} t={t} />
+      ))}
+      {message.otherReferences.length === 0
+        ? null
+        : (
+            <ul className="aera-collab-message-refs">
+              {message.otherReferences.map(reference => <li key={reference}>{reference}</li>)}
+            </ul>
+          )}
+      <Technical lines={message.technical} label={t('technicalDetails')} />
+    </li>
+  )
+}
+
+function DecisionFromThread({ threadId, workOrderId, onDone, api, t }: {
+  readonly threadId: string
+  readonly workOrderId: string
+  readonly onDone: () => void
+  readonly api: Pick<AeraCollabApi, 'coordinate'>
+  readonly t: Translate
+}) {
+  const [subject, setSubject] = useState('')
+  const [optionText, setOptionText] = useState('')
+  const [selected, setSelected] = useState('')
+  const [rationale, setRationale] = useState('')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+
+  /*
+   * §14, in the shape of the form: the alternatives are TYPED BY A PERSON and
+   * the selection is CHOSEN BY A PERSON. Nothing reads the conversation to
+   * guess either. A decision that cannot name its alternatives is not a
+   * decision, so the submit stays disabled until both exist.
+   */
+  const options = optionText
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '')
+    .map((label, index) => ({ optionId: `option-${String(index + 1)}`, label }))
+
+  return (
+    <form
+      className="aera-collab-decision-form"
+      onSubmit={(event) => {
+        event.preventDefault()
+        setBusy(true)
+        setError(undefined)
+        void api.coordinate({
+          action: 'RECORD_DECISION',
+          threadId,
+          workOrderId,
+          subject: subject.trim(),
+          options,
+          selectedOptionId: selected,
+          ...(rationale.trim() === '' ? {} : { rationale: rationale.trim() }),
+        })
+          .then(() => { onDone() })
+          .catch((cause: unknown) => {
+            setError(cause instanceof Error ? cause.message : String(cause))
+          })
+          .finally(() => { setBusy(false) })
+      }}
+    >
+      <label>
+        {t('decisionSubject')}
+        <input value={subject} onChange={event => { setSubject(event.target.value) }} />
+      </label>
+      <label>
+        {t('decisionOptions')}
+        <textarea rows={3} value={optionText} onChange={event => { setOptionText(event.target.value) }} />
+      </label>
+      <label>
+        {t('decisionSelected')}
+        <select value={selected} onChange={event => { setSelected(event.target.value) }}>
+          <option value="">—</option>
+          {options.map(option => (
+            <option key={option.optionId} value={option.optionId}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t('decisionRationale')}
+        <textarea rows={2} value={rationale} onChange={event => { setRationale(event.target.value) }} />
+      </label>
+      {error === undefined ? null : <p className="aera-collab-status">{error}</p>}
+      <button
+        type="submit"
+        disabled={busy || subject.trim() === '' || options.length === 0 || selected === ''}
+      >
+        {t('recordIt')}
+      </button>
+    </form>
+  )
+}
+
+function ThreadCard({ thread, workOrderId, canShareCompare, compareLineIndex, api, onChanged, t }: {
+  readonly thread: CollabThreadRow
+  readonly workOrderId: string
+  /** A comparison is on screen, so there is something real to share (§21). */
+  readonly canShareCompare: boolean
+  readonly compareLineIndex?: number
+  readonly api: Pick<AeraCollabApi, 'coordinate' | 'packetState'>
+  readonly onChanged: () => void
+  readonly t: Translate
+}) {
+  const [draft, setDraft] = useState('')
+  const [intent, setIntent] = useState('GENERAL')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const threadId = thread.technical[0]
+
+  const act = (request: Record<string, unknown>, after: () => void): void => {
+    if (threadId === undefined) return
+    setBusy(true)
+    setError(undefined)
+    void api.coordinate({ ...request, workOrderId })
+      .then(() => { after(); onChanged() })
+      .catch((cause: unknown) => { setError(cause instanceof Error ? cause.message : String(cause)) })
+      .finally(() => { setBusy(false) })
+  }
+
+  return (
+    <li className="aera-collab-thread">
+      <span className="aera-collab-thread-subject">{thread.subject}</span>
+      {/* §37: what it is about, before what was said. */}
+      <p className="aera-collab-thread-about">{thread.aboutLine}</p>
+      <p className="aera-collab-thread-participants">{thread.participants.join(' · ')}</p>
+      {thread.decisionSubjects.length === 0
+        ? null
+        : (
+            <p className="aera-collab-thread-decisions">
+              {thread.decisionSubjects.join(' · ')}
+            </p>
+          )}
+      <ul className="aera-collab-messages">
+        {thread.messages.map(message => (
+          <MessageRowView key={message.technical[0] ?? String(message.sequence)} message={message} api={api} t={t} />
+        ))}
+      </ul>
+      {error === undefined ? null : <p className="aera-collab-status">{error}</p>}
+      {thread.archived
+        ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => { act({ action: 'SET_LIFECYCLE', threadId, lifecycle: 'ACTIVE' }, () => undefined) }}
+            >
+              {t('reopenThread')}
+            </button>
+          )
+        : (
+            <>
+              <form
+                className="aera-collab-composer"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const body = draft.trim()
+                  if (body === '') return
+                  act({
+                    action: 'POST_MESSAGE',
+                    threadId,
+                    body,
+                    intent,
+                    /*
+                     * §31: the idempotency key. A double-clicked Send, or a
+                     * retry after a dropped response, resolves to the SAME
+                     * message rather than posting twice.
+                     */
+                    requestId: `${String(Date.now())}-${Math.random().toString(36).slice(2)}`,
+                  }, () => { setDraft('') })
+                }}
+              >
+                <textarea
+                  rows={2}
+                  value={draft}
+                  placeholder={t('messagePlaceholder')}
+                  aria-label={t('messagePlaceholder')}
+                  onChange={(event) => { setDraft(event.target.value) }}
+                />
+                <label>
+                  {t('intent')}
+                  <select value={intent} onChange={(event) => { setIntent(event.target.value) }}>
+                    {['GENERAL', 'REVIEW_REQUEST', 'RECONCILIATION_REQUEST',
+                      'PAUSE_REQUEST', 'RESUME_NOTICE', 'DECISION_REQUEST'].map(value => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                  </select>
+                </label>
+                <button type="submit" disabled={busy || draft.trim() === ''}>{t('send')}</button>
+              </form>
+              {/*
+                * §21 — SHARE FROM COMPARE, and it lands IN A THREAD.
+                *
+                * Mechanical acceptance caught this: a section-level share
+                * button created the packet and then had nowhere to put it, so
+                * a deterministic snapshot was written that nobody could see. A
+                * share with no recipient is not a share. The action lives on
+                * the thread because that is what makes the target unambiguous,
+                * and it carries whatever note the sender has already typed
+                * (§21: "the sender may add a human note").
+                */}
+              {canShareCompare
+                ? (
+                    <button
+                      type="button"
+                      className="aera-collab-share-compare"
+                      disabled={busy}
+                      onClick={() => {
+                        if (threadId === undefined) return
+                        setBusy(true)
+                        setError(undefined)
+                        const note = draft.trim()
+                        void api.coordinate({
+                          action: 'SHARE_COMPARE',
+                          workOrderId,
+                          ...(compareLineIndex === undefined ? {} : { compareLineIndex }),
+                        })
+                          .then((result) => {
+                            const packetId = (result as { packetId?: string } | undefined)?.packetId
+                            if (packetId === undefined) {
+                              throw new Error('The comparison was shared but no packet came back, so nothing was posted.')
+                            }
+                            return api.coordinate({
+                              action: 'POST_MESSAGE',
+                              workOrderId,
+                              threadId,
+                              body: note === '' ? t('sharedComparisonNote') : note,
+                              intent: 'REVIEW_REQUEST',
+                              packetId,
+                              requestId: `share-${String(Date.now())}-${Math.random().toString(36).slice(2)}`,
+                            })
+                          })
+                          .then(() => { setDraft(''); onChanged() })
+                          .catch((cause: unknown) => {
+                            setError(cause instanceof Error ? cause.message : String(cause))
+                          })
+                          .finally(() => { setBusy(false) })
+                      }}
+                    >
+                      {t('shareCompare')}
+                    </button>
+                  )
+                : null}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { act({ action: 'SET_LIFECYCLE', threadId, lifecycle: 'ARCHIVED' }, () => undefined) }}
+              >
+                {t('archiveThread')}
+              </button>
+              {/* §39: the entry point from a discussion to a DECISION, explicit. */}
+              <button type="button" onClick={() => { setRecording(value => !value) }}>
+                {t('recordDecision')}
+              </button>
+              {recording && threadId !== undefined
+                ? (
+                    <DecisionFromThread
+                      threadId={threadId}
+                      workOrderId={workOrderId}
+                      api={api}
+                      t={t}
+                      onDone={() => { setRecording(false); onChanged() }}
+                    />
+                  )
+                : null}
+            </>
+          )}
+      <Technical lines={thread.technical} label={t('technicalDetails')} />
+    </li>
+  )
+}
+
 export function AeraCollabSurface({ api, workOrderId, t }: {
-  readonly api: Pick<AeraCollabApi, 'view'>
+  readonly api: Pick<AeraCollabApi, 'view' | 'coordinate' | 'packetState'>
   readonly workOrderId: string
   readonly t: Translate
 }) {
@@ -556,6 +1098,19 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<number | undefined>(0)
   const [comparing, setComparing] = useState<number>()
+  /*
+   * §4 — two projections over ONE substrate.
+   *
+   * COLLABORATE is "who is here and what are we saying"; RECORD is "what this
+   * Work Order institutionally is". Owner acceptance found a single surface
+   * that mixed a live conversation into an institutional ledger, so neither
+   * read well. This is a render split only: both views read the same
+   * `CollabSurfaceView` from the same joinless projection, and there is no
+   * second store, no second fetch and no second truth.
+   */
+  const [humanView, setHumanView] = useState<'COLLABORATE' | 'RECORD'>('COLLABORATE')
+  const [newThreadSubject, setNewThreadSubject] = useState('')
+  const [coordinationError, setCoordinationError] = useState<string>()
 
   const read = useCallback(async (compareLineIndex?: number) => {
     setLoading(true)
@@ -628,12 +1183,30 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
         </p>
       </header>
 
+      {/* §4: the two human projections. Same substrate, different question. */}
+      <div className="aera-collab-view-switch" role="tablist">
+        {(['COLLABORATE', 'RECORD'] as const).map(view => (
+          <button
+            key={view}
+            type="button"
+            role="tab"
+            aria-selected={humanView === view}
+            className={humanView === view
+              ? 'aera-collab-view-tab aera-collab-view-tab-active'
+              : 'aera-collab-view-tab'}
+            onClick={() => { setHumanView(view) }}
+          >
+            {view === 'COLLABORATE' ? t('viewCollaborate') : t('viewRecord')}
+          </button>
+        ))}
+      </div>
+
       {/*
         * D4: CONTEXT restored. The Work Context packet is what the compact
         * CONTEXT view showed, and dropping it when the surface moved inline
         * would have quietly removed a whole section of the frozen composition.
         */}
-      {surface.context === undefined
+      {humanView !== 'RECORD' || surface.context === undefined
         ? null
         : (
             <Section title={t('context')}>
@@ -669,168 +1242,256 @@ export function AeraCollabSurface({ api, workOrderId, t }: {
         </ul>
       </Section>
 
-      <Section title={t('workingLines')} {...railCount('WORKING_LINES')} defaultOpen>
-        {surface.lines.length === 0
-          ? <p className="aera-collab-status">{surface.linesEmptyReason ?? t('noLines')}</p>
-          : (
-              <ul className="aera-collab-lines">
-                {surface.lines.map((line, index) => (
-                  <WorkingLine
-                    key={line.codeWorkingLineId ?? `observed:${line.label}`}
-                    line={line}
-                    index={index}
-                    expanded={expanded === index}
-                    comparing={comparing === index}
-                    surface={surface}
-                    t={t}
-                    onToggle={next => { setExpanded(current => (current === next ? undefined : next)) }}
-                    onCompare={onCompare}
-                    onCloseCompare={onCloseCompare}
-                  />
-                ))}
-              </ul>
-            )}
-      </Section>
+      {humanView === 'RECORD'
+        ? (
+            <Section title={t('workingLines')} {...railCount('WORKING_LINES')} defaultOpen>
+              {surface.lines.length === 0
+                ? <p className="aera-collab-status">{surface.linesEmptyReason ?? t('noLines')}</p>
+                : (
+                    <ul className="aera-collab-lines">
+                      {surface.lines.map((line, index) => (
+                        <WorkingLine
+                          key={line.codeWorkingLineId ?? `observed:${line.label}`}
+                          line={line}
+                          index={index}
+                          expanded={expanded === index}
+                          comparing={comparing === index}
+                          surface={surface}
+                          t={t}
+                          onToggle={next => { setExpanded(current => (current === next ? undefined : next)) }}
+                          workOrderId={workOrderId}
+                          api={api}
+                          onShared={() => { void read(comparing) }}
+                          onCompare={onCompare}
+                          onCloseCompare={onCloseCompare}
+                        />
+                      ))}
+                    </ul>
+                  )}
+            </Section>
+          )
+        : null}
 
-      <Section title={t('activity')} {...railCount('ACTIVITY')}>
-        {/*
-          * §43: blocks sit ABOVE the raw rows and never replace them. §47 is
-          * the reason the raw list is still here in full — the human-readable
-          * projection sits over the canonical history, it does not stand in
-          * for it, and a reader who wants the forensic view can still have it.
-          */}
-        {surface.activityBlocks.length === 0
-          ? null
-          : (
-              <ul className="aera-collab-blocks">
-                {surface.activityBlocks.map(block => (
-                  <ActivityBlock key={`${block.title}:${block.from}`} block={block} t={t} />
-                ))}
-              </ul>
-            )}
-        <details className="aera-collab-raw-activity">
-          <summary>{t('rawActivity')}</summary>
-          <ul className="aera-collab-activity">
-            {surface.activity.map(row => (
-              <ActivityRow key={`${row.when}:${row.summary.slice(0, 64)}`} row={row} t={t} />
-            ))}
-          </ul>
-        </details>
-      </Section>
-
-      <Section title={t('checkpoints')} {...railCount('CHECKPOINTS')}>
-        {surface.checkpoints.length === 0
-          ? <p className="aera-collab-status">{surface.checkpointsEmptyReason ?? t('noCheckpoints')}</p>
-          : (
-              <ul className="aera-collab-checkpoints">
-                {surface.checkpoints.map(row => (
-                  <li key={`${row.name}:${row.when}`} className="aera-collab-checkpoint-row">
-                    <div className="aera-collab-checkpoint-head">
-                      <span className="aera-collab-checkpoint-label">{row.name}</span>
-                      <span className="aera-collab-checkpoint-origin">{row.origin}</span>
-                      <span className="aera-collab-checkpoint-who">{row.who}</span>
-                      <Recorded value={row.when} />
-                    </div>
-                    {/* §42: the summary is the point of a checkpoint card; the
-                        underlying commit stays progressive disclosure. */}
-                    {row.summary === undefined
-                      ? null
-                      : <p className="aera-collab-checkpoint-summary">{row.summary}</p>}
-                    {/* CP-5: the weakest arm says so, on every row that uses it. */}
-                    {row.verifiabilityNote === undefined
-                      ? null
-                      : <p className="aera-collab-status">{row.verifiabilityNote}</p>}
-                    {row.attributionNote === undefined
-                      ? null
-                      : (
-                          <div className="aera-collab-corrected">
-                            <p className="aera-collab-corrected-note">{row.attributionNote}</p>
-                            {row.attributionOriginalClaim === undefined
-                              ? null
-                              : (
-                                  <details className="aera-collab-corrected-original">
-                                    <summary>{t('originalRecord')}</summary>
-                                    <p>{row.attributionOriginalClaim}</p>
-                                  </details>
-                                )}
-                          </div>
-                        )}
-                    <Technical lines={[row.technical]} label={t('technicalDetails')} />
-                  </li>
-                ))}
-              </ul>
-            )}
-      </Section>
-
-      <Section title={t('evidence')} {...railCount('EVIDENCE')}>
-        {/* §46: typed cards first. The prose list stays beneath, disclosed. */}
-        {surface.evidenceCards.length === 0
-          ? null
-          : (
-              <ul className="aera-collab-evidence-cards">
-                {surface.evidenceCards.map(card => (
-                  <EvidenceCard key={`${card.classWord}:${card.subject}:${card.when}`} card={card} t={t} />
-                ))}
-              </ul>
-            )}
-        {surface.evidence.length === 0
-          ? null
-          : (
-              <details className="aera-collab-evidence-raw">
-                <summary>{t('technicalDetails')}</summary>
-                <ul className="aera-collab-evidence">
-                  {surface.evidence.map(row => (
-                    <li key={row.label}>
-                      <span>{row.label}</span>
-                      <span className="aera-collab-evidence-status">{row.status}</span>
-                    </li>
+      {humanView === 'RECORD'
+        ? (
+            <Section title={t('activity')} {...railCount('ACTIVITY')}>
+              {/*
+                * §43: blocks sit ABOVE the raw rows and never replace them. §47 is
+                * the reason the raw list is still here in full — the human-readable
+                * projection sits over the canonical history, it does not stand in
+                * for it, and a reader who wants the forensic view can still have it.
+                */}
+              {surface.activityBlocks.length === 0
+                ? null
+                : (
+                    <ul className="aera-collab-blocks">
+                      {surface.activityBlocks.map(block => (
+                        <ActivityBlock key={`${block.title}:${block.from}`} block={block} t={t} />
+                      ))}
+                    </ul>
+                  )}
+              <details className="aera-collab-raw-activity">
+                <summary>{t('rawActivity')}</summary>
+                <ul className="aera-collab-activity">
+                  {surface.activity.map(row => (
+                    <ActivityRow key={`${row.when}:${row.summary.slice(0, 64)}`} row={row} t={t} />
                   ))}
                 </ul>
               </details>
-            )}
-      </Section>
+            </Section>
+          )
+        : null}
+
+      {humanView === 'RECORD'
+        ? (
+            <Section title={t('checkpoints')} {...railCount('CHECKPOINTS')}>
+              {surface.checkpoints.length === 0
+                ? <p className="aera-collab-status">{surface.checkpointsEmptyReason ?? t('noCheckpoints')}</p>
+                : (
+                    <ul className="aera-collab-checkpoints">
+                      {surface.checkpoints.map(row => (
+                        <li key={`${row.name}:${row.when}`} className="aera-collab-checkpoint-row">
+                          <div className="aera-collab-checkpoint-head">
+                            <span className="aera-collab-checkpoint-label">{row.name}</span>
+                            <span className="aera-collab-checkpoint-origin">{row.origin}</span>
+                            <span className="aera-collab-checkpoint-who">{row.who}</span>
+                            <Recorded value={row.when} />
+                          </div>
+                          {/* §42: the summary is the point of a checkpoint card; the
+                              underlying commit stays progressive disclosure. */}
+                          {row.summary === undefined
+                            ? null
+                            : <p className="aera-collab-checkpoint-summary">{row.summary}</p>}
+                          {/* CP-5: the weakest arm says so, on every row that uses it. */}
+                          {row.verifiabilityNote === undefined
+                            ? null
+                            : <p className="aera-collab-status">{row.verifiabilityNote}</p>}
+                          {row.attributionNote === undefined
+                            ? null
+                            : (
+                                <div className="aera-collab-corrected">
+                                  <p className="aera-collab-corrected-note">{row.attributionNote}</p>
+                                  {row.attributionOriginalClaim === undefined
+                                    ? null
+                                    : (
+                                        <details className="aera-collab-corrected-original">
+                                          <summary>{t('originalRecord')}</summary>
+                                          <p>{row.attributionOriginalClaim}</p>
+                                        </details>
+                                      )}
+                                </div>
+                              )}
+                          <Technical lines={[row.technical]} label={t('technicalDetails')} />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+            </Section>
+          )
+        : null}
+
+      {humanView === 'RECORD'
+        ? (
+            <Section title={t('evidence')} {...railCount('EVIDENCE')}>
+              {/* §46: typed cards first. The prose list stays beneath, disclosed. */}
+              {surface.evidenceCards.length === 0
+                ? null
+                : (
+                    <ul className="aera-collab-evidence-cards">
+                      {surface.evidenceCards.map(card => (
+                        <EvidenceCard key={`${card.classWord}:${card.subject}:${card.when}`} card={card} t={t} />
+                      ))}
+                    </ul>
+                  )}
+              {surface.evidence.length === 0
+                ? null
+                : (
+                    <details className="aera-collab-evidence-raw">
+                      <summary>{t('technicalDetails')}</summary>
+                      <ul className="aera-collab-evidence">
+                        {surface.evidence.map(row => (
+                          <li key={row.label}>
+                            <span>{row.label}</span>
+                            <span className="aera-collab-evidence-status">{row.status}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+            </Section>
+          )
+        : null}
 
       {/*
         * §44: DISCUSSIONS & DECISIONS. They remain distinct RECORDS (§18) and
         * are presented together because a decision is very hard to understand
         * later without the discussion that produced it.
         */}
-      <Section title={t('discussionsDecisions')} {...railCount('DISCUSSIONS_DECISIONS')}>
-        <p className="aera-collab-status">{surface.discussionNote}</p>
-        {surface.discussionsDecisionsEmptyReason === undefined
-          ? null
-          : <p className="aera-collab-status">{surface.discussionsDecisionsEmptyReason}</p>}
-        {surface.decisions.length === 0
-          ? null
-          : (
-              <ul className="aera-collab-decisions">
-                {surface.decisions.map(decision => (
-                  <DecisionCard key={`${decision.subject}:${decision.when}`} decision={decision} t={t} />
-                ))}
-              </ul>
-            )}
-        {surface.discussions.length === 0
-          ? null
-          : (
-              <ul className="aera-collab-discussions">
-                {surface.discussions.map(discussion => (
-                  <li key={`${discussion.subject}:${discussion.updatedAt}`} className="aera-collab-discussion">
-                    <span className="aera-collab-discussion-subject">{discussion.subject}</span>
-                    <span className="aera-collab-discussion-count">
-                      {`${String(discussion.entryCount)} ${discussion.entryCount === 1 ? 'entry' : 'entries'}`}
-                    </span>
-                    <Recorded value={discussion.updatedAt} />
-                    {discussion.latestEntry === undefined
-                      ? null
-                      : <p className="aera-collab-discussion-entry">{discussion.latestEntry}</p>}
-                    <Technical lines={discussion.technical} label={t('technicalDetails')} />
-                  </li>
-                ))}
-              </ul>
-            )}
-      </Section>
+      {humanView === 'RECORD'
+        ? (
+            <Section title={t('discussionsDecisions')} {...railCount('DISCUSSIONS_DECISIONS')}>
+              <p className="aera-collab-status">{surface.discussionNote}</p>
+              {surface.discussionsDecisionsEmptyReason === undefined
+                ? null
+                : <p className="aera-collab-status">{surface.discussionsDecisionsEmptyReason}</p>}
+              {surface.decisions.length === 0
+                ? null
+                : (
+                    <ul className="aera-collab-decisions">
+                      {surface.decisions.map(decision => (
+                        <DecisionCard key={`${decision.subject}:${decision.when}`} decision={decision} t={t} />
+                      ))}
+                    </ul>
+                  )}
+              {surface.discussions.length === 0
+                ? null
+                : (
+                    <ul className="aera-collab-discussions">
+                      {surface.discussions.map(discussion => (
+                        <li key={`${discussion.subject}:${discussion.updatedAt}`} className="aera-collab-discussion">
+                          <span className="aera-collab-discussion-subject">{discussion.subject}</span>
+                          <span className="aera-collab-discussion-count">
+                            {`${String(discussion.entryCount)} ${discussion.entryCount === 1 ? 'entry' : 'entries'}`}
+                          </span>
+                          <Recorded value={discussion.updatedAt} />
+                          {discussion.latestEntry === undefined
+                            ? null
+                            : <p className="aera-collab-discussion-entry">{discussion.latestEntry}</p>}
+                          <Technical lines={discussion.technical} label={t('technicalDetails')} />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+            </Section>
+          )
+        : null}
 
-      <Section title={t('archived')} count={surface.archivedCount} />
+      {/*
+        * §35/§36 — COORDINATION. A lightweight section, not a second product.
+        * §30/§55: the delivery note is the FIRST thing in it, because a reader
+        * who is not told will assume live push that does not exist yet.
+        */}
+      {humanView === 'COLLABORATE'
+        ? (
+            <Section title={t('coordination')} {...railCount('COORDINATION')}>
+              <p className="aera-collab-status">{surface.coordinationDeliveryNote}</p>
+              {surface.threadsEmptyReason === undefined
+                ? null
+                : <p className="aera-collab-status">{surface.threadsEmptyReason}</p>}
+              <form
+                className="aera-collab-new-thread"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const subject = newThreadSubject.trim()
+                  if (subject === '') return
+                  setCoordinationError(undefined)
+                  void api.coordinate({ action: 'OPEN_THREAD', subject, workOrderId })
+                    .then(() => { setNewThreadSubject(''); void read(comparing) })
+                    .catch((cause: unknown) => {
+                      setCoordinationError(cause instanceof Error ? cause.message : String(cause))
+                    })
+                }}
+              >
+                <input
+                  value={newThreadSubject}
+                  placeholder={t('threadSubject')}
+                  aria-label={t('threadSubject')}
+                  onChange={(event) => { setNewThreadSubject(event.target.value) }}
+                />
+                <button type="submit" disabled={newThreadSubject.trim() === ''}>{t('startThread')}</button>
+              </form>
+              {/*
+                * §21's share action lives on each THREAD, not here: a packet needs a
+                * recipient, and a section-level button had no unambiguous one.
+                */}
+              {coordinationError === undefined
+                ? null
+                : <p className="aera-collab-status">{coordinationError}</p>}
+              {surface.threads.length === 0
+                ? null
+                : (
+                    <ul className="aera-collab-threads">
+                      {surface.threads.map(thread => (
+                        <ThreadCard
+                          key={thread.technical[0] ?? thread.subject}
+                          thread={thread}
+                          workOrderId={workOrderId}
+                          canShareCompare={surface.compare !== undefined}
+                          {...(comparing === undefined ? {} : { compareLineIndex: comparing })}
+                          api={api}
+                          t={t}
+                          onChanged={() => { void read(comparing) }}
+                        />
+                      ))}
+                    </ul>
+                  )}
+            </Section>
+          )
+        : null}
+
+      {humanView === 'RECORD'
+        ? <Section title={t('archived')} count={surface.archivedCount} />
+        : null}
 
       {surface.liveProviderState === undefined
         ? null

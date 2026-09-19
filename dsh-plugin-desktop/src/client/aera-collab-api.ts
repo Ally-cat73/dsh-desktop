@@ -14,6 +14,8 @@ const DIRECTORY_PATH = '/desktop/aera/collab/directory'
 const RESOLVE_PATH = '/desktop/aera/collab/resolve'
 const VIEW_PATH = '/desktop/aera/collab/view'
 const WORK_CONTEXT_OPEN_PATH = '/desktop/aera/work-context/open'
+const COORDINATION_PATH = '/desktop/aera/collab/coordination'
+const PACKET_STATE_PATH = '/desktop/aera/collab/packet-state'
 
 const MAX_ROWS = 50
 const MAX_TEXT = 4_096
@@ -111,6 +113,16 @@ export interface CollabCompare {
   readonly directionSentence: string
   readonly headline: string
   readonly files: readonly CollabChangedFileRow[]
+  /**
+   * Why the file list is absent even though the comparison succeeded.
+   *
+   * A comparison of more than `MAX_LIST` files used to throw out of the shared
+   * `list()` helper, which aborted `parseCollabSurface` and blanked the ENTIRE
+   * Collab panel — threads, messages, evidence and all — over one oversized
+   * section. A surface whose whole job is to be readable must degrade the part
+   * it cannot draw and say why, not delete itself.
+   */
+  readonly filesUnavailableReason?: string
   readonly unrepresentable: readonly string[]
   readonly structuralDeltaNote?: string
   readonly technical: readonly string[]
@@ -215,12 +227,66 @@ export interface CollabDecision {
 }
 
 export interface CollabDiscussion {
+  /** §3: a coordination thread listed as a discussion, or a durable one. */
+  readonly kind: 'DISCUSSION' | 'THREAD'
   readonly subject: string
   readonly entryCount: number
   readonly participants: readonly string[]
   readonly updatedAt: string
   readonly latestEntry?: string
   readonly technical: readonly string[]
+}
+
+/**
+ * WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-WORKING-LINE-HANDOFF-001 §38.
+ * A packet as a compact card. Counts, never a pasted diff.
+ */
+export interface CollabPacketCard {
+  readonly title: string
+  readonly operands: string
+  readonly facts: readonly string[]
+  readonly capturedAt: string
+  readonly stateNote?: string
+  readonly stateMoved: boolean
+  readonly technical: readonly string[]
+}
+
+/** §10/§40: who spoke, and whether it is measurement or interpretation. */
+export interface CollabMessageRow {
+  readonly who: string
+  readonly principalKind: 'HUMAN' | 'AGENT' | 'SERVICE'
+  readonly authorshipNote?: string
+  readonly body: string
+  readonly when: string
+  readonly intentLabel?: string
+  readonly sequence: number
+  readonly packets: readonly CollabPacketCard[]
+  readonly otherReferences: readonly string[]
+  readonly technical: readonly string[]
+}
+
+/** §37: what the conversation is about, before what was said in it. */
+export interface CollabThreadRow {
+  readonly subject: string
+  readonly aboutLine: string
+  readonly participants: readonly string[]
+  readonly messageCount: number
+  readonly lastMessageAt?: string
+  readonly archived: boolean
+  readonly messages: readonly CollabMessageRow[]
+  readonly decisionSubjects: readonly string[]
+  readonly technical: readonly string[]
+}
+
+/** §20: the freshly resolved answer to "has this moved since it was sent?". */
+export interface CollabPacketState {
+  readonly verdict: string
+  readonly humanSummary: string
+  readonly snapshotSourceRevision?: string
+  readonly snapshotTargetRevision?: string
+  readonly currentSourceRevision?: string
+  readonly currentTargetRevision?: string
+  readonly unavailableReason?: string
 }
 
 /** One referenced node in the Work Context packet. */
@@ -264,6 +330,9 @@ export interface CollabSurfaceView {
   readonly decisions: readonly CollabDecision[]
   readonly discussions: readonly CollabDiscussion[]
   readonly discussionsDecisionsEmptyReason?: string
+  readonly threads: readonly CollabThreadRow[]
+  readonly threadsEmptyReason?: string
+  readonly coordinationDeliveryNote: string
   readonly discussionNote: string
   readonly archivedCount: number
   readonly compare?: CollabCompare
@@ -294,6 +363,10 @@ export interface AeraCollabApi {
   /** Project one Work Order's surface WITHOUT joining it. */
   view(input: { workOrderId?: string, compareLineIndex?: number }): Promise<CollabSurfaceResult>
   openCollab(workOrderId?: string): Promise<void>
+  /** §35 coordination writes. Each one changes durable records; none is a read. */
+  coordinate(request: Record<string, unknown>): Promise<unknown>
+  /** §20 "view current state". A read: it resolves, it never records. */
+  packetState(packetId: string): Promise<CollabPacketState>
 }
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
@@ -449,6 +522,17 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
     : (() => {
         const raw = value.compare
         if (!isObject(raw)) throw new Error('dsh-plugin-desktop: invalid Compare in Aera Collab surface')
+        /*
+         * A comparison larger than `MAX_LIST` is a real comparison, not a
+         * malformed one. Throwing here aborted the whole surface parse and
+         * blanked the panel; it is now reported per-section instead.
+         */
+        const oversizedFileList = Array.isArray(raw.files) && raw.files.length > MAX_LIST
+          ? `This comparison changed ${String(raw.files.length)} files, more than this surface lists (${String(MAX_LIST)}). The counts above are complete; the per-file list is not shown.`
+          : undefined
+        const renderableFiles = oversizedFileList === undefined
+          ? list(raw.files, 'changed files')
+          : []
         const operand = (side: unknown): { side: string, name: string } => {
           if (!isObject(side)) throw new Error('dsh-plugin-desktop: invalid Compare operand')
           return Object.freeze({ side: text(side.side, 'side'), name: text(side.name, 'name') })
@@ -460,7 +544,13 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           to: operand(raw.to),
           directionSentence: text(raw.directionSentence, 'direction'),
           headline: text(raw.headline, 'headline'),
-          files: Object.freeze(list(raw.files, 'changed files').map((file): CollabChangedFileRow => {
+          /*
+           * BOUNDED, NOT FATAL. The counts in `headline` are complete and stay
+           * readable even when the file rows cannot be, which is the more
+           * useful half of a large comparison anyway.
+           */
+          ...(oversizedFileList === undefined ? {} : { filesUnavailableReason: oversizedFileList }),
+          files: Object.freeze(renderableFiles.map((file): CollabChangedFileRow => {
             if (!isObject(file)) throw new Error('dsh-plugin-desktop: invalid changed file row')
             const previousPath = optionalText(file.previousPath, 'previous path')
             const counts = optionalText(file.counts, 'counts')
@@ -664,10 +754,13 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
     discussions: Object.freeze(list(value.discussions ?? [], 'discussions').map((row): CollabDiscussion => {
       if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid discussion')
       return Object.freeze({
+        kind: row.kind === 'THREAD' ? 'THREAD' as const : 'DISCUSSION' as const,
         subject: text(row.subject, 'subject'),
         entryCount: typeof row.entryCount === 'number' ? row.entryCount : 0,
         participants: textList(row.participants ?? [], 'participants'),
-        updatedAt: text(row.updatedAt, 'updatedAt'),
+        updatedAt: optionalText(row.updatedAt, 'updatedAt') === undefined
+          ? ''
+          : text(row.updatedAt, 'updatedAt'),
         ...(optionalText(row.latestEntry, 'entry') === undefined
           ? {} : { latestEntry: technicalText(row.latestEntry, 'entry') }),
         technical: technicalList(row.technical ?? [], 'technical'),
@@ -675,6 +768,10 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
     })),
     ...(optionalText(value.discussionsDecisionsEmptyReason, 'reason') === undefined
       ? {} : { discussionsDecisionsEmptyReason: technicalText(value.discussionsDecisionsEmptyReason, 'reason') }),
+    threads: Object.freeze(list(value.threads ?? [], 'threads').map(parseThreadRow)),
+    ...(optionalText(value.threadsEmptyReason, 'reason') === undefined
+      ? {} : { threadsEmptyReason: technicalText(value.threadsEmptyReason, 'reason') }),
+    coordinationDeliveryNote: technicalText(value.coordinationDeliveryNote, 'delivery note'),
     ...(isObject(value.liveProviderState)
       ? {
           liveProviderState: Object.freeze({
@@ -693,6 +790,89 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
     ...(compare === undefined ? {} : { compare }),
     ...(compareUnavailableReason === undefined ? {} : { compareUnavailableReason }),
     projectedAt: text(value.projectedAt, 'projectedAt'),
+  })
+}
+
+
+/** §38: parse one packet card. Unknown shapes are refused, never half-drawn. */
+function parsePacketCard(value: unknown): CollabPacketCard {
+  if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid packet card')
+  return Object.freeze({
+    title: text(value.title, 'title'),
+    operands: text(value.operands, 'operands'),
+    facts: textList(value.facts ?? [], 'facts'),
+    capturedAt: text(value.capturedAt, 'capturedAt'),
+    ...(optionalText(value.stateNote, 'state note') === undefined
+      ? {} : { stateNote: text(value.stateNote, 'state note') }),
+    stateMoved: value.stateMoved === true,
+    technical: technicalList(value.technical ?? [], 'technical'),
+  })
+}
+
+function parseMessageRow(value: unknown): CollabMessageRow {
+  if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid coordination message')
+  const kind = value.principalKind
+  if (kind !== 'HUMAN' && kind !== 'AGENT' && kind !== 'SERVICE') {
+    /*
+     * §10 is not negotiable at the wire boundary either. A message whose
+     * sender kind cannot be read is refused rather than defaulted to HUMAN,
+     * because defaulting it is exactly how an agent ends up presented as a
+     * person.
+     */
+    throw new Error('dsh-plugin-desktop: coordination message has no readable sender kind')
+  }
+  return Object.freeze({
+    who: text(value.who, 'who'),
+    principalKind: kind,
+    ...(optionalText(value.authorshipNote, 'note') === undefined
+      ? {} : { authorshipNote: text(value.authorshipNote, 'note') }),
+    body: technicalText(value.body, 'body'),
+    when: text(value.when, 'when'),
+    ...(optionalText(value.intentLabel, 'intent') === undefined
+      ? {} : { intentLabel: text(value.intentLabel, 'intent') }),
+    sequence: typeof value.sequence === 'number' ? value.sequence : 0,
+    packets: Object.freeze(list(value.packets ?? [], 'packets').map(parsePacketCard)),
+    otherReferences: textList(value.otherReferences ?? [], 'references'),
+    technical: technicalList(value.technical ?? [], 'technical'),
+  })
+}
+
+function parseThreadRow(value: unknown): CollabThreadRow {
+  if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid coordination thread')
+  return Object.freeze({
+    subject: text(value.subject, 'subject'),
+    aboutLine: text(value.aboutLine, 'about'),
+    participants: textList(value.participants ?? [], 'participants'),
+    messageCount: typeof value.messageCount === 'number' ? value.messageCount : 0,
+    ...(optionalText(value.lastMessageAt, 'when') === undefined
+      ? {} : { lastMessageAt: text(value.lastMessageAt, 'when') }),
+    archived: value.archived === true,
+    messages: Object.freeze(list(value.messages ?? [], 'messages').map(parseMessageRow)),
+    decisionSubjects: textList(value.decisionSubjects ?? [], 'decisions'),
+    technical: technicalList(value.technical ?? [], 'technical'),
+  })
+}
+
+export function parseCollabPacketState(value: unknown): CollabPacketState {
+  if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid packet state')
+  if (optionalText(value.unavailableReason, 'reason') !== undefined) {
+    return Object.freeze({
+      verdict: 'UNRESOLVABLE',
+      humanSummary: technicalText(value.unavailableReason, 'reason'),
+      unavailableReason: technicalText(value.unavailableReason, 'reason'),
+    })
+  }
+  return Object.freeze({
+    verdict: text(value.verdict, 'verdict'),
+    humanSummary: technicalText(value.humanSummary, 'summary'),
+    ...(optionalText(value.snapshotSourceRevision, 'rev') === undefined
+      ? {} : { snapshotSourceRevision: text(value.snapshotSourceRevision, 'rev') }),
+    ...(optionalText(value.snapshotTargetRevision, 'rev') === undefined
+      ? {} : { snapshotTargetRevision: text(value.snapshotTargetRevision, 'rev') }),
+    ...(optionalText(value.currentSourceRevision, 'rev') === undefined
+      ? {} : { currentSourceRevision: text(value.currentSourceRevision, 'rev') }),
+    ...(optionalText(value.currentTargetRevision, 'rev') === undefined
+      ? {} : { currentTargetRevision: text(value.currentTargetRevision, 'rev') }),
   })
 }
 
@@ -760,6 +940,48 @@ export function createAeraCollabApi(
         throw new Error('dsh-plugin-desktop: invalid Aera Collab open response')
       }
     },
+    async coordinate(request: Record<string, unknown>) {
+      const response = await fetcher(COORDINATION_PATH, {
+        method: 'POST',
+        credentials: 'same-origin',
+        redirect: 'error',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      })
+      /*
+       * A refusal carries the service's own sentence, and that sentence is
+       * what the person needs to read. Replacing it with a status code would
+       * throw away the only explanation they are going to get.
+       */
+      if (!response.ok) {
+        let stated: string | undefined
+        try {
+          const failure = await response.json() as unknown
+          if (isObject(failure) && typeof failure.error === 'string') stated = failure.error
+        } catch {
+          stated = undefined
+        }
+        throw new Error(stated ?? `dsh-plugin-desktop: the coordination action was refused (${String(response.status)})`)
+      }
+      const body = await readResponse(response)
+      if (!isObject(body) || body.ok !== true) {
+        throw new Error('dsh-plugin-desktop: invalid Aera Collab coordination response')
+      }
+      return body.result
+    },
+    async packetState(packetId: string) {
+      const response = await fetcher(
+        `${PACKET_STATE_PATH}?packetId=${encodeURIComponent(packetId)}`,
+        {
+          method: 'GET',
+          credentials: 'same-origin',
+          redirect: 'error',
+          cache: 'no-store',
+          headers: { 'Accept': 'application/json' },
+        },
+      )
+      return parseCollabPacketState(await readResponse(response))
+    },
   })
 }
 
@@ -768,4 +990,6 @@ export const aeraCollabPaths = Object.freeze({
   resolve: RESOLVE_PATH,
   view: VIEW_PATH,
   open: WORK_CONTEXT_OPEN_PATH,
+  coordination: COORDINATION_PATH,
+  packetState: PACKET_STATE_PATH,
 })

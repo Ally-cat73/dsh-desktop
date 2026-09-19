@@ -17,6 +17,7 @@ import {
   toCheckpointRowView,
   toCompareView,
   toLineRowView,
+  toPacketCardView,
   toParticipantRowView,
 } from '../src/aera-collab-code-view.ts'
 import { parseWorkContextAction } from '../src/work-context-window.ts'
@@ -347,22 +348,23 @@ describe('participants, activity, checkpoints and the rail', () => {
 
   it('the rail carries the counts, and the counts live only there', () => {
     const rail = buildRail({
-      activity: 12, checkpoints: 4, changedFiles: 3, evidence: 2, discussionsDecisions: 5, archived: 1,
+      activity: 12, checkpoints: 4, changedFiles: 3, evidence: 2, discussionsDecisions: 5, coordination: 2, archived: 1,
     })
     expect(rail.map((tab) => tab.section)).toEqual([...COLLAB_RAIL_SECTIONS])
     expect(rail.map((tab) => tab.label)).toEqual([
-      'Activity', 'Checkpoints', 'Changed files', 'Evidence', 'Discussions & decisions', 'Archived',
+      'Activity', 'Checkpoints', 'Changed files', 'Evidence', 'Discussions & decisions', 'Messages', 'Archived',
     ])
     expect(rail.find((tab) => tab.section === 'DISCUSSIONS_DECISIONS')?.count).toBe(5)
     expect(rail.find((tab) => tab.section === 'ACTIVITY')?.count).toBe(12)
     expect(rail.find((tab) => tab.section === 'ARCHIVED')?.count).toBe(1)
     expect(rail.find((tab) => tab.section === 'CHANGED_FILES')?.count).toBe(3)
+    expect(rail.find((tab) => tab.section === 'COORDINATION')?.count).toBe(2)
   })
 
   it('an uncomputed count is ABSENT with a stated reason — never a zero that means "unknown"', () => {
     // No Compare has been opened, so there is no changed-file count to give.
     const rail = buildRail({
-      activity: 4, checkpoints: 0, evidence: 4, discussionsDecisions: 0, archived: 0,
+      activity: 4, checkpoints: 0, evidence: 4, discussionsDecisions: 0, coordination: 0, archived: 0,
     })
     const changed = rail.find((tab) => tab.section === 'CHANGED_FILES')
 
@@ -398,5 +400,111 @@ describe('participants, activity, checkpoints and the rail', () => {
   it('an empty Discussions & decisions section says why, and says a chat turn is not a decision', () => {
     expect(NO_DISCUSSIONS_OR_DECISIONS).toContain('explicit decision act')
     expect(NO_DISCUSSIONS_OR_DECISIONS).toContain('never becomes one')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// §17/§56 — a shared comparison names the Working Lines it compares.
+// Independent review R1, finding 1.
+describe('toPacketCardView — naming the Working Lines', () => {
+  const packet = {
+    packetVersion: 'CoordinationPacketV1',
+    packetId: 'aera:coordination-packet:abc12345',
+    workOrderId: 'WO-TEST-CARD-001',
+    subject: 'WORKING_LINE_COMPARE',
+    evidenceIds: [],
+    decisionIds: [],
+    observedAt: '2026-09-19T00:00:00.000Z',
+    observedBy: {
+      principalId: 'aera:participant:10000000-0000-4000-8000-000000000001',
+      principalKind: 'HUMAN',
+      displayName: 'Alyshia Daley',
+    },
+    packetDigest: `sha256:${'a'.repeat(64)}`,
+    authority: {
+      authorisingWorkOrderId: 'WO-TEST-CARD-001',
+      recordedByPrincipalId: 'aera:participant:10000000-0000-4000-8000-000000000001',
+      participationSessionId: 'session-1',
+      delegationId: 'delegation-1',
+      authorityMode: 'RECORDED_NOT_ENFORCED',
+    },
+    comparison: {
+      sourceRevision: 'source111',
+      targetRevision: 'target222',
+      filesChanged: 17,
+      filesChangedOnBothLines: 3,
+      filesChangedOnlyOnSource: 12,
+      filesChangedOnlyOnTarget: 2,
+      textualConflicts: 1,
+      linesAdded: 402,
+      linesRemoved: 118,
+      structuralDeltaAvailable: false,
+    },
+  } as unknown as Parameters<typeof toPacketCardView>[0]
+
+  it('renders Working Line NAMES when the packet cites lines that have them', () => {
+    const card = toPacketCardView(packet, undefined, { source: 'Jordan', target: 'Integration' })
+    // §56: "which Working Lines" — not two hex revisions.
+    expect(card.operands).toBe('Jordan → Integration')
+    expect(card.operands).not.toContain('source111')
+  })
+
+  it('falls back to the revision where a side has no durable Working Line', () => {
+    /*
+     * The fallback is truthful, not a degradation: a side with no durable
+     * record has no name, and printing the revision beats inventing a label.
+     */
+    const card = toPacketCardView(packet, undefined, { target: 'Integration' })
+    expect(card.operands).toBe('source111 → Integration')
+  })
+
+  it('names nothing when the packet cites no lines at all', () => {
+    const card = toPacketCardView(packet)
+    expect(card.operands).toBe('source111 → target222')
+  })
+
+  it('still carries the deterministic counts, whatever the operands are called', () => {
+    const card = toPacketCardView(packet, undefined, { source: 'Jordan', target: 'Integration' })
+    expect(card.facts).toContain('17 changed files')
+    expect(card.facts).toContain('3 changed on both lines')
+    expect(card.facts).toContain('1 textual conflict')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Amendment §6 — Compare defaults to the bounded summary.
+describe('§6 — the comparison headline is the answer, the file list is disclosure', () => {
+  it('carries the bounded deterministic summary in the headline', () => {
+    const summary = {
+      summaryVersion: 'CodeCompareSummaryV1',
+      from: { kind: 'REVISION', revision: 'aaa' },
+      to: { kind: 'REVISION', revision: 'bbb' },
+      fromRevision: 'aaa', toRevision: 'bbb',
+      totals: {
+        filesAdded: 1, filesRemoved: 0, filesRenamed: 0, filesModified: 2,
+        linesAdded: 10, linesRemoved: 4,
+        filesChangedOnBothLines: 2, filesChangedOnlyOnSource: 1, filesChangedOnlyOnTarget: 0,
+      },
+      files: [
+        { kind: 'MODIFIED', path: 'a.ts', changedOnBothLines: true, textuallyConflicted: true },
+        { kind: 'MODIFIED', path: 'b.ts', changedOnBothLines: true, textuallyConflicted: false },
+        { kind: 'ADDED', path: 'c.ts', changedOnBothLines: false, textuallyConflicted: false },
+      ],
+      unrepresentable: [],
+      structuralDeltaUnsupported: [],
+      structuralDeltaAvailable: false,
+      isCanonical: false,
+      computedAt: '2026-09-19T00:00:00.000Z',
+    } as unknown as CodeCompareSummaryV1
+
+    const view = toCompareView({ summary, fromName: 'Jordan', toName: 'Integration' })
+    // §6's five facts, all in the summary line rather than in a wall of paths.
+    expect(view.headline).toContain('3 files')
+    expect(view.headline).toContain('2 files changed on both lines')
+    expect(view.headline).toContain('+10 / −4')
+    expect(view.from.name).toBe('Jordan')
+    expect(view.to.name).toBe('Integration')
+    // The rows remain available — disclosed, not deleted.
+    expect(view.files).toHaveLength(3)
   })
 })

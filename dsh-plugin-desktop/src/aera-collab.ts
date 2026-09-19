@@ -30,6 +30,12 @@ import {
   handleAeraCollabViewRequest,
   handleAeraWorkContextOpenRequest,
 } from './aera-collab-route.ts'
+import {
+  AERA_COLLAB_COORDINATION_PATH,
+  AERA_COLLAB_PACKET_STATE_PATH,
+  handleAeraCollabCoordinationRequest,
+  handleAeraCollabPacketStateRequest,
+} from './aera-collab-coordination-route.ts'
 import { CollabWorkspaceService, resolveCollabConfig } from './aera-collab-service.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
@@ -110,6 +116,99 @@ export function apply(ctx: Context): void {
     }),
     'aera-collab: workspace Work Order resolve route',
   )
+  /*
+   * COORDINATION ROUTES (WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-
+   * WORKING-LINE-HANDOFF-001 §35). The first writes this surface has ever
+   * offered. They stay behind POST for the same reason joining does: they
+   * change durable institutional records. The packet-state read below is a
+   * GET, because resolving where the world is now changes nothing.
+   */
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_COLLAB_COORDINATION_PATH,
+      handler: (req, res) => {
+        void handleAeraCollabCoordinationRequest(
+          req,
+          res,
+          rendererOrigin,
+          async (request) => {
+            switch (request.action) {
+              case 'OPEN_THREAD':
+                return await service.openCoordinationThread({
+                  subject: request.subject ?? '',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                })
+              case 'POST_MESSAGE':
+                return await service.postCoordinationMessage({
+                  threadId: request.threadId ?? '',
+                  body: request.body ?? '',
+                  requestId: request.requestId ?? '',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                  ...(request.intent === undefined ? {} : { intent: request.intent }),
+                  ...(request.packetId === undefined ? {} : { packetId: request.packetId }),
+                  ...(request.parentMessageId === undefined ? {} : { parentMessageId: request.parentMessageId }),
+                })
+              case 'SHARE_COMPARE':
+                return await service.shareComparePacket({
+                  ...(request.compareLineIndex === undefined ? {} : { compareLineIndex: request.compareLineIndex }),
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                })
+              case 'SHARE_COMPARE_TO_THREAD':
+                return await service.shareCompareToThread({
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                  ...(request.compareLineIndex === undefined ? {} : { compareLineIndex: request.compareLineIndex }),
+                  ...(request.threadId === undefined ? {} : { threadId: request.threadId }),
+                  ...(request.newThreadSubject === undefined ? {} : { newThreadSubject: request.newThreadSubject }),
+                  ...(request.note === undefined ? {} : { note: request.note }),
+                })
+              case 'ACKNOWLEDGE':
+                return await service.acknowledgeCoordinationMessage({
+                  threadId: request.threadId ?? '',
+                  messageId: request.messageId ?? '',
+                  kind: request.kind ?? 'READ',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                })
+              case 'SET_LIFECYCLE':
+                return await service.setCoordinationThreadLifecycle({
+                  threadId: request.threadId ?? '',
+                  lifecycle: request.lifecycle ?? 'ACTIVE',
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                })
+              case 'RECORD_DECISION':
+                return await service.recordDecisionFromThread({
+                  threadId: request.threadId ?? '',
+                  subject: request.subject ?? '',
+                  options: request.options ?? [],
+                  selectedOptionId: request.selectedOptionId ?? '',
+                  ...(request.rationale === undefined ? {} : { rationale: request.rationale }),
+                  ...(request.messageIds === undefined ? {} : { messageIds: request.messageIds }),
+                  ...(request.workOrderId === undefined ? {} : { workOrderId: request.workOrderId }),
+                })
+            }
+          },
+          reportError,
+        )
+      },
+    }),
+    'aera-collab: coordination write route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_COLLAB_PACKET_STATE_PATH,
+      handler: (req, res) => {
+        handleAeraCollabPacketStateRequest(
+          req,
+          res,
+          rendererOrigin,
+          packetId => service.assessPacket(packetId),
+          reportError,
+        )
+      },
+    }),
+    'aera-collab: coordination packet state read route',
+  )
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',
@@ -163,15 +262,30 @@ export function apply(ctx: Context): void {
       label: () => 'Aera: Work Context',
       invoke: () => { window.openView('CONTEXT') },
     })
-    const collab = ctx.desktopRuntime.registerTrayItem({
-      group: 'tools',
-      order: 21,
-      label: () => 'Aera: Collab',
-      invoke: () => { window.openView('COLLAB') },
-    })
+    /*
+     * The `Aera: Collab` tray item is deliberately NOT registered.
+     *
+     * It invoked `window.openView('COLLAB')` — the LEGACY native Collab view,
+     * a different surface from the drawer the §14 decision selected. Shipping
+     * both would leave the product with two unrelated Collab surfaces reached
+     * by two different controls, which is the confusion §18 ("no route
+     * hunting") and the architecture review's advisory 2 both call out.
+     *
+     * It is removed rather than rewired because there is no channel to rewire
+     * it through: tray invocation runs in the Electron main process, the
+     * drawer's open state lives in the renderer's client plugin, and
+     * `ctx.desktopRuntime` exposes no main-to-renderer command path
+     * (`exportDiagnostics`, `locale`, `openProfileCreateWindow`, `openTerminal`,
+     * `platform`, `registerTrayItem`, `updates` — and nothing else). Inventing
+     * one to preserve a duplicate entry point would be more host surgery in
+     * service of the surface we just decided against.
+     *
+     * Collab's single entry point is the sidebar affordance, which is
+     * `scope: 'root'` and therefore present with no Session — the cold-start
+     * case the tray item was originally added to serve.
+     */
     return () => {
       workContext.dispose()
-      collab.dispose()
       window.close()
       void service.closeWorkContext().catch(() => {})
     }
