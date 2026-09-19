@@ -350,6 +350,14 @@ export interface CollabThreadRowView {
 }
 
 export interface CollabDiscussionView {
+  /**
+   * Amendment §3. A coordination thread IS a discussion of this Work Order and
+   * must be listed as one — owner acceptance found a live thread with messages
+   * while DISCUSSIONS & DECISIONS reported zero. The kind is carried so the
+   * reader can tell a durable institutional Discussion from a communication
+   * thread, which are different records, and so the thread can be opened.
+   */
+  readonly kind: 'DISCUSSION' | 'THREAD'
   readonly subject: string
   readonly entryCount: number
   readonly participants: readonly string[]

@@ -227,6 +227,8 @@ export interface CollabDecision {
 }
 
 export interface CollabDiscussion {
+  /** §3: a coordination thread listed as a discussion, or a durable one. */
+  readonly kind: 'DISCUSSION' | 'THREAD'
   readonly subject: string
   readonly entryCount: number
   readonly participants: readonly string[]
@@ -752,10 +754,13 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
     discussions: Object.freeze(list(value.discussions ?? [], 'discussions').map((row): CollabDiscussion => {
       if (!isObject(row)) throw new Error('dsh-plugin-desktop: invalid discussion')
       return Object.freeze({
+        kind: row.kind === 'THREAD' ? 'THREAD' as const : 'DISCUSSION' as const,
         subject: text(row.subject, 'subject'),
         entryCount: typeof row.entryCount === 'number' ? row.entryCount : 0,
         participants: textList(row.participants ?? [], 'participants'),
-        updatedAt: text(row.updatedAt, 'updatedAt'),
+        updatedAt: optionalText(row.updatedAt, 'updatedAt') === undefined
+          ? ''
+          : text(row.updatedAt, 'updatedAt'),
         ...(optionalText(row.latestEntry, 'entry') === undefined
           ? {} : { latestEntry: technicalText(row.latestEntry, 'entry') }),
         technical: technicalList(row.technical ?? [], 'technical'),

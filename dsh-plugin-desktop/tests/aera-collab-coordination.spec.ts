@@ -396,3 +396,91 @@ describe('§21 — a share with no comparison creates no thread either', () => {
     expect(threadCount()).toBe(threadsBefore)
   })
 })
+
+/**
+ * OWNER ACCEPTANCE FAIL — HUMAN COLLAB PROJECTION (amendment §1/§3).
+ *
+ * The substrate was sound; the projection was not. These assert the repair at
+ * the level the owner actually experienced it: the surface the desktop renders.
+ */
+describe('amendment — the human projection of a real thread', () => {
+  it('§1 — the human who authored the messages appears as a participant', async () => {
+    const service = await joined()
+    const { threadId } = await service.openCoordinationThread({
+      subject: 'Projection repair', workOrderId: TEST_WO,
+    })
+    await service.postCoordinationMessage({
+      workOrderId: TEST_WO, threadId, body: 'A durable message.', requestId: 'proj-1',
+    })
+
+    const view = await service.collabView({ workOrderId: TEST_WO })
+    const human = view.participants.find(row => row.principalKind === 'HUMAN')
+    /*
+     * THE DEFECT: the surface listed only agents while every durable message
+     * was authored by a human. Membership asked about governance acts and open
+     * sessions and had never heard of a thread.
+     */
+    expect(human).toBeDefined()
+    expect(human?.displayName).toBe(ownerName)
+    expect(human?.contributionSentence ?? '').toContain('message')
+  })
+
+  it('§3 — the thread is listed under Discussions & decisions, by reference', async () => {
+    const service = await joined()
+    const { threadId } = await service.openCoordinationThread({
+      subject: 'Listed as a discussion', workOrderId: TEST_WO,
+    })
+    await service.postCoordinationMessage({
+      workOrderId: TEST_WO, threadId, body: 'Body text that must not be copied.', requestId: 'proj-2',
+    })
+
+    const view = await service.collabView({ workOrderId: TEST_WO })
+    const listed = view.discussions.find(row => row.subject === 'Listed as a discussion')
+    expect(listed).toBeDefined()
+    expect(listed?.kind).toBe('THREAD')
+    expect(listed?.entryCount).toBe(1)
+    // The rail no longer says zero while a live thread exists.
+    expect(view.rail.find(tab => tab.section === 'DISCUSSIONS_DECISIONS')?.count ?? 0)
+      .toBeGreaterThan(0)
+    // BY REFERENCE: the threadId travels, the message body does not.
+    expect(listed?.technical.some(line => line.startsWith('aera:collab-thread:'))).toBe(true)
+    expect(JSON.stringify(listed)).not.toContain('Body text that must not be copied.')
+  })
+
+  it('§7 — thread activity is ONE block, not one row per message', async () => {
+    const service = await joined()
+    const { threadId } = await service.openCoordinationThread({
+      subject: 'Collapsed activity', workOrderId: TEST_WO,
+    })
+    for (const index of [1, 2, 3]) {
+      await service.postCoordinationMessage({
+        workOrderId: TEST_WO, threadId, body: `Message ${String(index)}.`,
+        requestId: `proj-block-${String(index)}`,
+      })
+    }
+    const view = await service.collabView({ workOrderId: TEST_WO })
+    const perMessageRows = view.activity.filter(row => row.summary.startsWith('Message posted'))
+    expect(perMessageRows).toHaveLength(0)
+    const block = view.activityBlocks.find(row => row.title.includes('Collapsed activity'))
+    expect(block).toBeDefined()
+    expect(block?.title).toContain('3 messages')
+  })
+
+  it('§2 — ordinary messages never reach the Evidence section', async () => {
+    const service = await joined()
+    const { threadId } = await service.openCoordinationThread({
+      subject: 'Not evidence', workOrderId: TEST_WO,
+    })
+    await service.postCoordinationMessage({
+      workOrderId: TEST_WO, threadId, body: 'Just talking.', requestId: 'proj-ev',
+    })
+    const view = await service.collabView({ workOrderId: TEST_WO })
+    for (const row of view.evidence) {
+      expect(row.label).not.toContain('Message posted')
+      expect(row.label).not.toContain('Opened coordination thread')
+    }
+    for (const card of view.evidenceCards) {
+      expect(card.subject).not.toContain('Message posted')
+    }
+  })
+})

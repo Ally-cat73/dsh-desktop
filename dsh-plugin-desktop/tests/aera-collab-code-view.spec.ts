@@ -470,3 +470,41 @@ describe('toPacketCardView — naming the Working Lines', () => {
     expect(card.facts).toContain('1 textual conflict')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Amendment §6 — Compare defaults to the bounded summary.
+describe('§6 — the comparison headline is the answer, the file list is disclosure', () => {
+  it('carries the bounded deterministic summary in the headline', () => {
+    const summary = {
+      summaryVersion: 'CodeCompareSummaryV1',
+      from: { kind: 'REVISION', revision: 'aaa' },
+      to: { kind: 'REVISION', revision: 'bbb' },
+      fromRevision: 'aaa', toRevision: 'bbb',
+      totals: {
+        filesAdded: 1, filesRemoved: 0, filesRenamed: 0, filesModified: 2,
+        linesAdded: 10, linesRemoved: 4,
+        filesChangedOnBothLines: 2, filesChangedOnlyOnSource: 1, filesChangedOnlyOnTarget: 0,
+      },
+      files: [
+        { kind: 'MODIFIED', path: 'a.ts', changedOnBothLines: true, textuallyConflicted: true },
+        { kind: 'MODIFIED', path: 'b.ts', changedOnBothLines: true, textuallyConflicted: false },
+        { kind: 'ADDED', path: 'c.ts', changedOnBothLines: false, textuallyConflicted: false },
+      ],
+      unrepresentable: [],
+      structuralDeltaUnsupported: [],
+      structuralDeltaAvailable: false,
+      isCanonical: false,
+      computedAt: '2026-09-19T00:00:00.000Z',
+    } as unknown as CodeCompareSummaryV1
+
+    const view = toCompareView({ summary, fromName: 'Jordan', toName: 'Integration' })
+    // §6's five facts, all in the summary line rather than in a wall of paths.
+    expect(view.headline).toContain('3 files')
+    expect(view.headline).toContain('2 files changed on both lines')
+    expect(view.headline).toContain('+10 / −4')
+    expect(view.from.name).toBe('Jordan')
+    expect(view.to.name).toBe('Integration')
+    // The rows remain available — disclosed, not deleted.
+    expect(view.files).toHaveLength(3)
+  })
+})

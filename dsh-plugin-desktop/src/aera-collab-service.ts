@@ -71,6 +71,7 @@ import {
   toParticipantRowView,
   type CollabCodeView,
   type CollabCompareView,
+  type CollabDiscussionView,
   type CollabThreadRowView,
   type CollabLineRowView,
   type CollabLiveProviderStateView,
@@ -1924,7 +1925,9 @@ export class CollabWorkspaceService {
         ...(compare === undefined ? {} : { changedFiles: compare.files.length }),
         evidence: context.evidence.length + surface.institutional.evidenceCards.length,
         discussionsDecisions:
-          surface.institutional.discussions.length + surface.institutional.decisionContexts.length,
+          surface.institutional.discussions.length
+          + surface.institutional.threadDiscussions.length
+          + surface.institutional.decisionContexts.length,
         coordination: threads.length,
         archived: surface.archivedLineIds.length,
       }),
@@ -1965,9 +1968,30 @@ export class CollabWorkspaceService {
         )
       }),
       decisions: surface.institutional.decisionContexts.map(toDecisionView),
-      discussions: surface.institutional.discussions.map(discussion => {
+      discussions: [
+        /*
+         * §3: threads first — they are the live conversation, and a reader
+         * looking at "Discussions & decisions" wants the thing currently being
+         * talked about before the archive of what was. By reference: the
+         * counts come from the projection, the messages stay in the thread.
+         */
+        ...surface.institutional.threadDiscussions.map((thread): CollabDiscussionView => ({
+          kind: 'THREAD' as const,
+          subject: thread.subject,
+          entryCount: thread.messageCount,
+          participants: [...thread.participants],
+          updatedAt: thread.lastMessageAt ?? thread.firstMessageAt ?? '',
+          ...(thread.aboutLine === '' ? {} : { latestEntry: thread.aboutLine }),
+          technical: [
+            thread.threadId,
+            ...(thread.packetCount === 0 ? [] : [`${String(thread.packetCount)} shared comparison(s)`]),
+            ...thread.decisionIds,
+          ],
+        })),
+        ...surface.institutional.discussions.map(discussion => {
         const latest = discussion.entries.at(-1)
         return {
+          kind: 'DISCUSSION' as const,
           subject: discussion.subject,
           entryCount: discussion.entries.length,
           participants: [...discussion.participants],
@@ -1975,8 +1999,10 @@ export class CollabWorkspaceService {
           ...(latest === undefined ? {} : { latestEntry: latest.text }),
           technical: [discussion.discussionId],
         }
-      }),
+        }),
+      ],
       ...(surface.institutional.discussions.length === 0
+        && surface.institutional.threadDiscussions.length === 0
         && surface.institutional.decisionContexts.length === 0
         ? { discussionsDecisionsEmptyReason: NO_DISCUSSIONS_OR_DECISIONS }
         : {}),

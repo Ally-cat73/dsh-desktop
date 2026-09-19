@@ -89,6 +89,8 @@ describe('§32, §34 — participant contribution', () => {
     principalKind: 'HUMAN',
     decisions: 8, authorisations: 3, verifications: 1, discussions: 12,
     checkpoints: 0, integrationReceipts: 0, workingLines: 0, recordedActs: 0,
+    // Amendment §1: coordination participation counts.
+    messagesAuthored: 0, threadsOpened: 0, packetsShared: 0,
     meaningfulActivityCount: 0,
     lastContributionAt: '2026-09-17T17:35:00.000Z',
     summarySentence: '8 decisions · 3 authorisations · 1 verification · 12 discussions',
