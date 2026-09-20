@@ -111,7 +111,20 @@ describe('the Collab surface read path', () => {
     expect(compare?.to.name).toBeTruthy()
     expect(compare?.directionSentence).toBeTruthy()
     expect(compare?.headline).toBeTruthy()
-    expect(compare?.files.length ?? 0).toBeGreaterThan(0)
+    /*
+     * §36 — the service now withholds the per-file rows above its wire budget
+     * rather than shipping thousands of them so the surface can draw three
+     * numbers. So a comparison presents EITHER rows OR a reason, never
+     * silently neither, and the aggregate counts are complete in both cases.
+     */
+    const withheld = compare?.filesUnavailableReason
+    if (withheld === undefined) {
+      expect(compare?.files.length ?? 0).toBeGreaterThan(0)
+    } else {
+      expect(compare?.files.length ?? 0).toBe(0)
+      expect(withheld).toMatch(/counts above are complete/)
+      expect(compare?.headline).toMatch(/\d+ files?/)
+    }
     for (const file of compare?.files.slice(0, 20) ?? []) {
       // The kind is a WORD, never colour alone, and the accessible name
       // repeats every fact the eye is given.
@@ -119,9 +132,26 @@ describe('the Collab surface read path', () => {
       expect(file.accessibleName).toContain(file.path)
     }
 
-    // The renderer must be able to accept what the main process produced.
+    /*
+     * The renderer must be able to accept what the main process produced —
+     * and for a LARGE comparison that no longer means "row for row".
+     *
+     * This assertion used to demand an exact row-count match, and it was the
+     * first place the defect showed: on a checkout thousands of files from
+     * Integration the parse THREW, which aborted the whole surface and blanked
+     * the panel in the shipped product. The parser now withholds the rows and
+     * states why, so the contract the renderer must honour is: the surface
+     * parses, and either the rows match or their absence is explained.
+     */
     const parsed = parseCollabSurface(JSON.parse(JSON.stringify(view)) as unknown)
-    expect('compare' in parsed ? parsed.compare?.files.length : 0).toBe(compare?.files.length)
+    expect('workOrderId' in parsed).toBe(true)
+    if (!('workOrderId' in parsed)) throw new Error('surface did not parse')
+    if (parsed.compare?.filesUnavailableReason === undefined) {
+      expect(parsed.compare?.files.length).toBe(compare?.files.length)
+    } else {
+      expect(parsed.compare.files).toHaveLength(0)
+      expect(parsed.compare.filesUnavailableReason).toContain(String(compare?.files.length ?? 0))
+    }
 
     expect(digest(store)).toBe(before)
   }, 180_000)
@@ -191,5 +221,76 @@ describe('the Collab surface read route', () => {
     ]) {
       expect(parseCollabViewQuery(url)).toBeUndefined()
     }
+  })
+})
+
+/**
+ * WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-WORKING-LINE-HANDOFF-001 §21.
+ *
+ * ROOT CAUSE, MEASURED ON THE INSTALLED PRODUCT: pressing Compare blanked the
+ * entire Collab panel with "invalid changed files". The observed checkout was
+ * `shared/wo-agc-001-wave0`, which is **2,003 changed files** from
+ * `origin/dev` — three over the 2,000 `MAX_LIST` ceiling. The oversized list
+ * threw out of the shared `list()` helper, `parseCollabSurface` aborted, and
+ * threads, messages and evidence went with it.
+ *
+ * A surface whose whole job is to be readable must degrade the section it
+ * cannot draw and say why.
+ */
+describe('§21 — an oversized comparison degrades that section, never the panel', () => {
+  const compareWith = (fileCount: number): unknown => ({
+    workOrderId: 'WO-TEST-OVERSIZE-001',
+    repositories: [],
+    authorityMode: 'RECORDED_NOT_ENFORCED',
+    authorityModeNote: 'recorded, not enforced',
+    assembledAt: '2026-09-19T00:00:00.000Z',
+    participants: [], lines: [], rail: [], activity: [], checkpoints: [],
+    evidence: [], evidenceCards: [], activityBlocks: [], decisions: [], discussions: [],
+    threads: [], coordinationDeliveryNote: 'note', discussionNote: 'note',
+    archivedCount: 0, projectedAt: '2026-09-19T00:00:00.000Z',
+    compare: {
+      heading: 'Read-only comparison of two states',
+      banner: 'Compare A with B',
+      from: { side: 'FROM', name: 'A' },
+      to: { side: 'TO', name: 'B' },
+      directionSentence: 'A is ahead of B',
+      headline: `${String(fileCount)} changed files`,
+      files: Array.from({ length: fileCount }, (_unused, index) => ({
+        kindWord: 'Modified', path: `src/file-${String(index)}.ts`,
+        bothLines: false, conflicted: false, structuralDelta: [],
+        accessibleName: `Modified src/file-${String(index)}.ts`,
+      })),
+      unrepresentable: [],
+      technical: ['from aaa', 'to bbb'],
+      computedAt: '2026-09-19T00:00:00.000Z',
+    },
+  })
+
+  it('2,003 files — the exact count that blanked the installed panel — parses', () => {
+    const surface = parseCollabSurface(compareWith(2_003))
+    expect('workOrderId' in surface).toBe(true)
+    if (!('workOrderId' in surface)) throw new Error('surface did not parse')
+    // The panel survives, and the rest of it is intact.
+    expect(surface.workOrderId).toBe('WO-TEST-OVERSIZE-001')
+    // The file rows are withheld, and the reason is stated rather than implied.
+    expect(surface.compare?.files).toHaveLength(0)
+    expect(surface.compare?.filesUnavailableReason).toContain('2003')
+    expect(surface.compare?.filesUnavailableReason).toContain('2000')
+    // The counts, which are the useful half of a large comparison, survive.
+    expect(surface.compare?.headline).toBe('2003 changed files')
+  })
+
+  it('a comparison inside the ceiling still lists its files', () => {
+    const surface = parseCollabSurface(compareWith(3))
+    if (!('workOrderId' in surface)) throw new Error('surface did not parse')
+    expect(surface.compare?.files).toHaveLength(3)
+    expect(surface.compare?.filesUnavailableReason).toBeUndefined()
+  })
+
+  it('a genuinely malformed files member is still refused', () => {
+    // Bounded is not the same as credulous: a non-array is still a defect.
+    const broken = compareWith(1) as { compare: { files: unknown } }
+    broken.compare.files = 'not an array'
+    expect(() => parseCollabSurface(broken)).toThrow(/changed files/)
   })
 })

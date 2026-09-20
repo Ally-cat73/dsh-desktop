@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { applyAdvancedShell } from './advanced-shell.ts'
 import { applyAeraBrand } from './aera-brand.tsx'
 import { startRendererBootReporter } from './boot-health.ts'
+import type { CurrentSessionSource } from './gateway-readiness.ts'
 import { applyAeraCollabEntryPoints } from './aera-collab-panel.ts'
 import { applyDesktopSettings } from './desktop-settings.ts'
 import { installDesktopDirectoryPickerBridge, requestDesktopDirectoryValidation } from './directory-picker.ts'
@@ -74,6 +75,29 @@ export const inject = [
   'locale',
   'connection',
   'conversation',
+  /*
+   * `layout` is deliberately NOT declared any more.
+   *
+   * It was added after §65 acceptance found the Collab affordance inert: the
+   * old details-column host read `ctx.layout` at press time, cordis refuses any
+   * service a plugin has not declared, and the read threw out of the click
+   * handler with no visible symptom. The declaration was the correct fix for
+   * that host.
+   *
+   * The §14 decision removed that host. Collab now lives on `shell.overlay` and
+   * opens by flipping a plain observable, so nothing in this client graph reads
+   * `ctx.layout` at all — verified by the static service-contract check in
+   * `tests/aera-collab-service-contract.spec.ts`. Keeping a REQUIRED inject
+   * nothing reads is not free: cordis will not run `apply` for a plugin whose
+   * required service is unprovided, so this would turn "ui-layout absent" into
+   * "no desktop client surfaces at all" for a dependency this plugin no longer
+   * has.
+   *
+   * Note for the record: round 4 reported that declaring `layout` was what made
+   * TypeScript resolve `ctx.sessions` to ui-layout's `SessionStore`, forcing a
+   * cast at the readiness call site. Removing the declaration proved that
+   * wrong — the cast is still required. See the corrected note there.
+   */
   'remote',
   'settingsScope',
   'sessions',
@@ -104,7 +128,24 @@ export function apply(ctx: ClientContext): void {
   )
   ctx.effect(
     () => installAeraGatewayReadinessClient({
-      current: ctx.sessions.currentProvideInfo,
+      /*
+       * `ctx.sessions` is typed as ui-layout's `SessionStore`, which does not
+       * declare this member; the RUNTIME value is the sessions service, which
+       * does. There is exactly one runtime provider of the name —
+       * `dsh-client-runtime/lib/client.js:8948`,
+       * `rootCtx.reflect.provide("sessions", this, void 0)` — so no typing
+       * change can alter which object this resolves to, and the cast erases to
+       * the same property read.
+       *
+       * CORRECTED: review round 4 attributed this conflict to declaring
+       * `layout` in `inject`. That is not the cause. `layout` has now been
+       * removed from `inject` entirely (see the note above) and `tsc` still
+       * resolves `ctx.sessions` to `SessionStore` — the augmentation arrives
+       * with ui-layout's types regardless of what this plugin declares. The
+       * cast is therefore load-bearing on its own account, not a side effect of
+       * a declaration that could be dropped to remove it.
+       */
+      current: (ctx.sessions as unknown as { currentProvideInfo: CurrentSessionSource }).currentProvideInfo,
       blocks: ctx.conversation.blocks,
     }),
     'dsh-plugin-desktop: Aera Gateway Session readiness',

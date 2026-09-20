@@ -1,28 +1,46 @@
 /**
- * The open/closed state of the cold-start Collab picker.
+ * The open/closed state of the Collab drawer.
  *
- * WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001, review finding D2.
+ * WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-WORKING-LINE-HANDOFF-001,
+ * owner superseding continuation `CONTINUE_HOST_RECOVERY.md` §13 Option B.
  *
- * The conversation tab strip is `scope: 'session'`, so with no Session open the
- * tab does not exist and the sidebar is the ONLY way in. That path used to open
- * the native window on an empty WorkOrderId field — a typed route, which the
- * continuation order forbids outright. It now opens a picker inside the main
- * shell instead.
+ * ## Why there is no column here any more
  *
- * The sidebar button and the overlay are two separate slot registrations that
- * have to agree about one piece of state, so it lives here: a minimal
- * observable shared by both, with no dependency on either.
+ * This controller used to know about the shell's right-hand details column and
+ * prefer it, falling back to a shell-level picker. The §14 host decision
+ * removed that: the right region is the single, session-scoped `details` seat,
+ * owned by `@deepseek-ai/dsh-client-ui-conversation`, whose `chatStore` is a
+ * closure local the package never exports. Collab could only have sat there by
+ * patching the vendor further (§12) or by displacing ordinary tool Details
+ * (§15). It now lives on `shell.overlay` — public, `kind: 'list'`,
+ * `scope: 'root'` — so there is exactly one way in and exactly one state to
+ * hold, and no column to negotiate with.
+ *
+ * ## Why open means open
+ *
+ * `reveal()` used to toggle: pressing the affordance while Collab was already
+ * showing closed it. That was defensible when the affordance was also the
+ * column's only control, but under Option B the drawer carries its own close
+ * button and Escape, so a toggling entry point is just a way to make the one
+ * visible "Open Collab…" control sometimes do the opposite of what it says.
+ * §18 asks for one click to open. `reveal()` opens. Closing is `close()`, and
+ * the reader reaches it from the drawer.
  */
 
-/** Notified whenever the picker opens or closes. */
+/** Notified whenever the drawer opens or closes. */
 type Listener = (open: boolean) => void
 
-/** Shared open/closed state for the shell-level Collab picker. */
+/** Shared open/closed state for the shell-level Collab drawer. */
 export interface AeraCollabEntryController {
   isOpen(): boolean
   open(): void
   close(): void
-  toggle(): void
+  /**
+   * Open Collab. Idempotent, and never closes: see the note above. Kept as a
+   * named affordance verb, distinct from `open()`, so the entry points read as
+   * intent rather than as state assignment.
+   */
+  reveal(): void
   subscribe(listener: Listener): () => void
 }
 
@@ -33,20 +51,18 @@ export function createAeraCollabEntryController(): AeraCollabEntryController {
   const publish = (): void => {
     for (const listener of [...listeners]) listener(open)
   }
+  const doOpen = (): void => {
+    if (open) return
+    open = true
+    publish()
+  }
   return Object.freeze({
     isOpen: () => open,
-    open: () => {
-      if (open) return
-      open = true
-      publish()
-    },
+    open: doOpen,
+    reveal: doOpen,
     close: () => {
       if (!open) return
       open = false
-      publish()
-    },
-    toggle: () => {
-      open = !open
       publish()
     },
     subscribe: (listener: Listener) => {

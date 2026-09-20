@@ -8,8 +8,11 @@
  * no Session at all — which makes this the ONLY cold-start path, and therefore
  * the one that must not ask anyone to type a WorkOrderId.
  *
- * It used to open the native window on an empty id field. It now opens the
- * shell-level picker, landing on search with ACTIVE work already listed.
+ * It used to open the native window on an empty id field. It now asks the
+ * controller to open the Collab drawer, which is hosted on `shell.overlay` —
+ * itself `scope: 'root'`, so the drawer exists with no Session just as this
+ * button does. `reveal()` opens and never closes; the drawer carries its own
+ * Close.
  */
 
 import { useSyncExternalStore } from 'react'
@@ -40,7 +43,7 @@ export function AeraCollabSidebarAction({ controller, t }: AeraCollabSidebarActi
         type="button"
         className="aera-collab-sidebar-button"
         aria-expanded={open}
-        onClick={() => { controller.toggle() }}
+        onClick={() => { controller.reveal() }}
       >
         {t('nav')}
       </button>

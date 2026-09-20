@@ -2,7 +2,7 @@
 
 import { AERA_GATEWAY_READINESS_PATH } from '../aera-gateway-readiness-contract.ts'
 
-interface CurrentSessionSource {
+export interface CurrentSessionSource {
   getSnapshot(): { readonly sessionId: string | undefined }
   subscribe(listener: () => void): () => void
 }

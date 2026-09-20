@@ -29,6 +29,7 @@
  * context, never a silently created second store.
  */
 
+import { classifyDisplayedZeros, countsAsRendered } from './aera-collab-zero-classifier.ts'
 import { execFileSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, resolve, sep } from 'node:path'
@@ -53,9 +54,14 @@ import {
   type RepositoryReferenceResolution,
 } from '@aera/participation-runtime'
 import {
+  COORDINATION_DELIVERY_NOTE,
   DISCUSSION_NOTE,
+  NO_COORDINATION_THREADS,
   NO_DISCUSSIONS_OR_DECISIONS,
   buildRail,
+  toMessageRowView,
+  toPacketCardView,
+  toThreadRowView,
   toActivityBlockView,
   toDecisionView,
   toEvidenceCardView,
@@ -66,10 +72,19 @@ import {
   toParticipantRowView,
   type CollabCodeView,
   type CollabCompareView,
+  type CollabDiscussionView,
+  type CollabThreadRowView,
   type CollabLineRowView,
   type CollabLiveProviderStateView,
 } from './aera-collab-code-view.ts'
-import type { CodeTopologyV1 } from '@aera/participation-contracts'
+import {
+  assessPacketState,
+  type CodeCompareSummaryV1,
+  type CodeTopologyV1,
+  type CollabThreadAnchorV1,
+  type CoordinationIntent,
+  type PacketStateAssessmentV1,
+} from '@aera/participation-contracts'
 import { buildProjection } from '@aera/evidentiary-work-graph'
 import type { EngineeringWorkGraphProjectionV1 } from '@aera/evidentiary-work-graph-contracts'
 import {
@@ -225,7 +240,10 @@ export class CollabHonestError extends Error {
       | 'AGENT_UNAVAILABLE'
       | 'INVALID_INPUT'
       | 'EVIDENCE_NOT_FOUND'
-      | 'SOURCE_ACCESS_REFUSED',
+      | 'SOURCE_ACCESS_REFUSED'
+      /* Coordination threads (§21, §20). */
+      | 'COMPARE_UNAVAILABLE'
+      | 'PACKET_NOT_FOUND',
     reason: string,
   ) {
     super(reason)
@@ -242,6 +260,16 @@ export interface CollabAvailability {
 /**
  * Host-side service holding one joined WorkContext at a time.
  */
+/**
+ * §36 — how many per-file comparison rows the service puts on the wire.
+ *
+ * 200 matches the client's own render cap (`MAX_RENDERED_FILES`), so nothing
+ * that would have been drawn is lost; above it the rows are withheld at the
+ * source and the true total is sent in their place. Before this, a 2003-entry
+ * array was shipped so the surface could draw three numbers.
+ */
+const COMPARE_FILE_WIRE_BUDGET = 200
+
 export class CollabWorkspaceService {
   private store: ParticipationStore | null = null
   private baseProjection: EngineeringWorkGraphProjectionV1 | null = null
@@ -1083,6 +1111,705 @@ export class CollabWorkspaceService {
    * institutional identity from a location, which CWL-1 exists to refuse. An
    * honest absence beats an invented id.
    */
+  // ------------------------------------------------------------------
+  // Coordination threads (WO-AERA-COLLAB-RELAY-COORDINATION-THREADS-AND-
+  // WORKING-LINE-HANDOFF-001, §35–§41)
+  //
+  // These are the FIRST renderer-originated writes into the durable Collab
+  // store. Everything the Read-First slice exposed was a projection; sending a
+  // message is not. Each one therefore requires a real joined agent session
+  // under a recorded delegation, exactly as every other write in this service
+  // does — the surface never gets a store handle or a write capability.
+  // ------------------------------------------------------------------
+
+  /**
+   * Project this Work Order's coordination threads for the surface (§35–§40).
+   *
+   * A pure read. Packet movement (§19) is assessed here on each read rather
+   * than stored, which is the whole point: the snapshot in the packet never
+   * changes, and the "has it moved?" line is recomputed every time the reader
+   * looks.
+   */
+  private projectCoordinationThreads(workOrderId: string): readonly CollabThreadRowView[] {
+    const store = this.requireStore()
+    const threads = store.listCollabThreads(workOrderId)
+    if (threads.length === 0) return []
+    const packets = store.listCoordinationPackets(workOrderId)
+    const decisions = store.listDecisions(workOrderId)
+    const workingLineLabels: Record<string, string> = {}
+    for (const line of store.listCodeWorkingLines(workOrderId)) {
+      if (line.label !== undefined) workingLineLabels[line.codeWorkingLineId] = line.label
+    }
+    /*
+     * Assess each packet once per read, not once per message that references
+     * it: a packet shared five times is one comparison, and five identical git
+     * reads would be five times the cost for the same answer.
+     */
+    const assessments = new Map(packets.map(packet => {
+      try {
+        return [packet.packetId, this.assessPacket(packet.packetId)]
+      } catch {
+        // An unresolvable assessment is silence about movement, never a claim
+        // that nothing moved. The card simply omits its state line.
+        return [packet.packetId, undefined]
+      }
+    }))
+    return threads.map(thread => {
+      const messages = store.listCollabMessages(thread.threadId).map(message => toMessageRowView(
+        message,
+        message.references.flatMap(reference => {
+          if (reference.kind !== 'PACKET') return []
+          const packet = packets.find(row => row.packetId === reference.packetId)
+          if (packet === undefined) return []
+          const assessment = assessments.get(packet.packetId)
+          // §56: name the Working Lines the packet cites, where they have names.
+          const names = {
+            ...(packet.sourceWorkingLineId === undefined
+              ? {}
+              : { source: workingLineLabels[packet.sourceWorkingLineId] }),
+            ...(packet.targetWorkingLineId === undefined
+              ? {}
+              : { target: workingLineLabels[packet.targetWorkingLineId] }),
+          }
+          return [toPacketCardView(packet, assessment, names)]
+        }),
+      ))
+      return toThreadRowView({
+        thread,
+        messages,
+        decisionSubjects: thread.decisionIds.flatMap(decisionId => {
+          const decision = decisions.find(row => row.decisionId === decisionId)
+          return decision === undefined ? [] : [decision.subject]
+        }),
+        workingLineLabels,
+      })
+    })
+  }
+
+  /**
+   * The joined session every coordination write runs under, **joining on
+   * demand** when the surface has not joined yet.
+   *
+   * MECHANICAL GUI ACCEPTANCE found this the hard way: the Read-First surface
+   * projects a Work Order WITHOUT joining it (deliberately — a read should not
+   * have to write in order to be read), so every coordination control was
+   * visible, reachable, and refused with "No agent WorkContext is open" the
+   * moment it was pressed. A feature that is present and inert is worse than
+   * one that is absent, because the absent one promises nothing.
+   *
+   * Joining here does not blur the verb boundary the predecessor order drew —
+   * it honours it. That boundary exists because joining writes `sessions.json`
+   * and a GET must not mutate. Every caller of this method is already an
+   * explicit POST about to write durable records, so the session write it
+   * implies is exactly as authorised as the message write it carries.
+   *
+   * The Work Order is taken from the caller where stated, because the renderer
+   * may be looking at an order other than this workspace's default, and a
+   * message must land on the order the sender was actually reading.
+   */
+  private async requireCoordinationAuthority(workOrderId?: string): Promise<{
+    readonly store: ParticipationStore
+    readonly sessionId: string
+    readonly workOrderId: string
+  }> {
+    const store = this.requireStore()
+    const target = workOrderId ?? this.agentWorkOrderId ?? this.resolveDefaultWorkOrder().workOrderId
+    if (target === undefined) {
+      throw new CollabHonestError(
+        'WORK_ORDER_NOT_FOUND',
+        'No Work Order was named and none could be resolved for this workspace, so there is nothing to coordinate about.',
+      )
+    }
+    // Re-join when the surface moved to a different order: a session opened
+    // under one Work Order is not authority over another.
+    if (this.agentSession === null || this.agentClient === null || this.agentWorkOrderId !== target) {
+      await this.openAgentWorkContext(target)
+    }
+    const { session, workOrderId: joined } = this.requireAgentJoined()
+    return { store, sessionId: session.sessionId, workOrderId: joined }
+  }
+
+  /**
+   * The human principal this desktop speaks for, from configuration only.
+   *
+   * §10: a message sent from the product's composer is the PERSON speaking,
+   * not the agent that carried it. The store stamps the kind from its own
+   * registry, so a misconfiguration produces an honest refusal rather than an
+   * agent quietly posing as the owner.
+   */
+  private requireHumanPrincipal(): string {
+    const { principalId } = this.config
+    if (principalId === undefined || !isAeraPrincipalId(principalId)) {
+      throw new CollabHonestError(
+        'AGENT_UNAVAILABLE',
+        'Sending a message needs a canonical AERA_COLLAB_PRINCIPAL_ID for the person sending it. A human sender is never invented.',
+      )
+    }
+    return principalId
+  }
+
+  /** Open a coordination thread (§8, §35). */
+  async openCoordinationThread(input: {
+    readonly subject: string
+    readonly anchors?: readonly CollabThreadAnchorV1[]
+    readonly participantPrincipalIds?: readonly string[]
+    readonly workOrderId?: string
+  }): Promise<{ readonly threadId: string, readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+    const result = store.openCollabThread({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      workOrderId,
+      subject: input.subject,
+      anchors: input.anchors ?? [{ kind: 'WORK_ORDER', workOrderId }],
+      participantPrincipalIds: [
+        ...(input.participantPrincipalIds ?? []),
+        human,
+      ] as unknown as Parameters<ParticipationStore['openCollabThread']>[0]['participantPrincipalIds'],
+      openedByPrincipalId: human as Parameters<ParticipationStore['openCollabThread']>[0]['openedByPrincipalId'],
+    })
+    return { threadId: result.thread.threadId, outcome: result.outcome }
+  }
+
+  /**
+   * Send one message (§9, §31).
+   *
+   * `requestId` comes from the renderer and is the idempotency key: a
+   * double-clicked Send, or a retried request after a dropped response,
+   * resolves to the SAME message rather than a second one.
+   */
+  async postCoordinationMessage(input: {
+    readonly threadId: string
+    readonly body: string
+    readonly intent?: CoordinationIntent
+    readonly packetId?: string
+    readonly parentMessageId?: string
+    readonly requestId: string
+    readonly workOrderId?: string
+  }): Promise<{ readonly messageId: string, readonly outcome: string, readonly sequence: number }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+    const result = store.postCollabMessage({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      threadId: input.threadId as Parameters<ParticipationStore['postCollabMessage']>[0]['threadId'],
+      senderPrincipalId: human as Parameters<ParticipationStore['postCollabMessage']>[0]['senderPrincipalId'],
+      body: input.body,
+      ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(input.packetId === undefined
+        ? {}
+        : { references: [{ kind: 'PACKET' as const, packetId: input.packetId as never }] }),
+      ...(input.parentMessageId === undefined
+        ? {}
+        : { parentMessageId: input.parentMessageId as NonNullable<Parameters<ParticipationStore['postCollabMessage']>[0]['parentMessageId']> }),
+      requestId: input.requestId,
+    })
+    return {
+      messageId: result.message.messageId,
+      outcome: result.outcome,
+      sequence: result.message.sequence,
+    }
+  }
+
+  /**
+   * §21 — SHARE FROM COMPARE.
+   *
+   * The packet is built from the EXACT operands of a Compare that has already
+   * been computed for this surface, not from a fresh recomputation: sharing
+   * "what I am looking at" must send what the sender was actually looking at.
+   * No model call is involved (§41); this is arithmetic over a diff summary.
+   */
+  /**
+   * Resolve the comparison a share would send. **A PURE READ: it computes,
+   * validates and refuses, and writes nothing.**
+   *
+   * Extracted so that every refusal a share can hit — no comparison open, an
+   * unresolvable target, a line that cannot be observed — fires BEFORE any
+   * record is created. Independent review R5-3 found the sequencing defect
+   * this closes: `shareCompareToThread` created a brand-new thread at step 1
+   * and only then called into the packet path, so a share with no comparison
+   * left an empty orphan thread behind. That is the same write-before-validate
+   * shape that produced the orphan packet `a02ba81a`, one level up.
+   */
+  private async resolveCompareForShare(input: {
+    readonly workOrderId: string
+    readonly compareLineIndex?: number
+  }): Promise<{
+    readonly comparison: NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['comparison']>
+    readonly sourceWorkingLineId?: string
+  }> {
+    const view = await this.collabView({
+      workOrderId: input.workOrderId,
+      ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+    })
+    const observed = this.observeWorkingState(input.workOrderId)
+    const topology = await this.deriveObservedTopology(observed)
+    const computed = await this.computeObservedCompare({
+      ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+      lines: view.lines,
+      ...(observed.view === undefined ? {} : { workspaceRoot: observed.view.localPath }),
+      ...(topology === undefined ? {} : { topology }),
+    })
+    const summary = computed.summary
+    if (summary === undefined) {
+      throw new CollabHonestError(
+        'COMPARE_UNAVAILABLE',
+        computed.compareUnavailableReason
+        ?? view.compareUnavailableReason
+        ?? 'There is no computed comparison to share. Open a Compare first \u2014 a packet is a snapshot of a real comparison, never a fabricated one.',
+      )
+    }
+    /*
+     * §17/§56: record which Working Line the SOURCE side was, where the
+     * compared row actually has a durable Working Line record.
+     *
+     * Only the source, deliberately. The target of this comparison is an
+     * accepted integration ref, not a Working Line, so `targetWorkingLineId`
+     * stays absent rather than being filled with something that is not a
+     * Working Line (independent review R2, finding 2).
+     *
+     * The id is read from the row rather than resolved from the branch on
+     * purpose — CWL-1 forbids resolving a Working Line by its branch, label or
+     * path, and a convenient lookup here would be exactly that violation.
+     */
+    const sourceWorkingLineId = input.compareLineIndex === undefined
+      ? undefined
+      : view.lines[input.compareLineIndex]?.codeWorkingLineId
+    /*
+     * §17 lists RepositoryId among the packet's minimum content. Validated
+     * rather than cast: a configured value that is not a canonical
+     * RepositoryId is omitted, because a packet that names the wrong
+     * repository is worse than one that names none (R2, finding 1).
+     */
+    const observedRepositoryId = observed.view !== undefined
+      && isRepositoryId(observed.view.repositoryId)
+      ? observed.view.repositoryId
+      : undefined
+    return {
+      comparison: {
+        ...(observedRepositoryId === undefined ? {} : { repositoryId: observedRepositoryId }),
+        sourceRevision: summary.fromRevision,
+        targetRevision: summary.toRevision,
+        ...(summary.mergeBase === undefined ? {} : { mergeBase: summary.mergeBase }),
+        filesChanged: summary.files.length,
+        filesChangedOnBothLines: summary.totals.filesChangedOnBothLines,
+        filesChangedOnlyOnSource: summary.totals.filesChangedOnlyOnSource,
+        filesChangedOnlyOnTarget: summary.totals.filesChangedOnlyOnTarget,
+        textualConflicts: summary.files.filter(file => file.textuallyConflicted).length,
+        linesAdded: summary.totals.linesAdded,
+        linesRemoved: summary.totals.linesRemoved,
+        structuralDeltaAvailable: false,
+      },
+      ...(sourceWorkingLineId === undefined ? {} : { sourceWorkingLineId }),
+    }
+  }
+
+  /**
+   * §21 — record a Compare packet. The comparison is resolved first and the
+   * packet is written only if that succeeded.
+   */
+  async shareComparePacket(input: {
+    readonly compareLineIndex?: number
+    readonly workOrderId?: string
+  } = {}): Promise<{ readonly packetId: string, readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+    const resolved = await this.resolveCompareForShare({
+      workOrderId: input.workOrderId ?? workOrderId,
+      ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+    })
+    const result = store.recordCoordinationPacket({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      workOrderId,
+      subject: 'WORKING_LINE_COMPARE',
+      ...(resolved.sourceWorkingLineId === undefined
+        ? {}
+        : { sourceWorkingLineId: resolved.sourceWorkingLineId as NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['sourceWorkingLineId']> }),
+      comparison: resolved.comparison,
+      observedByPrincipalId: human as Parameters<ParticipationStore['recordCoordinationPacket']>[0]['observedByPrincipalId'],
+    })
+    return { packetId: result.packet.packetId, outcome: result.outcome }
+  }
+
+  /**
+   * §21 / §35 — SHARE / SEND TO COLLABORATOR, from Compare, with a recipient.
+   *
+   * **Confirm before write, and resolve the recipient FIRST.**
+   *
+   * The first version of this created the packet the moment the button was
+   * pressed and only then looked for somewhere to put it. Mechanical
+   * acceptance duly produced `aera:coordination-packet:a02ba81a` — a real
+   * 2,003-file snapshot, written durably, referenced by nothing, visible to
+   * nobody. It is still in the store, because the store is append-only and
+   * deleting institutional records to tidy an evidence trail is the habit
+   * these orders exist to prevent.
+   *
+   * So the order of operations here is load-bearing, not incidental:
+   *
+   *   1. check the recipient SPEC — exactly one of a thread or a new subject;
+   *   2. validate an EXISTING thread (exists, active, sender in scope);
+   *   3. **resolve the comparison** — a pure read that refuses if there is
+   *      none to send;
+   *   4. only now create a NEW thread, if that is what was asked for;
+   *   5. write the packet;
+   *   6. post the message that references it.
+   *
+   * Steps 1–3 touch nothing, so a cancelled share, a share with no recipient
+   * and a share with no comparison all leave the store exactly as they found
+   * it. Step 3 sits before step 4 because of independent review R5-3: the
+   * previous version created the new thread first and left an empty orphan
+   * thread behind whenever the comparison turned out to be unavailable.
+   *
+   * Full honesty about the residual: this is not a database transaction, and
+   * `requestId` does not make it one. If the process died between 5 and 6 the
+   * packet would survive unreferenced. What reduces that risk is step 2/4 —
+   * by the time the packet is written the only remaining work is an append to
+   * a thread already proven writable.
+   *
+   * `requestId` binds a retry only within the same observation: `observedAt`
+   * is retaken on each share, so pressing Send twice at different times is
+   * deliberately two observations and mints two packets and two messages. That
+   * is intended — each packet is an honest record of what the sender saw at
+   * that moment — and it is not an idempotency guarantee.
+   */
+  async shareCompareToThread(input: {
+    readonly workOrderId?: string
+    readonly compareLineIndex?: number
+    /** An existing thread to send into. */
+    readonly threadId?: string
+    /** Or a subject, to open a thread for this Work Order and send into that. */
+    readonly newThreadSubject?: string
+    /** §21: "the sender may add a human note." */
+    readonly note?: string
+  }): Promise<{
+    readonly packetId: string
+    readonly threadId: string
+    readonly messageId: string
+    readonly outcome: string
+  }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+
+    // ---- 1 · the recipient SPEC, checked without writing anything
+    const namedThreadId = input.threadId?.trim() ?? ''
+    const newSubject = input.newThreadSubject?.trim() ?? ''
+    if (namedThreadId === '' && newSubject === '') {
+      throw new CollabHonestError(
+        'INVALID_INPUT',
+        'A comparison is shared WITH someone. Choose a thread to send it to, or name a new one — nothing is written until you do.',
+      )
+    }
+    if (namedThreadId !== '' && newSubject !== '') {
+      throw new CollabHonestError(
+        'INVALID_INPUT',
+        'Name either an existing thread or a new one, not both — it is not clear where this should land, so nothing was written.',
+      )
+    }
+
+    /*
+     * ---- 2 · an EXISTING recipient is validated before anything is written.
+     * A new one is not created yet: see step 3.
+     */
+    const requireWritableThread = (threadId: string): void => {
+      const thread = store.listCollabThreads(workOrderId).find(row => row.threadId === threadId)
+      if (thread === undefined) {
+        throw new CollabHonestError(
+          'WORK_ORDER_NOT_FOUND',
+          `No coordination thread ${threadId} exists on this Work Order, so there is nobody to share the comparison with. Nothing was written.`,
+        )
+      }
+      if (thread.lifecycle === 'ARCHIVED') {
+        throw new CollabHonestError(
+          'INVALID_INPUT',
+          'That thread is archived. Reopen it before sharing into it — nothing was written.',
+        )
+      }
+      if (!thread.accessScope.authorisedPrincipalIds.includes(human as never)) {
+        throw new CollabHonestError(
+          'INVALID_INPUT',
+          'You are not within that thread\u2019s access scope, so the comparison was not shared and nothing was written.',
+        )
+      }
+    }
+    if (namedThreadId !== '') requireWritableThread(namedThreadId)
+
+    /*
+     * ---- 3 · RESOLVE THE COMPARISON BEFORE CREATING ANYTHING.
+     *
+     * This ordering is the whole finding of independent review R5-3. The
+     * previous version created a brand-new thread first and only then went
+     * looking for a comparison, so a share with nothing to send left an empty
+     * orphan thread in the durable store — the same write-before-validate
+     * shape that produced the orphan packet `a02ba81a`, one level up. Every
+     * refusal a share can hit now fires while the store is still untouched.
+     */
+    const resolved = await this.resolveCompareForShare({
+      workOrderId,
+      ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+    })
+
+    // ---- 4 · only now is a new recipient created
+    const threadId = namedThreadId !== ''
+      ? namedThreadId
+      : (await this.openCoordinationThread({ workOrderId, subject: newSubject })).threadId
+    if (namedThreadId === '') requireWritableThread(threadId)
+
+    // ---- 5 · the packet, from the comparison resolved at step 3
+    const packet = store.recordCoordinationPacket({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      workOrderId,
+      subject: 'WORKING_LINE_COMPARE',
+      ...(resolved.sourceWorkingLineId === undefined
+        ? {}
+        : { sourceWorkingLineId: resolved.sourceWorkingLineId as NonNullable<Parameters<ParticipationStore['recordCoordinationPacket']>[0]['sourceWorkingLineId']> }),
+      comparison: resolved.comparison,
+      observedByPrincipalId: human as Parameters<ParticipationStore['recordCoordinationPacket']>[0]['observedByPrincipalId'],
+    }).packet
+
+    // ---- 6 · the message that makes it visible to the recipient
+    const note = input.note?.trim() ?? ''
+    const posted = store.postCollabMessage({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      threadId: threadId as Parameters<ParticipationStore['postCollabMessage']>[0]['threadId'],
+      senderPrincipalId: human as Parameters<ParticipationStore['postCollabMessage']>[0]['senderPrincipalId'],
+      body: note === '' ? 'Sharing the comparison I am looking at.' : note,
+      intent: 'REVIEW_REQUEST',
+      references: [{ kind: 'PACKET', packetId: packet.packetId as never }],
+      requestId: `share-compare-${packet.packetId}`,
+    })
+    return {
+      packetId: packet.packetId,
+      threadId,
+      messageId: posted.message.messageId,
+      outcome: posted.outcome,
+    }
+  }
+
+  /**
+   * §20 — VIEW CURRENT STATE.
+   *
+   * Resolves the live revisions and compares them against the packet's frozen
+   * snapshot. This is a READ: it returns a fresh assessment and writes nothing,
+   * least of all into the packet.
+   */
+  assessPacket(packetId: string): PacketStateAssessmentV1 {
+    const store = this.requireStore()
+    const packet = store.listCoordinationPackets().find(row => row.packetId === packetId)
+    if (packet === undefined) {
+      throw new CollabHonestError('PACKET_NOT_FOUND', `No packet ${packetId} exists in the durable store.`)
+    }
+    const observed = this.observeWorkingState(packet.workOrderId)
+    const head = observed.view?.headRevision
+    const targetRef = observed.view === undefined
+      ? undefined
+      : this.integrationTargetRef(observed.view.repositoryId)
+    const targetHead = observed.view === undefined || targetRef === undefined
+      ? undefined
+      : this.observedRevision(observed.view.localPath, targetRef)
+    return assessPacketState({
+      packet,
+      ...(head === undefined ? {} : { currentSourceRevision: head }),
+      ...(targetHead === undefined ? {} : { currentTargetRevision: targetHead }),
+      assessedAt: new Date().toISOString(),
+    })
+  }
+
+  /** §29 — acknowledge one message, explicitly. */
+  async acknowledgeCoordinationMessage(input: {
+    readonly threadId: string
+    readonly messageId: string
+    readonly kind: 'READ' | 'ACKNOWLEDGED'
+    readonly workOrderId?: string
+  }): Promise<{ readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+    const result = store.acknowledgeCollabMessage({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      threadId: input.threadId as Parameters<ParticipationStore['acknowledgeCollabMessage']>[0]['threadId'],
+      messageId: input.messageId as Parameters<ParticipationStore['acknowledgeCollabMessage']>[0]['messageId'],
+      byPrincipalId: human as Parameters<ParticipationStore['acknowledgeCollabMessage']>[0]['byPrincipalId'],
+      kind: input.kind,
+    })
+    return { outcome: result.outcome }
+  }
+
+  /** §33 — archive or reopen. Nothing is erased. */
+  async setCoordinationThreadLifecycle(input: {
+    readonly threadId: string
+    readonly lifecycle: 'ACTIVE' | 'ARCHIVED'
+    readonly workOrderId?: string
+  }): Promise<{ readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const result = store.setCollabThreadLifecycle({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      threadId: input.threadId as Parameters<ParticipationStore['setCollabThreadLifecycle']>[0]['threadId'],
+      lifecycle: input.lifecycle,
+    })
+    return { outcome: result.outcome }
+  }
+
+  /**
+   * §13/§39 — RECORD DECISION FROM DISCUSSION.
+   *
+   * An EXPLICIT act with an explicit option set and an explicit selection.
+   * Nothing here reads message text, and there is deliberately no variant of
+   * this that infers a decision from what was said (§14). The caller states
+   * the alternatives that genuinely existed; the canonical `DecisionV1` is
+   * what gets written (§49).
+   */
+  async recordDecisionFromThread(input: {
+    readonly threadId: string
+    readonly subject: string
+    readonly options: readonly { readonly optionId: string, readonly label: string }[]
+    readonly selectedOptionId: string
+    readonly rationale?: string
+    readonly messageIds?: readonly string[]
+    readonly workOrderId?: string
+  }): Promise<{ readonly decisionId: string, readonly outcome: string }> {
+    const { store, sessionId, workOrderId } = await this.requireCoordinationAuthority(input.workOrderId)
+    const human = this.requireHumanPrincipal()
+    const decision = store.recordDecision({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      workOrderId,
+      subject: input.subject,
+      options: input.options,
+      selectedOptionId: input.selectedOptionId,
+      ...(input.rationale === undefined ? {} : { rationale: input.rationale }),
+      threadId: input.threadId as NonNullable<Parameters<ParticipationStore['recordDecision']>[0]['threadId']>,
+      ...(input.messageIds === undefined
+        ? {}
+        : { messageIds: input.messageIds as NonNullable<Parameters<ParticipationStore['recordDecision']>[0]['messageIds']> }),
+      /*
+       * §49/§31: the PERSON decided; this agent session only typed it in. The
+       * store refuses an agent that names itself as decider, so this is the
+       * only honest value here.
+       */
+      decidedBy: human as NonNullable<Parameters<ParticipationStore['recordDecision']>[0]['decidedBy']>,
+    }).decision
+    store.linkThreadDecision({
+      sessionId,
+      authorisingWorkOrderId: workOrderId,
+      threadId: input.threadId as Parameters<ParticipationStore['linkThreadDecision']>[0]['threadId'],
+      decisionId: decision.decisionId,
+    })
+    return { decisionId: decision.decisionId, outcome: 'RECORDED' }
+  }
+
+  /**
+   * The observed checkout's position against Integration.
+   *
+   * Extracted so SHARE (§21) derives the topology through the SAME path the
+   * surface drew from. `expectedTargetRevision` is the seed of
+   * target-movement detection: the durable seed is
+   * `WorktreeInstanceV1.expectedBase`, and where the worktree carries none the
+   * observed merge base is used, with the topology facts saying so rather than
+   * pretending a recorded expectation exists.
+   */
+  private async deriveObservedTopology(
+    observed: ReturnType<CollabWorkspaceService['observeWorkingState']>,
+  ): Promise<CodeTopologyV1 | undefined> {
+    if (observed.view === undefined) return undefined
+    const targetRef = this.integrationTargetRef(observed.view.repositoryId)
+    // No recorded canonical branch means no target. Refuse rather than guess.
+    if (targetRef === undefined) return undefined
+    const expected = observed.instance?.expectedBase
+      ?? this.observedMergeBase(observed.view.localPath, observed.view.branchRef, targetRef)
+      ?? observed.view.headRevision
+    try {
+      return await deriveCodeTopology({
+        repositoryRoot: observed.view.localPath,
+        branchRef: observed.view.branchRef,
+        targetRef,
+        expectedTargetRevision: expected,
+        targetName: 'Integration',
+        lineIsMine: true,
+      })
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * The one place a Compare is derived for this surface.
+   *
+   * Extracted so that SHARE (§21) sends the EXACT operands the reader is
+   * looking at. Two derivations, however carefully written, drift; one
+   * derivation with two callers cannot. It returns the raw
+   * `CodeCompareSummaryV1` alongside the view precisely so the packet is built
+   * from the measured facts rather than re-measured at share time.
+   *
+   * COMPARE IS ONLY EVER THE OBSERVED LINE — finding 2 of the independent
+   * review of the predecessor order. Every fact comes from `topology`, an
+   * observation of THIS checkout, so the FROM label is taken from the row that
+   * actually produced the facts. A request for any other row is refused with a
+   * stated reason rather than answered with the wrong diff.
+   */
+  private async computeObservedCompare(input: {
+    readonly compareLineIndex?: number
+    readonly lines: readonly CollabLineRowView[]
+    readonly workspaceRoot?: string
+    readonly topology?: CodeTopologyV1
+  }): Promise<{
+    summary?: CodeCompareSummaryV1
+    compare?: CollabCompareView
+    compareUnavailableReason?: string
+  }> {
+    if (input.compareLineIndex === undefined) return {}
+    const requested = input.lines[input.compareLineIndex]
+    if (requested === undefined) {
+      return { compareUnavailableReason: 'That Working Line is no longer on this surface.' }
+    }
+    if (requested.provenance !== 'OBSERVED') {
+      return {
+        compareUnavailableReason:
+          `Compare is only available for the checkout this window can observe. \`${requested.label}\` is a durable Working Line record, and this slice cannot observe its checkout.`,
+      }
+    }
+    const { workspaceRoot, topology } = input
+    if (
+      workspaceRoot === undefined
+      || topology === undefined
+      || topology.state === 'UNRESOLVED'
+      || topology.facts.lineRevision === undefined
+      || topology.facts.targetRevision === undefined
+    ) {
+      return {
+        compareUnavailableReason:
+          'These two states cannot be compared: this Working Line\u2019s position could not be read.',
+      }
+    }
+    const summary = await deriveCodeCompareSummary({
+      repositoryRoot: workspaceRoot,
+      from: { kind: 'REVISION', revision: topology.facts.lineRevision },
+      to: { kind: 'REVISION', revision: topology.facts.targetRevision },
+      fromRevision: topology.facts.lineRevision,
+      toRevision: topology.facts.targetRevision,
+      topology,
+    })
+    return {
+      summary,
+      compare: toCompareView({
+        /*
+         * §36 — the surface renders at most a couple of hundred rows and shows
+         * a bounded summary by default, so sending thousands is pure waste.
+         * The aggregate counts are unaffected; only the per-file rows are held
+         * back, and the reader is told the true total.
+         */
+        fileBudget: COMPARE_FILE_WIRE_BUDGET,
+        summary,
+        fromName: requested.label,
+        toName: 'Accepted integration \u2014 Integration',
+      }),
+    }
+  }
+
   async collabView(input: {
     readonly compareLineIndex?: number
     readonly workOrderId?: string
@@ -1103,29 +1830,7 @@ export class CollabWorkspaceService {
       lines.length = 0
     } else {
       workspaceRoot = observed.view.localPath
-      const targetRef = this.integrationTargetRef(observed.view.repositoryId)
-      /*
-       * `expectedTargetRevision` — the seed of target-movement detection. The
-       * durable seed is `WorktreeInstanceV1.expectedBase`; where the worktree
-       * carries none, the observed merge base is used and the surface says so
-       * through the topology facts rather than pretending a recorded
-       * expectation exists.
-       */
-      const expected = observed.instance?.expectedBase
-        ?? this.observedMergeBase(observed.view.localPath, observed.view.branchRef, targetRef)
-        ?? observed.view.headRevision
-      try {
-        topology = await deriveCodeTopology({
-          repositoryRoot: observed.view.localPath,
-          branchRef: observed.view.branchRef,
-          targetRef,
-          expectedTargetRevision: expected,
-          targetName: 'Integration',
-          lineIsMine: true,
-        })
-      } catch {
-        topology = undefined
-      }
+      topology = await this.deriveObservedTopology(observed)
       lines.push(toLineRowView({
         label: `This checkout · ${observed.view.branchRef}`,
         participant: this.config.principalName ?? 'You',
@@ -1188,45 +1893,31 @@ export class CollabWorkspaceService {
      * actually produced the facts. A request for any other row is refused with
      * a stated reason rather than answered with the wrong diff.
      */
-    let compare: CollabCompareView | undefined
-    let compareUnavailableReason: string | undefined
-    if (input.compareLineIndex !== undefined) {
-      const requested = lines[input.compareLineIndex]
-      if (requested === undefined) {
-        compareUnavailableReason = 'That Working Line is no longer on this surface.'
-      } else if (requested.provenance !== 'OBSERVED') {
-        compareUnavailableReason =
-          `Compare is only available for the checkout this window can observe. \`${requested.label}\` is a durable Working Line record, and this slice cannot observe its checkout.`
-      } else if (
-        workspaceRoot === undefined
-        || topology === undefined
-        || topology.state === 'UNRESOLVED'
-        || topology.facts.lineRevision === undefined
-        || topology.facts.targetRevision === undefined
-      ) {
-        compareUnavailableReason =
-          'These two states cannot be compared: this Working Line’s position could not be read.'
-      } else {
-        const summary = await deriveCodeCompareSummary({
-          repositoryRoot: workspaceRoot,
-          from: { kind: 'REVISION', revision: topology.facts.lineRevision },
-          to: { kind: 'REVISION', revision: topology.facts.targetRevision },
-          fromRevision: topology.facts.lineRevision,
-          toRevision: topology.facts.targetRevision,
-          topology,
-        })
-        compare = toCompareView({
-          summary,
-          // The name of the row the facts actually came from.
-          fromName: requested.label,
-          toName: 'Accepted integration — Integration',
-        })
-      }
-    }
+    const computed = await this.computeObservedCompare({
+      ...(input.compareLineIndex === undefined ? {} : { compareLineIndex: input.compareLineIndex }),
+      lines,
+      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+      ...(topology === undefined ? {} : { topology }),
+    })
+    const compare = computed.compare
+    const compareUnavailableReason = computed.compareUnavailableReason
 
     const liveProviderState = this.collabLiveProviderState(workOrderId)
+    /*
+     * §35: threads are PROJECTED here, on the same joinless read as everything
+     * else on this surface. Reading them mutates nothing — the packet movement
+     * assessment in particular is computed fresh and written nowhere.
+     */
+    const threads = this.projectCoordinationThreads(workOrderId)
 
-    return {
+    /*
+     * §30 / §46 review BL-2 — build the view FIRST, then derive the counts and
+     * the classification from it. The classifier used to be handed numbers
+     * assembled here while Record rendered its own expressions, and the two
+     * disagreed on three of five categories. One object, one derivation, no
+     * second opinion.
+     */
+    const view = {
       workOrderId: context.workOrderId,
       ...(context.workOrderLabel === undefined ? {} : { workOrderTitle: context.workOrderLabel }),
       repositories: repositories.map(repository => `${repository.displayName} (${repository.role})`),
@@ -1259,7 +1950,10 @@ export class CollabWorkspaceService {
         ...(compare === undefined ? {} : { changedFiles: compare.files.length }),
         evidence: context.evidence.length + surface.institutional.evidenceCards.length,
         discussionsDecisions:
-          surface.institutional.discussions.length + surface.institutional.decisionContexts.length,
+          surface.institutional.discussions.length
+          + surface.institutional.threadDiscussions.length
+          + surface.institutional.decisionContexts.length,
+        coordination: threads.length,
         archived: surface.archivedLineIds.length,
       }),
       activity: surface.activity.map(toActivityRowView),
@@ -1299,9 +1993,30 @@ export class CollabWorkspaceService {
         )
       }),
       decisions: surface.institutional.decisionContexts.map(toDecisionView),
-      discussions: surface.institutional.discussions.map(discussion => {
+      discussions: [
+        /*
+         * §3: threads first — they are the live conversation, and a reader
+         * looking at "Discussions & decisions" wants the thing currently being
+         * talked about before the archive of what was. By reference: the
+         * counts come from the projection, the messages stay in the thread.
+         */
+        ...surface.institutional.threadDiscussions.map((thread): CollabDiscussionView => ({
+          kind: 'THREAD' as const,
+          subject: thread.subject,
+          entryCount: thread.messageCount,
+          participants: [...thread.participants],
+          updatedAt: thread.lastMessageAt ?? thread.firstMessageAt ?? '',
+          ...(thread.aboutLine === '' ? {} : { latestEntry: thread.aboutLine }),
+          technical: [
+            thread.threadId,
+            ...(thread.packetCount === 0 ? [] : [`${String(thread.packetCount)} shared comparison(s)`]),
+            ...thread.decisionIds,
+          ],
+        })),
+        ...surface.institutional.discussions.map(discussion => {
         const latest = discussion.entries.at(-1)
         return {
+          kind: 'DISCUSSION' as const,
           subject: discussion.subject,
           entryCount: discussion.entries.length,
           participants: [...discussion.participants],
@@ -1309,17 +2024,36 @@ export class CollabWorkspaceService {
           ...(latest === undefined ? {} : { latestEntry: latest.text }),
           technical: [discussion.discussionId],
         }
-      }),
+        }),
+      ],
       ...(surface.institutional.discussions.length === 0
+        && surface.institutional.threadDiscussions.length === 0
         && surface.institutional.decisionContexts.length === 0
         ? { discussionsDecisionsEmptyReason: NO_DISCUSSIONS_OR_DECISIONS }
         : {}),
+      threads,
+      ...(threads.length === 0 ? { threadsEmptyReason: NO_COORDINATION_THREADS } : {}),
+      coordinationDeliveryNote: COORDINATION_DELIVERY_NOTE,
       ...(liveProviderState === undefined ? {} : { liveProviderState }),
       discussionNote: DISCUSSION_NOTE,
       archivedCount: surface.archivedLineIds.length,
       ...(compare === undefined ? {} : { compare }),
       ...(compareUnavailableReason === undefined ? {} : { compareUnavailableReason }),
       projectedAt: surface.projectedAt,
+    }
+
+    /*
+     * The counts Record will display, computed once. Both the view and the
+     * classifier read this same object, so "displayed zero" and "classified
+     * zero" are the same set by construction rather than by agreement between
+     * two call sites.
+     */
+    const recordCounts = countsAsRendered(view)
+
+    return {
+      ...view,
+      recordCounts,
+      zeroClassifications: classifyDisplayedZeros(store, workOrderId, recordCounts),
     }
   }
 
@@ -1330,15 +2064,43 @@ export class CollabWorkspaceService {
    * resource records nothing, and that fallback is visible in the topology
    * facts.
    */
-  private integrationTargetRef(repositoryId: string): string {
+  /**
+   * The integration target ref for a repository, or **undefined** when the
+   * resource records no canonical branch.
+   *
+   * It used to fall back to `origin/HEAD`, which is whatever a local clone's
+   * remote head happens to point at — on this machine, `origin/main`, nine
+   * thousand files from the integration line. A comparison against an
+   * accidental ref is not a comparison; it is a confident wrong answer. The
+   * caller now says it could not resolve the target instead (§21: a Compare
+   * the surface cannot ground must be refused, not guessed).
+   */
+  private integrationTargetRef(repositoryId: string): string | undefined {
     const store = this.requireStore()
     const resource = store.listRepositoryResources().find(entry => entry.repositoryId === repositoryId)
     const branch = resource?.canonicalBranch
-    if (branch === undefined || branch.trim() === '') return 'origin/HEAD'
+    if (branch === undefined || branch.trim() === '') return undefined
     // Prefer the remote-tracking ref: the local branch may be stale or absent,
     // and "where Integration is" means where the shared line is, not where a
     // local copy of it happens to sit.
     return `origin/${branch}`
+  }
+
+  /**
+   * Read-only revision observation for one ref.
+   *
+   * Used by §20's "view current state": resolving where a line is NOW, to set
+   * against where the packet says it was. Failure returns undefined, which the
+   * assessment reports as UNRESOLVABLE — never as "unchanged".
+   */
+  private observedRevision(root: string, ref: string): string | undefined {
+    try {
+      return execFileSync('git', ['-C', root, 'rev-parse', ref], {
+        encoding: 'utf8', timeout: 10_000,
+      }).trim()
+    } catch {
+      return undefined
+    }
   }
 
   /** Read-only merge base observation, used only as a last-resort seed. */
