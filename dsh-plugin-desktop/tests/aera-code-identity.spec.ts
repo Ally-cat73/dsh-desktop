@@ -199,6 +199,23 @@ describe('Aera Code native identity', () => {
     expect(environment.AERA_GATEWAY_DSH_EVAL_KEY).toBeUndefined()
   })
 
+  it('loads a known Canary credential reference for the governed AGC profile', () => {
+    const environment: NodeJS.ProcessEnv = {
+      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_DSH_EVAL_KEY',
+    }
+    const readPassword = vi.fn(() => 'canary-process-only-value')
+
+    expect(bootstrapAeraGatewayCredential({
+      platform: 'darwin',
+      environment,
+      activeProfile: 'aera-gateway-agc',
+      readPassword,
+    })).toBe('loaded-from-keychain')
+    expect(readPassword).toHaveBeenCalledWith('com.aera.gateway.canary.execution', 'Allyd')
+    expect(environment.AERA_GATEWAY_DSH_EVAL_KEY).toBe('canary-process-only-value')
+    expect(environment.AERA_GATEWAY_AGC_EXECUTION_KEY).toBeUndefined()
+  })
+
   it('does not read Keychain for another profile or replace an inherited credential', () => {
     const readPassword = vi.fn(() => 'unexpected')
     expect(bootstrapAeraGatewayCredential({

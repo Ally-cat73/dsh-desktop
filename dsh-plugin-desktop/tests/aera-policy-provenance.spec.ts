@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 // explicit path makes the source-custody seam visible and directly testable.
 // @ts-expect-error the patch-private module intentionally does not widen the upstream public API
 import { aeraPolicyProvenanceHeader, ensureAeraGatewaySessionReady, withAeraExecutionSession } from '../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/aera-policy-provenance.js'
+import { AeraGatewayReadinessService } from '../src/aera-gateway-readiness.ts'
 
 describe('Aera Code policy provenance', () => {
   it('projects immutable message source into a content-free correlation header', () => {
@@ -163,6 +164,7 @@ describe('Aera Code policy provenance', () => {
     await ensureAeraGatewaySessionReady({
       baseURL: 'http://127.0.0.1:4646/v1',
       headers: {
+        'x-aera-environment-id': 'AERA_DEV',
         'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
         'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
       },
@@ -187,6 +189,7 @@ describe('Aera Code policy provenance', () => {
     await expect(ensureAeraGatewaySessionReady({
       baseURL: 'http://127.0.0.1:4646/v1',
       headers: {
+        'x-aera-environment-id': 'AERA_DEV',
         'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
         'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
       },
@@ -195,5 +198,45 @@ describe('Aera Code policy provenance', () => {
     }), { status: 403 }))).rejects.toThrow(
       'AERA_GATEWAY_PREFLIGHT_DENIED:PROVIDER_EXECUTION_FORBIDDEN',
     )
+  })
+
+  it('never lets a Canary-bound Session fall through to Dev after Canary readiness denial', async () => {
+    const hits = { canary: 0, dev: 0 }
+    const sessionId = 'session-canary-denied-no-dev-fallback'
+    const devProfile = {
+      baseURL: 'http://127.0.0.1:4646/v1',
+      headers: {
+        'x-aera-environment-id': 'AERA_DEV',
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }
+    const readiness = new AeraGatewayReadinessService({
+      credential: 'synthetic-canary-key',
+      routerOrigin: 'http://127.0.0.1:14646',
+      environmentId: 'CANARY',
+      fetch: async () => {
+        hits.canary += 1
+        return new Response(JSON.stringify({
+          status: 'denied', error: { code: 'PROVIDER_EXECUTION_FORBIDDEN' },
+        }), { status: 403 })
+      },
+    })
+    await expect(readiness.prepare(sessionId)).resolves.toMatchObject({
+      state: 'BLOCKED', environmentId: 'CANARY', routerOrigin: 'http://127.0.0.1:14646',
+    })
+    await expect(ensureAeraGatewaySessionReady(
+      devProfile,
+      sessionId,
+      'synthetic-dev-key',
+      async () => {
+        hits.dev += 1
+        return new Response(JSON.stringify({
+          status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
+          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+        }), { status: 200 })
+      },
+    )).rejects.toThrow('AERA_GATEWAY_SESSION_ENVIRONMENT_MISMATCH')
+    expect(hits).toEqual({ canary: 1, dev: 0 })
   })
 })

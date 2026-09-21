@@ -46,6 +46,7 @@ describe('Aera Gateway real-session readiness', () => {
       headers: expect.objectContaining({
         authorization: 'Bearer synthetic-test-credential',
         session_id: SESSION,
+        'x-aera-environment-id': 'AERA_DEV',
         'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
         'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
       }),
@@ -62,6 +63,8 @@ describe('Aera Gateway real-session readiness', () => {
       modelId: 'gpt-5.6-terra',
       assignmentRevision: 1,
       policyEnforcementMode: 'OBSERVATION',
+      environmentId: 'AERA_DEV',
+      routerOrigin: 'http://127.0.0.1:4646',
     })
   })
 
@@ -70,6 +73,7 @@ describe('Aera Gateway real-session readiness', () => {
     const service = new AeraGatewayReadinessService({
       credential: 'synthetic-canary-credential',
       routerOrigin: 'http://127.0.0.1:14646',
+      environmentId: 'CANARY',
       fetch: async (url) => {
         requests.push(String(url))
         return new Response(JSON.stringify({
@@ -85,7 +89,9 @@ describe('Aera Gateway real-session readiness', () => {
       },
     })
 
-    await expect(service.prepare(SESSION)).resolves.toMatchObject({ state: 'READY' })
+    await expect(service.prepare('session-fresh-product-canary-001')).resolves.toMatchObject({
+      state: 'READY', environmentId: 'CANARY', routerOrigin: 'http://127.0.0.1:14646',
+    })
     expect(requests).toEqual(['http://127.0.0.1:14646/v1/provider-execution/preflight'])
   })
 
@@ -98,15 +104,20 @@ describe('Aera Gateway real-session readiness', () => {
       }), { status: 403, headers: { 'content-type': 'application/json' } }),
     })
 
-    await expect(service.prepare(SESSION)).resolves.toEqual({
+    const expiredSession = 'session-fresh-product-expired-001'
+    await expect(service.prepare(expiredSession)).resolves.toEqual({
       state: 'BLOCKED',
       code: 'PROVIDER_EXECUTION_FORBIDDEN',
       message: 'Aera Gateway authority is not current for this Session.',
+      environmentId: 'AERA_DEV',
+      routerOrigin: 'http://127.0.0.1:4646',
     })
-    expect(service.status(SESSION)).toEqual({
+    expect(service.status(expiredSession)).toEqual({
       state: 'BLOCKED',
       code: 'PROVIDER_EXECUTION_FORBIDDEN',
       message: 'Aera Gateway authority is not current for this Session.',
+      environmentId: 'AERA_DEV',
+      routerOrigin: 'http://127.0.0.1:4646',
     })
   })
 
@@ -130,8 +141,8 @@ describe('Aera Gateway real-session readiness', () => {
       fetch: async () => { calls += 1; return response },
     })
 
-    const title = service.prepare(SESSION)
-    const main = service.prepare(SESSION)
+    const title = service.prepare('session-fresh-product-coalesced-001')
+    const main = service.prepare('session-fresh-product-coalesced-001')
     expect(calls).toBe(1)
     release?.()
     await expect(Promise.all([title, main])).resolves.toHaveLength(2)

@@ -14,6 +14,7 @@ import {
   buildAgcIsolatedGatewayProviderProfile,
   buildAgcIsolatedGatewayProviderSection,
   AGC_CONNECTION_HEADER,
+  AGC_ENVIRONMENT_HEADER,
   AGC_GOVERNED_CONNECTION_ID,
   AGC_GOVERNED_GATEWAY_ROUTE,
   AGC_GOVERNED_MODEL_ID,
@@ -133,6 +134,7 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     expect(profile!.headers).toMatchObject({
       [AGC_CONNECTION_HEADER]: 'relay-messages-dogfood-canonical-connection',
       [AGC_RUNTIME_INSTANCE_HEADER]: 'relay-messages-dogfood-canonical-runtime',
+      [AGC_ENVIRONMENT_HEADER]: 'AERA_DEV',
     })
     expect(profile!.headers).not.toHaveProperty(AGC_SESSION_HEADER)
     expect(profile!.models!.map(model => model.id)).toEqual([AGC_GOVERNED_MODEL_ID])
@@ -171,6 +173,7 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     const env = {
       AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://127.0.0.1:14646',
       AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_DSH_EVAL_KEY',
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
     }
     const runtime = resolveAgcGovernedGatewayRuntime(env)
     const profile = buildAgcGovernedGatewayProviderProfile(env)
@@ -178,12 +181,16 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     expect(runtime).toEqual({
       routerOrigin: 'http://127.0.0.1:14646',
       credentialEnvironmentName: 'AERA_GATEWAY_DSH_EVAL_KEY',
+      environmentId: 'CANARY',
     })
     expect(profile.baseURL).toBe('http://127.0.0.1:14646/v1')
     expect(profile.apiKeyEnv).toBe('AERA_GATEWAY_DSH_EVAL_KEY')
+    expect(profile.displayName).toBe('AERA Gateway (governed / CANARY)')
+    expect(profile.models[0]?.name).toBe('Aera governed route / CANARY')
     expect(profile.headers).toMatchObject({
       [AGC_CONNECTION_HEADER]: AGC_GOVERNED_CONNECTION_ID,
       [AGC_RUNTIME_INSTANCE_HEADER]: AGC_GOVERNED_RUNTIME_INSTANCE_ID,
+      [AGC_ENVIRONMENT_HEADER]: 'CANARY',
     })
   })
 
@@ -194,6 +201,9 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     expect(() => resolveAgcGovernedGatewayRuntime({
       AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'bad-name',
     })).toThrow(/credential environment/i)
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'SYDNEY',
+    })).toThrow(/environment identity/i)
   })
 
   it('carries no secret material and never names another profile credential', () => {
