@@ -157,7 +157,8 @@ export class AeraGatewayReadinessService {
       }
       if (!record(payload) || payload.status !== 'ok' || payload.provider_effect !== 'NONE'
         || payload.current_authority !== 'PASS' || payload.route_assignment !== 'VALID'
-        || payload.policy_enforcement_mode !== 'OBSERVATION' || !record(payload.identity)) {
+        || payload.policy_enforcement_mode !== 'OBSERVATION'
+        || payload.environment_id !== this.runtime.environmentId || !record(payload.identity)) {
         return blocked('AERA_GATEWAY_PREFLIGHT_RESPONSE_INVALID', this.runtime)
       }
       const identity = payload.identity

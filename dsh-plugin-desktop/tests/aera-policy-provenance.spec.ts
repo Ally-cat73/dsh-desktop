@@ -172,7 +172,7 @@ describe('Aera Code policy provenance', () => {
       requests.push({ url, init: init ?? {} })
       return new Response(JSON.stringify({
         status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
-        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'AERA_DEV',
       }), { status: 200 })
     })
 
@@ -233,10 +233,25 @@ describe('Aera Code policy provenance', () => {
         hits.dev += 1
         return new Response(JSON.stringify({
           status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
-          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'AERA_DEV',
         }), { status: 200 })
       },
     )).rejects.toThrow('AERA_GATEWAY_SESSION_ENVIRONMENT_MISMATCH')
     expect(hits).toEqual({ canary: 1, dev: 0 })
+  })
+
+  it('fails closed on a stale governed provider profile with no environment identity', async () => {
+    let preflightHits = 0
+    await expect(ensureAeraGatewaySessionReady({
+      baseURL: 'http://127.0.0.1:4646/v1',
+      headers: {
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }, 'session-stale-profile-no-environment', 'synthetic-dev-key', async () => {
+      preflightHits += 1
+      return new Response('{}', { status: 200 })
+    })).rejects.toThrow('AERA_GATEWAY_ENVIRONMENT_ID_REQUIRED')
+    expect(preflightHits).toBe(0)
   })
 })

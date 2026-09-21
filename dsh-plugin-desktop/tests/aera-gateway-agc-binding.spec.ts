@@ -204,6 +204,16 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     expect(() => resolveAgcGovernedGatewayRuntime({
       AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'SYDNEY',
     })).toThrow(/environment identity/i)
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
+      AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://127.0.0.1:4646',
+      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_DSH_EVAL_KEY',
+    })).toThrow(/runtime tuple/i)
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
+      AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://127.0.0.1:14646',
+      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_AGC_EXECUTION_KEY',
+    })).toThrow(/runtime tuple/i)
   })
 
   it('carries no secret material and never names another profile credential', () => {

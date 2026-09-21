@@ -20,6 +20,7 @@ describe('Aera Gateway real-session readiness', () => {
         current_authority: 'PASS',
         route_assignment: 'VALID',
         policy_enforcement_mode: 'OBSERVATION',
+        environment_id: 'AERA_DEV',
         identity: {
           connection_id: 'relay-messages-dogfood-canonical-connection',
           runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
@@ -78,7 +79,7 @@ describe('Aera Gateway real-session readiness', () => {
         requests.push(String(url))
         return new Response(JSON.stringify({
           status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
-          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'CANARY',
           identity: {
             connection_id: 'relay-messages-dogfood-canonical-connection',
             runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
@@ -127,7 +128,7 @@ describe('Aera Gateway real-session readiness', () => {
     const response = new Promise<Response>((resolve) => {
       release = () => resolve(new Response(JSON.stringify({
         status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
-        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'AERA_DEV',
         identity: {
           connection_id: 'relay-messages-dogfood-canonical-connection',
           runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',

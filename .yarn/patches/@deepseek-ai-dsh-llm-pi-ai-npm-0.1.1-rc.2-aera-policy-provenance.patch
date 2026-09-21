@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..aera001
 --- /dev/null
 +++ b/lib/aera-policy-provenance.js
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,204 @@
 +import { createHash } from "node:crypto";
 +
 +const HEADER = "x-aera-policy-provenance-v1";
@@ -143,12 +143,11 @@ index 0000000..aera001
 +	return created;
 +}
 +
-+function governedAeraGatewayProfile(profile) {
++function governedAeraGatewayCoordinates(profile) {
 +	try {
 +		const base = new URL(profile?.baseURL);
 +		return (base.hostname === "127.0.0.1" || base.hostname === "localhost")
 +			&& base.pathname.replace(/\/$/, "") === "/v1"
-+			&& ENVIRONMENT_IDS.has(profile?.headers?.[ENVIRONMENT_HEADER])
 +			&& profile?.headers?.["x-aera-connection-id"] === AERA_GATEWAY_CONNECTION
 +			&& profile?.headers?.["x-aera-runtime-instance-id"] === AERA_GATEWAY_RUNTIME;
 +	} catch {
@@ -158,7 +157,11 @@ index 0000000..aera001
 +
 +/** Prove current authority and bootstrap the native Session before Provider dispatch. */
 +export function ensureAeraGatewaySessionReady(profile, sessionId, apiKey, fetchImpl = fetch) {
-+	if (!governedAeraGatewayProfile(profile)) return Promise.resolve();
++	if (!governedAeraGatewayCoordinates(profile)) return Promise.resolve();
++	const environmentId = profile?.headers?.[ENVIRONMENT_HEADER];
++	if (!ENVIRONMENT_IDS.has(environmentId)) {
++		return Promise.reject(new Error("AERA_GATEWAY_ENVIRONMENT_ID_REQUIRED"));
++	}
 +	if (sessionId === void 0 || sessionId === null) {
 +		return Promise.reject(new Error("AERA_GATEWAY_PREFLIGHT_SESSION_REQUIRED"));
 +	}
@@ -167,7 +170,6 @@ index 0000000..aera001
 +		return Promise.reject(new Error("AERA_CODE_SESSION_ID_INVALID"));
 +	}
 +	const origin = new URL(profile.baseURL).origin;
-+	const environmentId = profile.headers[ENVIRONMENT_HEADER];
 +	const sessionEnvironments = sessionEnvironmentBindings();
 +	const boundEnvironment = sessionEnvironments.get(normalized);
 +	if (boundEnvironment && (boundEnvironment.environmentId !== environmentId || boundEnvironment.origin !== origin)) {
@@ -197,7 +199,8 @@ index 0000000..aera001
 +		}
 +		if (payload?.status !== "ok" || payload.provider_effect !== "NONE"
 +			|| payload.current_authority !== "PASS" || payload.route_assignment !== "VALID"
-+			|| payload.policy_enforcement_mode !== "OBSERVATION") {
++			|| payload.policy_enforcement_mode !== "OBSERVATION"
++			|| payload.environment_id !== environmentId) {
 +			throw new Error("AERA_GATEWAY_PREFLIGHT_RESPONSE_INVALID");
 +		}
 +	});

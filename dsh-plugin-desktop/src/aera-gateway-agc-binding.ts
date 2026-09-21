@@ -222,6 +222,20 @@ export const AGC_RUNTIME_INSTANCE_HEADER = 'x-aera-runtime-instance-id'
 export const AGC_ENVIRONMENT_HEADER = 'x-aera-environment-id'
 export type AgcGatewayEnvironmentId = 'AERA_DEV' | 'CANARY'
 
+const AGC_ENVIRONMENT_RUNTIMES: Readonly<Record<AgcGatewayEnvironmentId, {
+  readonly routerOrigin: string
+  readonly credentialEnvironmentName: string
+}>> = Object.freeze({
+  AERA_DEV: Object.freeze({
+    routerOrigin: AGC_GOVERNED_ROUTER_ORIGIN,
+    credentialEnvironmentName: AGC_GATEWAY_CREDENTIAL_ENV,
+  }),
+  CANARY: Object.freeze({
+    routerOrigin: 'http://127.0.0.1:14646',
+    credentialEnvironmentName: 'AERA_GATEWAY_DSH_EVAL_KEY',
+  }),
+})
+
 const SESSION_ENVIRONMENT_BINDINGS = Symbol.for('aera.gateway.session-environment.v1')
 
 interface AgcSessionEnvironmentBinding {
@@ -254,17 +268,21 @@ export interface AgcGovernedGatewayRuntime {
 export function resolveAgcGovernedGatewayRuntime(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): AgcGovernedGatewayRuntime {
-  const routerOrigin = env.AERA_GATEWAY_AGC_ROUTER_ORIGIN?.trim()
-    || AGC_GOVERNED_ROUTER_ORIGIN
-  const credentialEnvironmentName = env.AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME?.trim()
-    || AGC_GATEWAY_CREDENTIAL_ENV
   const environmentId = env.AERA_GATEWAY_AGC_ENVIRONMENT_ID?.trim() || 'AERA_DEV'
+  if (environmentId !== 'AERA_DEV' && environmentId !== 'CANARY') {
+    throw new Error('aera-gateway-agc-binding: environment identity is invalid')
+  }
+  const expected = AGC_ENVIRONMENT_RUNTIMES[environmentId]
+  const routerOrigin = env.AERA_GATEWAY_AGC_ROUTER_ORIGIN?.trim() || expected.routerOrigin
+  const credentialEnvironmentName = env.AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME?.trim()
+    || expected.credentialEnvironmentName
   assertLoopbackOrigin(routerOrigin)
   if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(credentialEnvironmentName)) {
     throw new Error('aera-gateway-agc-binding: credential environment name is invalid')
   }
-  if (environmentId !== 'AERA_DEV' && environmentId !== 'CANARY') {
-    throw new Error('aera-gateway-agc-binding: environment identity is invalid')
+  if (new URL(routerOrigin).origin !== expected.routerOrigin
+    || credentialEnvironmentName !== expected.credentialEnvironmentName) {
+    throw new Error('aera-gateway-agc-binding: environment runtime tuple is inconsistent')
   }
   return Object.freeze({
     routerOrigin: new URL(routerOrigin).origin,
