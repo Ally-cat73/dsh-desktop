@@ -176,4 +176,32 @@ describe('Aera Gateway real-session readiness', () => {
     expect(JSON.parse(chunks.join(''))).toEqual({ state: 'CHECKING' })
     expect(chunks.join('')).not.toContain('synthetic-test-credential')
   })
+
+  it('accepts the normal same-origin browser GET without an Origin header', () => {
+    const service = new AeraGatewayReadinessService({
+      credential: 'synthetic-test-credential',
+      fetch: async () => { throw new Error('unused') },
+    })
+    const chunks: string[] = []
+    const req = {
+      method: 'GET',
+      url: `${AERA_GATEWAY_READINESS_PATH}?session_id=session-browser-get-001`,
+      headers: {
+        host: '127.0.0.1:43120',
+        referer: 'http://127.0.0.1:43120/',
+        'sec-fetch-site': 'same-origin',
+      },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as unknown as IncomingMessage
+    const res = {
+      statusCode: 0,
+      setHeader: () => undefined,
+      end: (value?: string) => { if (value) chunks.push(value) },
+    } as unknown as ServerResponse
+
+    handleAeraGatewayReadinessRequest(req, res, 'http://127.0.0.1:43120', service)
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(chunks.join(''))).toEqual({ state: 'CHECKING' })
+  })
 })

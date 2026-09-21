@@ -203,7 +203,7 @@ export function handleAeraGatewayReadinessRequest(
     res.end()
     return
   }
-  if (!isSameOriginLoopbackRequest(req, expectedOrigin, true)) {
+  if (!isSameOriginLoopbackRequest(req, expectedOrigin, false)) {
     res.statusCode = 403
     res.end()
     return
