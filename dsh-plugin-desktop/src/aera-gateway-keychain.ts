@@ -2,6 +2,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { AERA_CODE_PRODUCT } from './product-brand.ts'
+import { resolveAgcGovernedGatewayRuntime } from './aera-gateway-agc-binding.ts'
 
 export type AeraGatewayCredentialBootstrap =
   | 'not-required'
@@ -40,7 +41,7 @@ export function bootstrapAeraGatewayCredential(options: AeraGatewayKeychainOptio
     options.activeProfile as keyof typeof AERA_CODE_PRODUCT.gatewayProfiles
   ]
   const requestedName = options.activeProfile === 'aera-gateway-agc'
-    ? environment.AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME?.trim()
+    ? resolveAgcGovernedGatewayRuntime(environment).credentialEnvironmentName
     : undefined
   const profile = requestedName === undefined
     ? active

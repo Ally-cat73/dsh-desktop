@@ -201,7 +201,7 @@ describe('Aera Code native identity', () => {
 
   it('loads a known Canary credential reference for the governed AGC profile', () => {
     const environment: NodeJS.ProcessEnv = {
-      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_DSH_EVAL_KEY',
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
     }
     const readPassword = vi.fn(() => 'canary-process-only-value')
 
