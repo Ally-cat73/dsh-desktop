@@ -477,10 +477,6 @@ export class CollabWorkspaceService {
       meaningfulActivityCount: number
     }): string => {
       const { repositories } = resolveWorkOrderRepositories(store, entry.workOrderId)
-      const bindings = repositories.length === 0
-        ? 'no repository binding recorded'
-        : repositories.map(row =>
-          `${row.repositoryId} (${row.role}${row.providerIdentity === undefined ? '' : `; ${row.providerIdentity}`}${row.canonicalBranch === undefined ? '' : `; branch ${row.canonicalBranch}`})`).join('; ')
       const state = entry.effectiveState.lifecycleState === 'UNRECORDED'
         ? 'state not yet reconciled'
         : `${entry.effectiveState.lifecycleState} (from ${entry.effectiveState.source === 'STATE_RECORD' ? 'a recorded state transition' : 'its admission'})`
@@ -489,8 +485,10 @@ export class CollabWorkspaceService {
         `  state: ${state}`,
         `  last meaningful activity: ${entry.lastMeaningfulActivityAt ?? 'none recorded'}`
           + `; ${entry.meaningfulActivityCount} recorded activity event(s)`,
-        entry.effectiveState.evidence === undefined ? undefined : `  closure evidence: ${entry.effectiveState.evidence}`,
-        `  repositories: ${bindings}`,
+        entry.effectiveState.evidence === undefined ? undefined : '  closure evidence: recorded; retrieve on demand',
+        repositories.length === 0
+          ? '  repository bindings: none recorded'
+          : `  repository bindings: ${String(repositories.length)} recorded; retrieve live state on demand`,
       ].filter((line): line is string => line !== undefined).join('\n')
     }
     const sections: string[] = []
@@ -504,18 +502,14 @@ export class CollabWorkspaceService {
       sections.push('Recently completed (the last thing finished — recent, but no longer unfinished work):')
       sections.push(...frontier.recentlyCompleted.map(describe))
     }
-    if (frontier.recentPredecessors.length > 0) {
-      sections.push('Recent predecessors:')
-      sections.push(...frontier.recentPredecessors.map(describe))
-    }
     if (sections.length === 0) return undefined
     return [
       'No Work Order is joined in this Session. The following is institutional ORIENTATION from the durable participation store — it reflects recorded work, not this conversation, and it grants no authority to write, merge or deploy anything.',
       '',
       ...sections,
       '',
-      'Answer an orientation question ("what am I working on, where is it up to, what next?") directly from this frontier: name the most recent work, distinguish what was just COMPLETED from the unfinished work that remains resumable, and say what should legitimately happen next. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
-      'Before reasoning in detail about one of these, resolve it with aera_collab_resolve_work_context(work_order_id). For any PR, commit or branch, use aera_collab_repository_resource with the stable RepositoryIds above to read LIVE provider state — recorded evidence says what was true then, the provider says what is true now, and an old "PR opened" note must never be repeated as current advice once the PR is merged.',
+      'Answer this orientation question directly from the frontier without calling collaboration tools. Name current/resumable work, distinguish recently COMPLETED work, and state only the next action the recorded lifecycle supports. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
+      'Use aera_collab_resolve_work_context(work_order_id) only when the owner requests detail absent from this snapshot. Retrieve working state, decisions, evidence, residuals or live repository state lazily after that explicit resolution; recorded evidence says what was true then and the provider says what is true now.',
       'Never infer a Work Order or a repository from the workspace path or name.',
     ].join('\n')
   }

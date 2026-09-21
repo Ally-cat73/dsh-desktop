@@ -163,7 +163,8 @@ beforeAll(async () => {
     authorisingWorkOrderId: AUTHORISING_WO,
     workOrderId: COMPLETED_WO,
     lifecycleState: 'COMPLETED',
-    evidence: 'PR #593 merged as 206b26ee0; independent review verdict banked',
+    evidence: 'PR #593 merged as 206b26ee0; independent review verdict banked; '
+      + 'extensive historical receipt '.repeat(1_000),
   })
   await seed.closeAgentWorkContext()
 })
@@ -219,11 +220,29 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
     expect(resumableSection).toContain(RESUMABLE_WO)
     expect(resumableSection).not.toContain(COMPLETED_WO)
     expect(completedSection).toContain(COMPLETED_WO)
-    expect(completedSection).toContain('PR #593 merged as 206b26ee0')
+    expect(completedSection).toContain('closure evidence: recorded; retrieve on demand')
+    expect(completedSection).not.toContain('PR #593 merged as 206b26ee0')
     // The immutable admission still says ACTIVE; only the projection moved.
     const store = new ParticipationStore(storeDir)
     expect(store.listWorkOrders().find(row => row.workOrderId === COMPLETED_WO)?.lifecycleStatus).toBe('ACTIVE')
     expect(store.effectiveWorkOrderState(COMPLETED_WO)?.lifecycleState).toBe('COMPLETED')
+  })
+
+  it('keeps closure evidence and repository detail lazy in a bounded cold-orientation snapshot', async () => {
+    const subject = service()
+    const text = await subject.agentOrientationContext() ?? ''
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(2_500)
+    expect(text).toContain('closure evidence: recorded; retrieve on demand')
+    expect(text).not.toContain('PR #593 merged as 206b26ee0')
+    expect(text).not.toContain('github:test-owner/test-stack')
+    expect(text).toContain('Answer this orientation question directly from the frontier without calling collaboration tools.')
+  })
+
+  it('does not let a dirty unrelated checkout change institutional orientation', async () => {
+    const subject = service()
+    const before = await subject.agentOrientationContext()
+    writeFileSync(join(neutralWorkspace, 'unrelated-owner-file.txt'), 'dirty but unrelated\n')
+    expect(await subject.agentOrientationContext()).toBe(before)
   })
 
   it('orientation grants no execution authority and never infers a repository from the neutral workspace', async () => {
