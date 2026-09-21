@@ -218,20 +218,51 @@ export const AGC_CONNECTION_HEADER = 'x-aera-connection-id'
  */
 export const AGC_RUNTIME_INSTANCE_HEADER = 'x-aera-runtime-instance-id'
 
+export interface AgcGovernedGatewayRuntime {
+  readonly routerOrigin: string
+  readonly credentialEnvironmentName: string
+}
+
+/**
+ * Resolve the environment-specific loopback publication of the SAME governed
+ * Aera Code Connection. Defaults remain the accepted AERA_DEV binding. A
+ * promotion candidate may select another loopback forward and an existing
+ * credential reference, but may not change Connection/runtime identity or
+ * escape the local transport boundary.
+ */
+export function resolveAgcGovernedGatewayRuntime(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AgcGovernedGatewayRuntime {
+  const routerOrigin = env.AERA_GATEWAY_AGC_ROUTER_ORIGIN?.trim()
+    || AGC_GOVERNED_ROUTER_ORIGIN
+  const credentialEnvironmentName = env.AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME?.trim()
+    || AGC_GATEWAY_CREDENTIAL_ENV
+  assertLoopbackOrigin(routerOrigin)
+  if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(credentialEnvironmentName)) {
+    throw new Error('aera-gateway-agc-binding: credential environment name is invalid')
+  }
+  return Object.freeze({
+    routerOrigin: new URL(routerOrigin).origin,
+    credentialEnvironmentName,
+  })
+}
+
 /**
  * Build the product-hosted governed provider profile. No argument is taken:
  * every field is frozen by the owner ruling, and a configurable origin is
  * exactly the thing §20 refuses.
  */
-export function buildAgcGovernedGatewayProviderProfile(): AgcGatewayProviderProfile {
-  assertLoopbackOrigin(AGC_GOVERNED_ROUTER_ORIGIN)
+export function buildAgcGovernedGatewayProviderProfile(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AgcGatewayProviderProfile {
+  const runtime = resolveAgcGovernedGatewayRuntime(env)
   assertIdentifier('connectionId', AGC_GOVERNED_CONNECTION_ID)
   assertIdentifier('runtimeInstanceId', AGC_GOVERNED_RUNTIME_INSTANCE_ID)
   return {
     displayName: 'AERA Gateway (governed)',
     api: 'openai-responses',
-    baseURL: `${new URL(AGC_GOVERNED_ROUTER_ORIGIN).origin}/v1`,
-    apiKeyEnv: AGC_GATEWAY_CREDENTIAL_ENV,
+    baseURL: `${runtime.routerOrigin}/v1`,
+    apiKeyEnv: runtime.credentialEnvironmentName,
     headers: {
       [AGC_CONNECTION_HEADER]: AGC_GOVERNED_CONNECTION_ID,
       [AGC_RUNTIME_INSTANCE_HEADER]: AGC_GOVERNED_RUNTIME_INSTANCE_ID,
@@ -255,11 +286,12 @@ export function buildAgcGovernedGatewayProviderProfile(): AgcGatewayProviderProf
  */
 export function buildAgcGovernedGatewayProviderSection(
   existing: Readonly<Record<string, unknown>> = {},
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): { providers: Record<string, unknown> } {
   return {
     providers: {
       ...existing,
-      [AGC_GOVERNED_GATEWAY_ROUTE]: buildAgcGovernedGatewayProviderProfile(),
+      [AGC_GOVERNED_GATEWAY_ROUTE]: buildAgcGovernedGatewayProviderProfile(env),
     },
   }
 }

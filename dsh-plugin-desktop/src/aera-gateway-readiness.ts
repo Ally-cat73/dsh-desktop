@@ -9,6 +9,7 @@ import {
   AGC_GOVERNED_MODEL_ID,
   AGC_GOVERNED_ROUTER_ORIGIN,
   AGC_GOVERNED_RUNTIME_INSTANCE_ID,
+  resolveAgcGovernedGatewayRuntime,
 } from './aera-gateway-agc-binding.ts'
 import { isSameOriginLoopbackRequest } from './desktop-settings-route.ts'
 import { AERA_GATEWAY_READINESS_PATH } from './aera-gateway-readiness-contract.ts'
@@ -198,8 +199,10 @@ export function handleAeraGatewayReadinessRequest(
 
 /** Bind the real DSH Session lifecycle to zero-Provider Gateway bootstrap. */
 export function apply(ctx: Context): void {
+  const runtime = resolveAgcGovernedGatewayRuntime(process.env)
   const service = new AeraGatewayReadinessService({
-    credential: process.env.AERA_GATEWAY_AGC_EXECUTION_KEY ?? '',
+    credential: process.env[runtime.credentialEnvironmentName] ?? '',
+    routerOrigin: runtime.routerOrigin,
   })
   const rendererOrigin = `http://127.0.0.1:${String(ctx.webServer.port)}`
   ctx.effect(

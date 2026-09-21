@@ -65,6 +65,30 @@ describe('Aera Gateway real-session readiness', () => {
     })
   })
 
+  it('uses the configured Canary loopback while retaining exact readiness assertions', async () => {
+    const requests: string[] = []
+    const service = new AeraGatewayReadinessService({
+      credential: 'synthetic-canary-credential',
+      routerOrigin: 'http://127.0.0.1:14646',
+      fetch: async (url) => {
+        requests.push(String(url))
+        return new Response(JSON.stringify({
+          status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
+          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+          identity: {
+            connection_id: 'relay-messages-dogfood-canonical-connection',
+            runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
+            session_id: 'session-canary-created', provider_id: 'openai',
+            channel_id: 'wo030c-channel-b-openai', model_id: 'gpt-5.6-terra', assignment_revision: 1,
+          },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      },
+    })
+
+    await expect(service.prepare(SESSION)).resolves.toMatchObject({ state: 'READY' })
+    expect(requests).toEqual(['http://127.0.0.1:14646/v1/provider-execution/preflight'])
+  })
+
   it('retains an expired-authority denial as a non-executable Session', async () => {
     const service = new AeraGatewayReadinessService({
       credential: 'synthetic-test-credential',
