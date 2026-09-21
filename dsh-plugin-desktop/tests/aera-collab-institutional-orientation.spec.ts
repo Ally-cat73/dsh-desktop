@@ -70,6 +70,7 @@ let corpusRoot: string
 let stackRoot: string
 /** A git-less neutral directory, exactly like /Users/<owner>/Desktop. */
 let neutralWorkspace: string
+let blockerEventId: string
 
 function seedRepo(root: string, remoteUrl?: string): void {
   mkdirSync(root, { recursive: true })
@@ -169,12 +170,13 @@ beforeAll(async () => {
   const blocked = await seed.openAgentWorkContext(RESUMABLE_WO, 'test-native-session-resumable')
   const blockedSession = store.getSession(blocked.sessionId)
   if (blockedSession === undefined) throw new Error('blocked fixture session missing')
-  store.appendEvent({
+  const blockerEvent = store.appendEvent({
     eventKind: 'BREAK_REPORTED',
     workOrderId: RESUMABLE_WO,
     attribution: attributeChange({ session: blockedSession, workOrderId: RESUMABLE_WO }),
     summary: 'Owner login is required before the next authorised step can run.',
   })
+  blockerEventId = blockerEvent.eventId
   const authority = service()
   const authorityJoin = await authority.openAgentWorkContext(AUTHORISING_WO, 'test-native-session-authority-active-state')
   store.recordWorkOrderState({
@@ -266,7 +268,15 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
       eventKind: 'REPAIR_RECORDED',
       workOrderId: RESUMABLE_WO,
       attribution: attributeChange({ session: repairSession, workOrderId: RESUMABLE_WO }),
+      summary: 'An unrelated repair was recorded.',
+    })
+    expect(await repairService.agentOrientationContext()).toContain('current blocker: Owner login is required')
+    store.appendEvent({
+      eventKind: 'REPAIR_RECORDED',
+      workOrderId: RESUMABLE_WO,
+      attribution: attributeChange({ session: repairSession, workOrderId: RESUMABLE_WO }),
       summary: 'Owner login completed; blocker cleared.',
+      repairsEventId: blockerEventId,
     })
     expect(await repairService.agentOrientationContext()).not.toContain('current blocker:')
     store.appendEvent({

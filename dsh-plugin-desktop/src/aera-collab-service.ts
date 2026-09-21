@@ -470,13 +470,17 @@ export class CollabWorkspaceService {
     if (typeof store.orientationFrontier !== 'function') return undefined
     const frontier = store.orientationFrontier()
     const currentBlocker = (workOrderId: string): string | undefined => {
-      const latest = store.listEvents()
+      const relevant = store.listEvents()
         .filter(event => !isUnattributedChange(event.attribution)
-          && event.attribution.workOrderId === workOrderId
-          && (event.eventKind === 'BREAK_REPORTED' || event.eventKind === 'REPAIR_RECORDED'))
+          && event.attribution.workOrderId === workOrderId)
+      const repaired = new Set(relevant
+        .filter(event => event.eventKind === 'REPAIR_RECORDED' && event.repairsEventId !== undefined)
+        .map(event => event.repairsEventId))
+      const latestUnresolved = relevant
+        .filter(event => event.eventKind === 'BREAK_REPORTED' && !repaired.has(event.eventId))
         .sort((left, right) => left.recordedAt < right.recordedAt ? 1 : -1)[0]
-      if (latest === undefined || latest.eventKind !== 'BREAK_REPORTED') return undefined
-      const inline = latest.summary.replace(/\s+/gu, ' ').trim()
+      if (latestUnresolved === undefined) return undefined
+      const inline = latestUnresolved.summary.replace(/\s+/gu, ' ').trim()
       return inline.length <= 320 ? inline : `${inline.slice(0, 319)}…`
     }
     const describe = (entry: {
