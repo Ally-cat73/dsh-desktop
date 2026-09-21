@@ -37,7 +37,7 @@ import { execFileSync } from 'node:child_process'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ParticipationStore } from '@aera/participation-runtime'
 import { issueAeraPrincipalId } from '@aera/cis-contracts'
-import { repositoryId } from '@aera/participation-contracts'
+import { attributeChange, repositoryId } from '@aera/participation-contracts'
 import { CollabWorkspaceService } from '../src/aera-collab-service.ts'
 
 /** The order worked on FIRST and since completed — the "just finished" work. */
@@ -166,6 +166,25 @@ beforeAll(async () => {
     evidence: 'PR #593 merged as 206b26ee0; independent review verdict banked; '
       + 'extensive historical receipt '.repeat(1_000),
   })
+  const blocked = await seed.openAgentWorkContext(RESUMABLE_WO, 'test-native-session-resumable')
+  const blockedSession = store.getSession(blocked.sessionId)
+  if (blockedSession === undefined) throw new Error('blocked fixture session missing')
+  store.appendEvent({
+    eventKind: 'BREAK_REPORTED',
+    workOrderId: RESUMABLE_WO,
+    attribution: attributeChange({ session: blockedSession, workOrderId: RESUMABLE_WO }),
+    summary: 'Owner login is required before the next authorised step can run.',
+  })
+  const authority = service()
+  const authorityJoin = await authority.openAgentWorkContext(AUTHORISING_WO, 'test-native-session-authority-active-state')
+  store.recordWorkOrderState({
+    sessionId: authorityJoin.sessionId,
+    authorisingWorkOrderId: AUTHORISING_WO,
+    workOrderId: RESUMABLE_WO,
+    lifecycleState: 'ACTIVE',
+    evidence: 'Active reconciliation recorded after the blocker; it does not itself repair the blocker.',
+  })
+  await authority.closeAgentWorkContext()
   await seed.closeAgentWorkContext()
 })
 
@@ -235,7 +254,28 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
     expect(text).toContain('closure evidence: recorded; retrieve on demand')
     expect(text).not.toContain('PR #593 merged as 206b26ee0')
     expect(text).not.toContain('github:test-owner/test-stack')
-    expect(text).toContain('Answer this orientation question directly from the frontier without calling collaboration tools.')
+    expect(text).toContain('Answer this orientation question directly from the frontier without calling collaboration tools when it contains enough facts.')
+    expect(text).toContain('current blocker: Owner login is required before the next authorised step can run.')
+
+    const repairService = service()
+    const joined = await repairService.openAgentWorkContext(RESUMABLE_WO, 'test-native-session-repair')
+    const store = new ParticipationStore(storeDir)
+    const repairSession = store.getSession(joined.sessionId)
+    if (repairSession === undefined) throw new Error('repair fixture session missing')
+    store.appendEvent({
+      eventKind: 'REPAIR_RECORDED',
+      workOrderId: RESUMABLE_WO,
+      attribution: attributeChange({ session: repairSession, workOrderId: RESUMABLE_WO }),
+      summary: 'Owner login completed; blocker cleared.',
+    })
+    expect(await repairService.agentOrientationContext()).not.toContain('current blocker:')
+    store.appendEvent({
+      eventKind: 'BREAK_REPORTED',
+      workOrderId: RESUMABLE_WO,
+      attribution: attributeChange({ session: repairSession, workOrderId: RESUMABLE_WO }),
+      summary: 'Owner login is required before the next authorised step can run.',
+    })
+    await repairService.closeAgentWorkContext()
   })
 
   it('does not let a dirty unrelated checkout change institutional orientation', async () => {

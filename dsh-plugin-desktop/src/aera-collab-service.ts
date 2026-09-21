@@ -469,10 +469,20 @@ export class CollabWorkspaceService {
     const store = this.requireStore()
     if (typeof store.orientationFrontier !== 'function') return undefined
     const frontier = store.orientationFrontier()
+    const currentBlocker = (workOrderId: string): string | undefined => {
+      const latest = store.listEvents()
+        .filter(event => !isUnattributedChange(event.attribution)
+          && event.attribution.workOrderId === workOrderId
+          && (event.eventKind === 'BREAK_REPORTED' || event.eventKind === 'REPAIR_RECORDED'))
+        .sort((left, right) => left.recordedAt < right.recordedAt ? 1 : -1)[0]
+      if (latest === undefined || latest.eventKind !== 'BREAK_REPORTED') return undefined
+      const inline = latest.summary.replace(/\s+/gu, ' ').trim()
+      return inline.length <= 320 ? inline : `${inline.slice(0, 319)}…`
+    }
     const describe = (entry: {
       workOrderId: string
       title: string
-      effectiveState: { lifecycleState: string, source: string, evidence?: string }
+      effectiveState: { lifecycleState: string, source: string, evidence?: string, recordedAt?: string }
       lastMeaningfulActivityAt?: string
       meaningfulActivityCount: number
     }): string => {
@@ -480,11 +490,16 @@ export class CollabWorkspaceService {
       const state = entry.effectiveState.lifecycleState === 'UNRECORDED'
         ? 'state not yet reconciled'
         : `${entry.effectiveState.lifecycleState} (from ${entry.effectiveState.source === 'STATE_RECORD' ? 'a recorded state transition' : 'its admission'})`
+      const blocker = entry.effectiveState.lifecycleState === 'ACTIVE'
+        || entry.effectiveState.lifecycleState === 'UNRECORDED'
+        ? currentBlocker(entry.workOrderId)
+        : undefined
       return [
         `- ${entry.workOrderId} — ${entry.title}`,
         `  state: ${state}`,
         `  last meaningful activity: ${entry.lastMeaningfulActivityAt ?? 'none recorded'}`
           + `; ${entry.meaningfulActivityCount} recorded activity event(s)`,
+        blocker === undefined ? undefined : `  current blocker: ${blocker}`,
         entry.effectiveState.evidence === undefined ? undefined : '  closure evidence: recorded; retrieve on demand',
         repositories.length === 0
           ? '  repository bindings: none recorded'
@@ -508,7 +523,7 @@ export class CollabWorkspaceService {
       '',
       ...sections,
       '',
-      'Answer this orientation question directly from the frontier without calling collaboration tools. Name current/resumable work, distinguish recently COMPLETED work, and state only the next action the recorded lifecycle supports. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
+      'Answer this orientation question directly from the frontier without calling collaboration tools when it contains enough facts. Name current/resumable work, distinguish recently COMPLETED work, report any current blocker shown, and state only the next action the recorded lifecycle supports. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
       'Use aera_collab_resolve_work_context(work_order_id) only when the owner requests detail absent from this snapshot. Retrieve working state, decisions, evidence, residuals or live repository state lazily after that explicit resolution; recorded evidence says what was true then and the provider says what is true now.',
       'Never infer a Work Order or a repository from the workspace path or name.',
     ].join('\n')
