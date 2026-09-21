@@ -42,6 +42,7 @@ import { CollabWorkspaceService } from '../src/aera-collab-service.ts'
 
 /** The order worked on FIRST and since completed — the "just finished" work. */
 const COMPLETED_WO = 'WO-TEST-ORIENT-COMPLETED-001'
+const SUPERSEDED_WO = 'WO-TEST-ORIENT-SUPERSEDED-001'
 /** The older order that remains the unfinished, resumable programme work. */
 const RESUMABLE_WO = 'WO-TEST-ORIENT-RESUMABLE-001'
 /** The order that authorises state reconciliation in this fixture. */
@@ -111,6 +112,7 @@ beforeAll(async () => {
     [AUTHORISING_WO, 'test-native-session-authority'],
     [RESUMABLE_WO, 'test-native-session-resumable'],
     [COMPLETED_WO, EARLIER_SESSION],
+    [SUPERSEDED_WO, 'test-native-session-superseded'],
   ] as const) {
     store.registerWorkOrder({
       workOrderId: id,
@@ -157,6 +159,7 @@ beforeAll(async () => {
   }
   await record(RESUMABLE_WO, 'Opened the resumable programme work; implementation in progress.')
   await record(COMPLETED_WO, 'Historical evidence: PR #593 opened against dev for this assessment.')
+  await record(SUPERSEDED_WO, 'Successor order accepted the remaining scope.')
 
   // The completed order is closed through the authority-safe state seam.
   store.recordWorkOrderState({
@@ -166,6 +169,13 @@ beforeAll(async () => {
     lifecycleState: 'COMPLETED',
     evidence: 'PR #593 merged as 206b26ee0; independent review verdict banked; '
       + 'extensive historical receipt '.repeat(1_000),
+  })
+  store.recordWorkOrderState({
+    sessionId: joined.sessionId,
+    authorisingWorkOrderId: AUTHORISING_WO,
+    workOrderId: SUPERSEDED_WO,
+    lifecycleState: 'SUPERSEDED',
+    evidence: 'Owner disposition moved remaining scope to a successor order.',
   })
   const blocked = await seed.openAgentWorkContext(RESUMABLE_WO, 'test-native-session-resumable')
   const blockedSession = store.getSession(blocked.sessionId)
@@ -236,11 +246,14 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
   it('recently completed work is reported as recent but NOT as current unfinished work', async () => {
     const subject = service()
     const text = await subject.agentOrientationContext() ?? ''
-    const resumableSection = text.slice(text.indexOf('Current / resumable work'), text.indexOf('Recently completed'))
-    const completedSection = text.slice(text.indexOf('Recently completed'))
+    const resumableSection = text.slice(text.indexOf('Current / resumable work'), text.indexOf('Recently terminal'))
+    const completedSection = text.slice(text.indexOf('Recently terminal'))
     expect(resumableSection).toContain(RESUMABLE_WO)
     expect(resumableSection).not.toContain(COMPLETED_WO)
     expect(completedSection).toContain(COMPLETED_WO)
+    expect(completedSection).toContain(SUPERSEDED_WO)
+    expect(completedSection).toContain('state: SUPERSEDED (from a recorded state transition)')
+    expect(completedSection).toContain('SUPERSEDED is not COMPLETED')
     expect(completedSection).toContain('closure evidence: recorded; retrieve on demand')
     expect(completedSection).not.toContain('PR #593 merged as 206b26ee0')
     // The immutable admission still says ACTIVE; only the projection moved.
@@ -252,7 +265,7 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
   it('keeps closure evidence and repository detail lazy in a bounded cold-orientation snapshot', async () => {
     const subject = service()
     const text = await subject.agentOrientationContext() ?? ''
-    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(2_500)
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(3_000)
     expect(text).toContain('closure evidence: recorded; retrieve on demand')
     expect(text).not.toContain('PR #593 merged as 206b26ee0')
     expect(text).not.toContain('github:test-owner/test-stack')

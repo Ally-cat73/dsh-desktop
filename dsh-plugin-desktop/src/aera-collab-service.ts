@@ -518,7 +518,7 @@ export class CollabWorkspaceService {
       sections.push(...frontier.currentResumable.map(describe))
     }
     if (frontier.recentlyCompleted.length > 0) {
-      sections.push('Recently completed (the last thing finished — recent, but no longer unfinished work):')
+      sections.push('Recently terminal (recent work that is no longer unfinished; inspect each exact state — SUPERSEDED is not COMPLETED):')
       sections.push(...frontier.recentlyCompleted.map(describe))
     }
     if (sections.length === 0) return undefined
@@ -527,7 +527,7 @@ export class CollabWorkspaceService {
       '',
       ...sections,
       '',
-      'Answer this orientation question directly from the frontier without calling collaboration tools when it contains enough facts. Name current/resumable work, distinguish recently COMPLETED work, report any current blocker shown, and state only the next action the recorded lifecycle supports. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
+      'Answer this orientation question directly from the frontier without calling collaboration tools when it contains enough facts. Name current/resumable work, distinguish recently terminal work by its exact COMPLETED or SUPERSEDED state, report any current blocker shown, and state only the next action the recorded lifecycle supports. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
       'Use aera_collab_resolve_work_context(work_order_id) only when the owner requests detail absent from this snapshot. Retrieve working state, decisions, evidence, residuals or live repository state lazily after that explicit resolution; recorded evidence says what was true then and the provider says what is true now.',
       'Never infer a Work Order or a repository from the workspace path or name.',
     ].join('\n')
