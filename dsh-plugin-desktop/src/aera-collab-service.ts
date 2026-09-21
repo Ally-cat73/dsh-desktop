@@ -469,28 +469,45 @@ export class CollabWorkspaceService {
     const store = this.requireStore()
     if (typeof store.orientationFrontier !== 'function') return undefined
     const frontier = store.orientationFrontier()
+    const currentBlocker = (workOrderId: string): string | undefined => {
+      const relevant = store.listEvents()
+        .filter(event => !isUnattributedChange(event.attribution)
+          && event.attribution.workOrderId === workOrderId)
+      const repaired = new Set(relevant
+        .filter(event => event.eventKind === 'REPAIR_RECORDED' && event.repairsEventId !== undefined)
+        .map(event => event.repairsEventId))
+      const latestUnresolved = relevant
+        .filter(event => event.eventKind === 'BREAK_REPORTED' && !repaired.has(event.eventId))
+        .sort((left, right) => left.recordedAt < right.recordedAt ? 1 : -1)[0]
+      if (latestUnresolved === undefined) return undefined
+      const inline = latestUnresolved.summary.replace(/\s+/gu, ' ').trim()
+      return inline.length <= 320 ? inline : `${inline.slice(0, 319)}…`
+    }
     const describe = (entry: {
       workOrderId: string
       title: string
-      effectiveState: { lifecycleState: string, source: string, evidence?: string }
+      effectiveState: { lifecycleState: string, source: string, evidence?: string, recordedAt?: string }
       lastMeaningfulActivityAt?: string
       meaningfulActivityCount: number
     }): string => {
       const { repositories } = resolveWorkOrderRepositories(store, entry.workOrderId)
-      const bindings = repositories.length === 0
-        ? 'no repository binding recorded'
-        : repositories.map(row =>
-          `${row.repositoryId} (${row.role}${row.providerIdentity === undefined ? '' : `; ${row.providerIdentity}`}${row.canonicalBranch === undefined ? '' : `; branch ${row.canonicalBranch}`})`).join('; ')
       const state = entry.effectiveState.lifecycleState === 'UNRECORDED'
         ? 'state not yet reconciled'
         : `${entry.effectiveState.lifecycleState} (from ${entry.effectiveState.source === 'STATE_RECORD' ? 'a recorded state transition' : 'its admission'})`
+      const blocker = entry.effectiveState.lifecycleState === 'ACTIVE'
+        || entry.effectiveState.lifecycleState === 'UNRECORDED'
+        ? currentBlocker(entry.workOrderId)
+        : undefined
       return [
         `- ${entry.workOrderId} — ${entry.title}`,
         `  state: ${state}`,
         `  last meaningful activity: ${entry.lastMeaningfulActivityAt ?? 'none recorded'}`
           + `; ${entry.meaningfulActivityCount} recorded activity event(s)`,
-        entry.effectiveState.evidence === undefined ? undefined : `  closure evidence: ${entry.effectiveState.evidence}`,
-        `  repositories: ${bindings}`,
+        blocker === undefined ? undefined : `  current blocker: ${blocker}`,
+        entry.effectiveState.evidence === undefined ? undefined : '  closure evidence: recorded; retrieve on demand',
+        repositories.length === 0
+          ? '  repository bindings: none recorded'
+          : `  repository bindings: ${String(repositories.length)} recorded; retrieve live state on demand`,
       ].filter((line): line is string => line !== undefined).join('\n')
     }
     const sections: string[] = []
@@ -501,12 +518,8 @@ export class CollabWorkspaceService {
       sections.push(...frontier.currentResumable.map(describe))
     }
     if (frontier.recentlyCompleted.length > 0) {
-      sections.push('Recently completed (the last thing finished — recent, but no longer unfinished work):')
+      sections.push('Recently terminal (recent work that is no longer unfinished; inspect each exact state — SUPERSEDED is not COMPLETED):')
       sections.push(...frontier.recentlyCompleted.map(describe))
-    }
-    if (frontier.recentPredecessors.length > 0) {
-      sections.push('Recent predecessors:')
-      sections.push(...frontier.recentPredecessors.map(describe))
     }
     if (sections.length === 0) return undefined
     return [
@@ -514,8 +527,8 @@ export class CollabWorkspaceService {
       '',
       ...sections,
       '',
-      'Answer an orientation question ("what am I working on, where is it up to, what next?") directly from this frontier: name the most recent work, distinguish what was just COMPLETED from the unfinished work that remains resumable, and say what should legitimately happen next. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
-      'Before reasoning in detail about one of these, resolve it with aera_collab_resolve_work_context(work_order_id). For any PR, commit or branch, use aera_collab_repository_resource with the stable RepositoryIds above to read LIVE provider state — recorded evidence says what was true then, the provider says what is true now, and an old "PR opened" note must never be repeated as current advice once the PR is merged.',
+      'Answer this orientation question directly from the frontier without calling collaboration tools when it contains enough facts. Name current/resumable work, distinguish recently terminal work by its exact COMPLETED or SUPERSEDED state, report any current blocker shown, and state only the next action the recorded lifecycle supports. Do NOT ask which Work Order is meant merely because more than one is listed — ask only when a requested ACTION cannot be truthfully tied to one of them.',
+      'Use aera_collab_resolve_work_context(work_order_id) only when the owner requests detail absent from this snapshot. Retrieve working state, decisions, evidence, residuals or live repository state lazily after that explicit resolution; recorded evidence says what was true then and the provider says what is true now.',
       'Never infer a Work Order or a repository from the workspace path or name.',
     ].join('\n')
   }

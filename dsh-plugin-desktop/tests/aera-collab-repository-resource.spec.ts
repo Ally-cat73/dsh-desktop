@@ -248,7 +248,8 @@ describe('the repository resource read plane', () => {
     const text = await subject.agentOrientationContext()
     expect(text).toContain('No Work Order is joined in this Session.')
     expect(text).toContain(`- ${OWNER_WO} — Repository identity test order`)
-    expect(text).toContain('aera-repo:test-stack (PRIMARY; github:test-owner/test-stack; branch dev)')
+    expect(text).toContain('repository bindings: 3 recorded; retrieve live state on demand')
+    expect(text).not.toContain('github:test-owner/test-stack')
     // Orientation ranks by MEANINGFUL activity, so an order nothing has been
     // recorded against never appears — registration alone is not recent work.
     expect(text).not.toContain(LEGACY_WO)

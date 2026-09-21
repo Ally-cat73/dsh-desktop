@@ -37,11 +37,12 @@ import { execFileSync } from 'node:child_process'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ParticipationStore } from '@aera/participation-runtime'
 import { issueAeraPrincipalId } from '@aera/cis-contracts'
-import { repositoryId } from '@aera/participation-contracts'
+import { attributeChange, repositoryId } from '@aera/participation-contracts'
 import { CollabWorkspaceService } from '../src/aera-collab-service.ts'
 
 /** The order worked on FIRST and since completed — the "just finished" work. */
 const COMPLETED_WO = 'WO-TEST-ORIENT-COMPLETED-001'
+const SUPERSEDED_WO = 'WO-TEST-ORIENT-SUPERSEDED-001'
 /** The older order that remains the unfinished, resumable programme work. */
 const RESUMABLE_WO = 'WO-TEST-ORIENT-RESUMABLE-001'
 /** The order that authorises state reconciliation in this fixture. */
@@ -70,6 +71,7 @@ let corpusRoot: string
 let stackRoot: string
 /** A git-less neutral directory, exactly like /Users/<owner>/Desktop. */
 let neutralWorkspace: string
+let blockerEventId: string
 
 function seedRepo(root: string, remoteUrl?: string): void {
   mkdirSync(root, { recursive: true })
@@ -110,6 +112,7 @@ beforeAll(async () => {
     [AUTHORISING_WO, 'test-native-session-authority'],
     [RESUMABLE_WO, 'test-native-session-resumable'],
     [COMPLETED_WO, EARLIER_SESSION],
+    [SUPERSEDED_WO, 'test-native-session-superseded'],
   ] as const) {
     store.registerWorkOrder({
       workOrderId: id,
@@ -156,6 +159,7 @@ beforeAll(async () => {
   }
   await record(RESUMABLE_WO, 'Opened the resumable programme work; implementation in progress.')
   await record(COMPLETED_WO, 'Historical evidence: PR #593 opened against dev for this assessment.')
+  await record(SUPERSEDED_WO, 'Successor order accepted the remaining scope.')
 
   // The completed order is closed through the authority-safe state seam.
   store.recordWorkOrderState({
@@ -163,8 +167,36 @@ beforeAll(async () => {
     authorisingWorkOrderId: AUTHORISING_WO,
     workOrderId: COMPLETED_WO,
     lifecycleState: 'COMPLETED',
-    evidence: 'PR #593 merged as 206b26ee0; independent review verdict banked',
+    evidence: 'PR #593 merged as 206b26ee0; independent review verdict banked; '
+      + 'extensive historical receipt '.repeat(1_000),
   })
+  store.recordWorkOrderState({
+    sessionId: joined.sessionId,
+    authorisingWorkOrderId: AUTHORISING_WO,
+    workOrderId: SUPERSEDED_WO,
+    lifecycleState: 'SUPERSEDED',
+    evidence: 'Owner disposition moved remaining scope to a successor order.',
+  })
+  const blocked = await seed.openAgentWorkContext(RESUMABLE_WO, 'test-native-session-resumable')
+  const blockedSession = store.getSession(blocked.sessionId)
+  if (blockedSession === undefined) throw new Error('blocked fixture session missing')
+  const blockerEvent = store.appendEvent({
+    eventKind: 'BREAK_REPORTED',
+    workOrderId: RESUMABLE_WO,
+    attribution: attributeChange({ session: blockedSession, workOrderId: RESUMABLE_WO }),
+    summary: 'Owner login is required before the next authorised step can run.',
+  })
+  blockerEventId = blockerEvent.eventId
+  const authority = service()
+  const authorityJoin = await authority.openAgentWorkContext(AUTHORISING_WO, 'test-native-session-authority-active-state')
+  store.recordWorkOrderState({
+    sessionId: authorityJoin.sessionId,
+    authorisingWorkOrderId: AUTHORISING_WO,
+    workOrderId: RESUMABLE_WO,
+    lifecycleState: 'ACTIVE',
+    evidence: 'Active reconciliation recorded after the blocker; it does not itself repair the blocker.',
+  })
+  await authority.closeAgentWorkContext()
   await seed.closeAgentWorkContext()
 })
 
@@ -214,16 +246,66 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
   it('recently completed work is reported as recent but NOT as current unfinished work', async () => {
     const subject = service()
     const text = await subject.agentOrientationContext() ?? ''
-    const resumableSection = text.slice(text.indexOf('Current / resumable work'), text.indexOf('Recently completed'))
-    const completedSection = text.slice(text.indexOf('Recently completed'))
+    const resumableSection = text.slice(text.indexOf('Current / resumable work'), text.indexOf('Recently terminal'))
+    const completedSection = text.slice(text.indexOf('Recently terminal'))
     expect(resumableSection).toContain(RESUMABLE_WO)
     expect(resumableSection).not.toContain(COMPLETED_WO)
     expect(completedSection).toContain(COMPLETED_WO)
-    expect(completedSection).toContain('PR #593 merged as 206b26ee0')
+    expect(completedSection).toContain(SUPERSEDED_WO)
+    expect(completedSection).toContain('state: SUPERSEDED (from a recorded state transition)')
+    expect(completedSection).toContain('SUPERSEDED is not COMPLETED')
+    expect(completedSection).toContain('closure evidence: recorded; retrieve on demand')
+    expect(completedSection).not.toContain('PR #593 merged as 206b26ee0')
     // The immutable admission still says ACTIVE; only the projection moved.
     const store = new ParticipationStore(storeDir)
     expect(store.listWorkOrders().find(row => row.workOrderId === COMPLETED_WO)?.lifecycleStatus).toBe('ACTIVE')
     expect(store.effectiveWorkOrderState(COMPLETED_WO)?.lifecycleState).toBe('COMPLETED')
+  })
+
+  it('keeps closure evidence and repository detail lazy in a bounded cold-orientation snapshot', async () => {
+    const subject = service()
+    const text = await subject.agentOrientationContext() ?? ''
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(3_000)
+    expect(text).toContain('closure evidence: recorded; retrieve on demand')
+    expect(text).not.toContain('PR #593 merged as 206b26ee0')
+    expect(text).not.toContain('github:test-owner/test-stack')
+    expect(text).toContain('Answer this orientation question directly from the frontier without calling collaboration tools when it contains enough facts.')
+    expect(text).toContain('current blocker: Owner login is required before the next authorised step can run.')
+
+    const repairService = service()
+    const joined = await repairService.openAgentWorkContext(RESUMABLE_WO, 'test-native-session-repair')
+    const store = new ParticipationStore(storeDir)
+    const repairSession = store.getSession(joined.sessionId)
+    if (repairSession === undefined) throw new Error('repair fixture session missing')
+    store.appendEvent({
+      eventKind: 'REPAIR_RECORDED',
+      workOrderId: RESUMABLE_WO,
+      attribution: attributeChange({ session: repairSession, workOrderId: RESUMABLE_WO }),
+      summary: 'An unrelated repair was recorded.',
+    })
+    expect(await repairService.agentOrientationContext()).toContain('current blocker: Owner login is required')
+    store.appendEvent({
+      eventKind: 'REPAIR_RECORDED',
+      workOrderId: RESUMABLE_WO,
+      attribution: attributeChange({ session: repairSession, workOrderId: RESUMABLE_WO }),
+      summary: 'Owner login completed; blocker cleared.',
+      repairsEventId: blockerEventId,
+    })
+    expect(await repairService.agentOrientationContext()).not.toContain('current blocker:')
+    store.appendEvent({
+      eventKind: 'BREAK_REPORTED',
+      workOrderId: RESUMABLE_WO,
+      attribution: attributeChange({ session: repairSession, workOrderId: RESUMABLE_WO }),
+      summary: 'Owner login is required before the next authorised step can run.',
+    })
+    await repairService.closeAgentWorkContext()
+  })
+
+  it('does not let a dirty unrelated checkout change institutional orientation', async () => {
+    const subject = service()
+    const before = await subject.agentOrientationContext()
+    writeFileSync(join(neutralWorkspace, 'unrelated-owner-file.txt'), 'dirty but unrelated\n')
+    expect(await subject.agentOrientationContext()).toBe(before)
   })
 
   it('orientation grants no execution authority and never infers a repository from the neutral workspace', async () => {
