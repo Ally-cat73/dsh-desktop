@@ -254,4 +254,42 @@ describe('Aera Code policy provenance', () => {
     })).rejects.toThrow('AERA_GATEWAY_ENVIRONMENT_ID_REQUIRED')
     expect(preflightHits).toBe(0)
   })
+
+  it('carries a READY Canary Session from Desktop readiness into provider preflight', async () => {
+    const sessionId = 'session-canary-ready-provider-same-environment'
+    let readinessHits = 0
+    let providerPreflightHits = 0
+    const success = () => ({
+      status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
+      route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'CANARY',
+      identity: {
+        connection_id: 'relay-messages-dogfood-canonical-connection',
+        runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
+        session_id: 'session-canary-canonical', provider_id: 'openai',
+        channel_id: 'wo030c-channel-b-openai', model_id: 'gpt-5.6-terra', assignment_revision: 1,
+      },
+    })
+    const readiness = new AeraGatewayReadinessService({
+      credential: 'synthetic-canary-key',
+      routerOrigin: 'http://127.0.0.1:14646',
+      environmentId: 'CANARY',
+      fetch: async () => {
+        readinessHits += 1
+        return Response.json(success())
+      },
+    })
+    await expect(readiness.prepare(sessionId)).resolves.toMatchObject({ state: 'READY', environmentId: 'CANARY' })
+    await expect(ensureAeraGatewaySessionReady({
+      baseURL: 'http://127.0.0.1:14646/v1',
+      headers: {
+        'x-aera-environment-id': 'CANARY',
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }, sessionId, 'synthetic-canary-key', async () => {
+      providerPreflightHits += 1
+      return Response.json(success())
+    })).resolves.toBeUndefined()
+    expect({ readinessHits, providerPreflightHits }).toEqual({ readinessHits: 1, providerPreflightHits: 1 })
+  })
 })

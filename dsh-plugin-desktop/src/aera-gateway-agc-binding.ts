@@ -240,7 +240,7 @@ const SESSION_ENVIRONMENT_BINDINGS = Symbol.for('aera.gateway.session-environmen
 
 interface AgcSessionEnvironmentBinding {
   readonly environmentId: AgcGatewayEnvironmentId
-  readonly routerOrigin: string
+  readonly origin: string
 }
 
 function sessionEnvironmentBindings(): Map<string, AgcSessionEnvironmentBinding> {
@@ -300,12 +300,12 @@ export function bindAgcGatewaySessionEnvironment(
   const bindings = sessionEnvironmentBindings()
   const current = bindings.get(sessionId)
   if (current !== undefined
-    && (current.environmentId !== runtime.environmentId || current.routerOrigin !== runtime.routerOrigin)) {
+    && (current.environmentId !== runtime.environmentId || current.origin !== runtime.routerOrigin)) {
     throw new Error('AERA_GATEWAY_SESSION_ENVIRONMENT_MISMATCH')
   }
   if (current === undefined) bindings.set(sessionId, Object.freeze({
     environmentId: runtime.environmentId,
-    routerOrigin: runtime.routerOrigin,
+    origin: runtime.routerOrigin,
   }))
 }
 
