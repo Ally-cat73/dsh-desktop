@@ -14,6 +14,7 @@ import {
   buildAgcIsolatedGatewayProviderProfile,
   buildAgcIsolatedGatewayProviderSection,
   AGC_CONNECTION_HEADER,
+  AGC_ENVIRONMENT_HEADER,
   AGC_GOVERNED_CONNECTION_ID,
   AGC_GOVERNED_GATEWAY_ROUTE,
   AGC_GOVERNED_MODEL_ID,
@@ -23,6 +24,7 @@ import {
   AGC_SESSION_HEADER,
   buildAgcGovernedGatewayProviderProfile,
   buildAgcGovernedGatewayProviderSection,
+  resolveAgcGovernedGatewayRuntime,
 } from '../src/aera-gateway-agc-binding.ts'
 
 const INPUT = {
@@ -132,6 +134,7 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     expect(profile!.headers).toMatchObject({
       [AGC_CONNECTION_HEADER]: 'relay-messages-dogfood-canonical-connection',
       [AGC_RUNTIME_INSTANCE_HEADER]: 'relay-messages-dogfood-canonical-runtime',
+      [AGC_ENVIRONMENT_HEADER]: 'AERA_DEV',
     })
     expect(profile!.headers).not.toHaveProperty(AGC_SESSION_HEADER)
     expect(profile!.models!.map(model => model.id)).toEqual([AGC_GOVERNED_MODEL_ID])
@@ -164,6 +167,53 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
     const section = buildAgcGovernedGatewayProviderSection({ openai: { apiKeyEnv: 'OPENAI_API_KEY' } })
 
     expect(Object.keys(section.providers).sort()).toEqual(['aera-gateway-agc', 'openai'])
+  })
+
+  it('accepts an explicit Canary loopback and credential reference without changing frozen routing identity', () => {
+    const env = {
+      AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://127.0.0.1:14646',
+      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_DSH_EVAL_KEY',
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
+    }
+    const runtime = resolveAgcGovernedGatewayRuntime(env)
+    const profile = buildAgcGovernedGatewayProviderProfile(env)
+
+    expect(runtime).toEqual({
+      routerOrigin: 'http://127.0.0.1:14646',
+      credentialEnvironmentName: 'AERA_GATEWAY_DSH_EVAL_KEY',
+      environmentId: 'CANARY',
+    })
+    expect(profile.baseURL).toBe('http://127.0.0.1:14646/v1')
+    expect(profile.apiKeyEnv).toBe('AERA_GATEWAY_DSH_EVAL_KEY')
+    expect(profile.displayName).toBe('AERA Gateway (governed / CANARY)')
+    expect(profile.models[0]?.name).toBe('Aera governed route / CANARY')
+    expect(profile.headers).toMatchObject({
+      [AGC_CONNECTION_HEADER]: AGC_GOVERNED_CONNECTION_ID,
+      [AGC_RUNTIME_INSTANCE_HEADER]: AGC_GOVERNED_RUNTIME_INSTANCE_ID,
+      [AGC_ENVIRONMENT_HEADER]: 'CANARY',
+    })
+  })
+
+  it('refuses a non-loopback governed override and malformed credential environment name', () => {
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://100.90.140.5:14646',
+    })).toThrow(/LOOPBACK/)
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'bad-name',
+    })).toThrow(/credential environment/i)
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'SYDNEY',
+    })).toThrow(/environment identity/i)
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
+      AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://127.0.0.1:4646',
+      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_DSH_EVAL_KEY',
+    })).toThrow(/runtime tuple/i)
+    expect(() => resolveAgcGovernedGatewayRuntime({
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
+      AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://127.0.0.1:14646',
+      AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'AERA_GATEWAY_AGC_EXECUTION_KEY',
+    })).toThrow(/runtime tuple/i)
   })
 
   it('carries no secret material and never names another profile credential', () => {

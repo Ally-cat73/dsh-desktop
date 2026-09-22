@@ -199,6 +199,23 @@ describe('Aera Code native identity', () => {
     expect(environment.AERA_GATEWAY_DSH_EVAL_KEY).toBeUndefined()
   })
 
+  it('loads a known Canary credential reference for the governed AGC profile', () => {
+    const environment: NodeJS.ProcessEnv = {
+      AERA_GATEWAY_AGC_ENVIRONMENT_ID: 'CANARY',
+    }
+    const readPassword = vi.fn(() => 'canary-process-only-value')
+
+    expect(bootstrapAeraGatewayCredential({
+      platform: 'darwin',
+      environment,
+      activeProfile: 'aera-gateway-agc',
+      readPassword,
+    })).toBe('loaded-from-keychain')
+    expect(readPassword).toHaveBeenCalledWith('com.aera.gateway.canary.execution', 'Allyd')
+    expect(environment.AERA_GATEWAY_DSH_EVAL_KEY).toBe('canary-process-only-value')
+    expect(environment.AERA_GATEWAY_AGC_EXECUTION_KEY).toBeUndefined()
+  })
+
   it('does not read Keychain for another profile or replace an inherited credential', () => {
     const readPassword = vi.fn(() => 'unexpected')
     expect(bootstrapAeraGatewayCredential({
@@ -275,6 +292,12 @@ describe('Aera Code native identity', () => {
     expect(classify('OpenAI API error (403): 403 "CURRENT_AUTHORITY_UNAVAILABLE"')).toBe('AUTHORITY')
     expect(classify('OpenAI API error (423): 423 "PROVIDER_LOCKED"')).toBe('PROVIDER_STATE')
     expect(classify('OpenAI API error (401): 401 "provider_execution_unauthorized"')).toBe('AUTH')
+    const localCredentialTerminal = classify(
+      'OpenAI API error (401): {"error":{"code":"SUBSCRIPTION_CREDENTIAL_UNAVAILABLE"}}',
+    )
+    expect(localCredentialTerminal).toBe('AUTH')
+    expect(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'])
+      .not.toContain(localCredentialTerminal)
   })
 
   it('carries the Router policy terminal through the installed parser without a retryable transport code', async () => {

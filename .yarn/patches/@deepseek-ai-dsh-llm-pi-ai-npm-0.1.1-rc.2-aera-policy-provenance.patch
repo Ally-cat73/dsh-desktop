@@ -3,13 +3,15 @@ new file mode 100644
 index 0000000..aera001
 --- /dev/null
 +++ b/lib/aera-policy-provenance.js
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,204 @@
 +import { createHash } from "node:crypto";
 +
 +const HEADER = "x-aera-policy-provenance-v1";
 +const SESSION_HEADER = "session_id";
 +const CLIENT_REQUEST_HEADER = "x-client-request-id";
++const ENVIRONMENT_HEADER = "x-aera-environment-id";
 +const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
++const ENVIRONMENT_IDS = new Set(["AERA_DEV", "CANARY"]);
 +
 +function textOf(message) {
 +	if (!Array.isArray(message?.content)) return "";
@@ -132,8 +134,16 @@ index 0000000..aera001
 +const AERA_GATEWAY_CONNECTION = "relay-messages-dogfood-canonical-connection";
 +const AERA_GATEWAY_RUNTIME = "relay-messages-dogfood-canonical-runtime";
 +const readySessions = new Map();
++const SESSION_ENVIRONMENT_BINDINGS = Symbol.for("aera.gateway.session-environment.v1");
++function sessionEnvironmentBindings() {
++	const existing = globalThis[SESSION_ENVIRONMENT_BINDINGS];
++	if (existing instanceof Map) return existing;
++	const created = new Map();
++	globalThis[SESSION_ENVIRONMENT_BINDINGS] = created;
++	return created;
++}
 +
-+function governedAeraGatewayProfile(profile) {
++function governedAeraGatewayCoordinates(profile) {
 +	try {
 +		const base = new URL(profile?.baseURL);
 +		return (base.hostname === "127.0.0.1" || base.hostname === "localhost")
@@ -147,7 +157,11 @@ index 0000000..aera001
 +
 +/** Prove current authority and bootstrap the native Session before Provider dispatch. */
 +export function ensureAeraGatewaySessionReady(profile, sessionId, apiKey, fetchImpl = fetch) {
-+	if (!governedAeraGatewayProfile(profile)) return Promise.resolve();
++	if (!governedAeraGatewayCoordinates(profile)) return Promise.resolve();
++	const environmentId = profile?.headers?.[ENVIRONMENT_HEADER];
++	if (!ENVIRONMENT_IDS.has(environmentId)) {
++		return Promise.reject(new Error("AERA_GATEWAY_ENVIRONMENT_ID_REQUIRED"));
++	}
 +	if (sessionId === void 0 || sessionId === null) {
 +		return Promise.reject(new Error("AERA_GATEWAY_PREFLIGHT_SESSION_REQUIRED"));
 +	}
@@ -155,9 +169,16 @@ index 0000000..aera001
 +	if (!SESSION_ID_PATTERN.test(normalized)) {
 +		return Promise.reject(new Error("AERA_CODE_SESSION_ID_INVALID"));
 +	}
-+	const current = readySessions.get(normalized);
-+	if (current) return current;
 +	const origin = new URL(profile.baseURL).origin;
++	const sessionEnvironments = sessionEnvironmentBindings();
++	const boundEnvironment = sessionEnvironments.get(normalized);
++	if (boundEnvironment && (boundEnvironment.environmentId !== environmentId || boundEnvironment.origin !== origin)) {
++		return Promise.reject(new Error("AERA_GATEWAY_SESSION_ENVIRONMENT_MISMATCH"));
++	}
++	if (!boundEnvironment) sessionEnvironments.set(normalized, { environmentId, origin });
++	const readinessKey = `${environmentId}\0${origin}\0${normalized}`;
++	const current = readySessions.get(readinessKey);
++	if (current) return current;
 +	const operation = fetchImpl(`${origin}/v1/provider-execution/preflight`, {
 +		method: "POST",
 +		headers: {
@@ -165,6 +186,7 @@ index 0000000..aera001
 +			"content-type": "application/json",
 +			session_id: normalized,
 +			"x-client-request-id": normalized,
++			[ENVIRONMENT_HEADER]: environmentId,
 +			"x-aera-connection-id": AERA_GATEWAY_CONNECTION,
 +			"x-aera-runtime-instance-id": AERA_GATEWAY_RUNTIME
 +		},
@@ -177,12 +199,13 @@ index 0000000..aera001
 +		}
 +		if (payload?.status !== "ok" || payload.provider_effect !== "NONE"
 +			|| payload.current_authority !== "PASS" || payload.route_assignment !== "VALID"
-+			|| payload.policy_enforcement_mode !== "OBSERVATION") {
++			|| payload.policy_enforcement_mode !== "OBSERVATION"
++			|| payload.environment_id !== environmentId) {
 +			throw new Error("AERA_GATEWAY_PREFLIGHT_RESPONSE_INVALID");
 +		}
 +	});
-+	readySessions.set(normalized, operation);
-+	operation.catch(() => { readySessions.delete(normalized); });
++	readySessions.set(readinessKey, operation);
++	operation.catch(() => { readySessions.delete(readinessKey); });
 +	return operation;
 +}
 diff --git a/lib/index.js b/lib/index.js

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 // explicit path makes the source-custody seam visible and directly testable.
 // @ts-expect-error the patch-private module intentionally does not widen the upstream public API
 import { aeraPolicyProvenanceHeader, ensureAeraGatewaySessionReady, withAeraExecutionSession } from '../node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/aera-policy-provenance.js'
+import { AeraGatewayReadinessService } from '../src/aera-gateway-readiness.ts'
 
 describe('Aera Code policy provenance', () => {
   it('projects immutable message source into a content-free correlation header', () => {
@@ -163,6 +164,7 @@ describe('Aera Code policy provenance', () => {
     await ensureAeraGatewaySessionReady({
       baseURL: 'http://127.0.0.1:4646/v1',
       headers: {
+        'x-aera-environment-id': 'AERA_DEV',
         'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
         'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
       },
@@ -170,7 +172,7 @@ describe('Aera Code policy provenance', () => {
       requests.push({ url, init: init ?? {} })
       return new Response(JSON.stringify({
         status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
-        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'AERA_DEV',
       }), { status: 200 })
     })
 
@@ -187,6 +189,7 @@ describe('Aera Code policy provenance', () => {
     await expect(ensureAeraGatewaySessionReady({
       baseURL: 'http://127.0.0.1:4646/v1',
       headers: {
+        'x-aera-environment-id': 'AERA_DEV',
         'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
         'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
       },
@@ -195,5 +198,98 @@ describe('Aera Code policy provenance', () => {
     }), { status: 403 }))).rejects.toThrow(
       'AERA_GATEWAY_PREFLIGHT_DENIED:PROVIDER_EXECUTION_FORBIDDEN',
     )
+  })
+
+  it('never lets a Canary-bound Session fall through to Dev after Canary readiness denial', async () => {
+    const hits = { canary: 0, dev: 0 }
+    const sessionId = 'session-canary-denied-no-dev-fallback'
+    const devProfile = {
+      baseURL: 'http://127.0.0.1:4646/v1',
+      headers: {
+        'x-aera-environment-id': 'AERA_DEV',
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }
+    const readiness = new AeraGatewayReadinessService({
+      credential: 'synthetic-canary-key',
+      routerOrigin: 'http://127.0.0.1:14646',
+      environmentId: 'CANARY',
+      fetch: async () => {
+        hits.canary += 1
+        return new Response(JSON.stringify({
+          status: 'denied', error: { code: 'PROVIDER_EXECUTION_FORBIDDEN' },
+        }), { status: 403 })
+      },
+    })
+    await expect(readiness.prepare(sessionId)).resolves.toMatchObject({
+      state: 'BLOCKED', environmentId: 'CANARY', routerOrigin: 'http://127.0.0.1:14646',
+    })
+    await expect(ensureAeraGatewaySessionReady(
+      devProfile,
+      sessionId,
+      'synthetic-dev-key',
+      async () => {
+        hits.dev += 1
+        return new Response(JSON.stringify({
+          status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
+          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'AERA_DEV',
+        }), { status: 200 })
+      },
+    )).rejects.toThrow('AERA_GATEWAY_SESSION_ENVIRONMENT_MISMATCH')
+    expect(hits).toEqual({ canary: 1, dev: 0 })
+  })
+
+  it('fails closed on a stale governed provider profile with no environment identity', async () => {
+    let preflightHits = 0
+    await expect(ensureAeraGatewaySessionReady({
+      baseURL: 'http://127.0.0.1:4646/v1',
+      headers: {
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }, 'session-stale-profile-no-environment', 'synthetic-dev-key', async () => {
+      preflightHits += 1
+      return new Response('{}', { status: 200 })
+    })).rejects.toThrow('AERA_GATEWAY_ENVIRONMENT_ID_REQUIRED')
+    expect(preflightHits).toBe(0)
+  })
+
+  it('carries a READY Canary Session from Desktop readiness into provider preflight', async () => {
+    const sessionId = 'session-canary-ready-provider-same-environment'
+    let readinessHits = 0
+    let providerPreflightHits = 0
+    const success = () => ({
+      status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
+      route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'CANARY',
+      identity: {
+        connection_id: 'relay-messages-dogfood-canonical-connection',
+        runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
+        session_id: 'session-canary-canonical', provider_id: 'openai',
+        channel_id: 'wo030c-channel-b-openai', model_id: 'gpt-5.6-terra', assignment_revision: 1,
+      },
+    })
+    const readiness = new AeraGatewayReadinessService({
+      credential: 'synthetic-canary-key',
+      routerOrigin: 'http://127.0.0.1:14646',
+      environmentId: 'CANARY',
+      fetch: async () => {
+        readinessHits += 1
+        return Response.json(success())
+      },
+    })
+    await expect(readiness.prepare(sessionId)).resolves.toMatchObject({ state: 'READY', environmentId: 'CANARY' })
+    await expect(ensureAeraGatewaySessionReady({
+      baseURL: 'http://127.0.0.1:14646/v1',
+      headers: {
+        'x-aera-environment-id': 'CANARY',
+        'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
+        'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
+      },
+    }, sessionId, 'synthetic-canary-key', async () => {
+      providerPreflightHits += 1
+      return Response.json(success())
+    })).resolves.toBeUndefined()
+    expect({ readinessHits, providerPreflightHits }).toEqual({ readinessHits: 1, providerPreflightHits: 1 })
   })
 })

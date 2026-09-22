@@ -20,6 +20,7 @@ describe('Aera Gateway real-session readiness', () => {
         current_authority: 'PASS',
         route_assignment: 'VALID',
         policy_enforcement_mode: 'OBSERVATION',
+        environment_id: 'AERA_DEV',
         identity: {
           connection_id: 'relay-messages-dogfood-canonical-connection',
           runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
@@ -46,6 +47,7 @@ describe('Aera Gateway real-session readiness', () => {
       headers: expect.objectContaining({
         authorization: 'Bearer synthetic-test-credential',
         session_id: SESSION,
+        'x-aera-environment-id': 'AERA_DEV',
         'x-aera-connection-id': 'relay-messages-dogfood-canonical-connection',
         'x-aera-runtime-instance-id': 'relay-messages-dogfood-canonical-runtime',
       }),
@@ -62,7 +64,36 @@ describe('Aera Gateway real-session readiness', () => {
       modelId: 'gpt-5.6-terra',
       assignmentRevision: 1,
       policyEnforcementMode: 'OBSERVATION',
+      environmentId: 'AERA_DEV',
+      routerOrigin: 'http://127.0.0.1:4646',
     })
+  })
+
+  it('uses the configured Canary loopback while retaining exact readiness assertions', async () => {
+    const requests: string[] = []
+    const service = new AeraGatewayReadinessService({
+      credential: 'synthetic-canary-credential',
+      routerOrigin: 'http://127.0.0.1:14646',
+      environmentId: 'CANARY',
+      fetch: async (url) => {
+        requests.push(String(url))
+        return new Response(JSON.stringify({
+          status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
+          route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'CANARY',
+          identity: {
+            connection_id: 'relay-messages-dogfood-canonical-connection',
+            runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
+            session_id: 'session-canary-created', provider_id: 'openai',
+            channel_id: 'wo030c-channel-b-openai', model_id: 'gpt-5.6-terra', assignment_revision: 1,
+          },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      },
+    })
+
+    await expect(service.prepare('session-fresh-product-canary-001')).resolves.toMatchObject({
+      state: 'READY', environmentId: 'CANARY', routerOrigin: 'http://127.0.0.1:14646',
+    })
+    expect(requests).toEqual(['http://127.0.0.1:14646/v1/provider-execution/preflight'])
   })
 
   it('retains an expired-authority denial as a non-executable Session', async () => {
@@ -74,15 +105,20 @@ describe('Aera Gateway real-session readiness', () => {
       }), { status: 403, headers: { 'content-type': 'application/json' } }),
     })
 
-    await expect(service.prepare(SESSION)).resolves.toEqual({
+    const expiredSession = 'session-fresh-product-expired-001'
+    await expect(service.prepare(expiredSession)).resolves.toEqual({
       state: 'BLOCKED',
       code: 'PROVIDER_EXECUTION_FORBIDDEN',
       message: 'Aera Gateway authority is not current for this Session.',
+      environmentId: 'AERA_DEV',
+      routerOrigin: 'http://127.0.0.1:4646',
     })
-    expect(service.status(SESSION)).toEqual({
+    expect(service.status(expiredSession)).toEqual({
       state: 'BLOCKED',
       code: 'PROVIDER_EXECUTION_FORBIDDEN',
       message: 'Aera Gateway authority is not current for this Session.',
+      environmentId: 'AERA_DEV',
+      routerOrigin: 'http://127.0.0.1:4646',
     })
   })
 
@@ -92,7 +128,7 @@ describe('Aera Gateway real-session readiness', () => {
     const response = new Promise<Response>((resolve) => {
       release = () => resolve(new Response(JSON.stringify({
         status: 'ok', provider_effect: 'NONE', current_authority: 'PASS',
-        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION',
+        route_assignment: 'VALID', policy_enforcement_mode: 'OBSERVATION', environment_id: 'AERA_DEV',
         identity: {
           connection_id: 'relay-messages-dogfood-canonical-connection',
           runtime_instance_id: 'relay-messages-dogfood-canonical-runtime',
@@ -106,8 +142,8 @@ describe('Aera Gateway real-session readiness', () => {
       fetch: async () => { calls += 1; return response },
     })
 
-    const title = service.prepare(SESSION)
-    const main = service.prepare(SESSION)
+    const title = service.prepare('session-fresh-product-coalesced-001')
+    const main = service.prepare('session-fresh-product-coalesced-001')
     expect(calls).toBe(1)
     release?.()
     await expect(Promise.all([title, main])).resolves.toHaveLength(2)
@@ -139,5 +175,33 @@ describe('Aera Gateway real-session readiness', () => {
     expect(headers.get('cache-control')).toBe('no-store')
     expect(JSON.parse(chunks.join(''))).toEqual({ state: 'CHECKING' })
     expect(chunks.join('')).not.toContain('synthetic-test-credential')
+  })
+
+  it('accepts the normal same-origin browser GET without an Origin header', () => {
+    const service = new AeraGatewayReadinessService({
+      credential: 'synthetic-test-credential',
+      fetch: async () => { throw new Error('unused') },
+    })
+    const chunks: string[] = []
+    const req = {
+      method: 'GET',
+      url: `${AERA_GATEWAY_READINESS_PATH}?session_id=session-browser-get-001`,
+      headers: {
+        host: '127.0.0.1:43120',
+        referer: 'http://127.0.0.1:43120/',
+        'sec-fetch-site': 'same-origin',
+      },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as unknown as IncomingMessage
+    const res = {
+      statusCode: 0,
+      setHeader: () => undefined,
+      end: (value?: string) => { if (value) chunks.push(value) },
+    } as unknown as ServerResponse
+
+    handleAeraGatewayReadinessRequest(req, res, 'http://127.0.0.1:43120', service)
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(chunks.join(''))).toEqual({ state: 'CHECKING' })
   })
 })

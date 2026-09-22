@@ -2,6 +2,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { AERA_CODE_PRODUCT } from './product-brand.ts'
+import { resolveAgcGovernedGatewayRuntime } from './aera-gateway-agc-binding.ts'
 
 export type AeraGatewayCredentialBootstrap =
   | 'not-required'
@@ -36,9 +37,16 @@ function readMacKeychainPassword(service: string, account: string): string {
 export function bootstrapAeraGatewayCredential(options: AeraGatewayKeychainOptions): AeraGatewayCredentialBootstrap {
   const platform = options.platform ?? process.platform
   const environment = options.environment ?? process.env
-  const profile = AERA_CODE_PRODUCT.gatewayProfiles[
+  const active = AERA_CODE_PRODUCT.gatewayProfiles[
     options.activeProfile as keyof typeof AERA_CODE_PRODUCT.gatewayProfiles
   ]
+  const requestedName = options.activeProfile === 'aera-gateway-agc'
+    ? resolveAgcGovernedGatewayRuntime(environment).credentialEnvironmentName
+    : undefined
+  const profile = requestedName === undefined
+    ? active
+    : Object.values(AERA_CODE_PRODUCT.gatewayProfiles)
+        .find(candidate => candidate.credentialEnvironmentName === requestedName)
   if (!profile || platform !== 'darwin') return 'not-required'
   const name = profile.credentialEnvironmentName
   if (typeof environment[name] === 'string' && environment[name]!.length > 0) return 'already-present'

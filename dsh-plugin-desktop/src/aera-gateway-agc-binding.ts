@@ -218,29 +218,123 @@ export const AGC_CONNECTION_HEADER = 'x-aera-connection-id'
  */
 export const AGC_RUNTIME_INSTANCE_HEADER = 'x-aera-runtime-instance-id'
 
+/** Explicit environment identity; never inferred from a port or profile name. */
+export const AGC_ENVIRONMENT_HEADER = 'x-aera-environment-id'
+export type AgcGatewayEnvironmentId = 'AERA_DEV' | 'CANARY'
+
+const AGC_ENVIRONMENT_RUNTIMES: Readonly<Record<AgcGatewayEnvironmentId, {
+  readonly routerOrigin: string
+  readonly credentialEnvironmentName: string
+}>> = Object.freeze({
+  AERA_DEV: Object.freeze({
+    routerOrigin: AGC_GOVERNED_ROUTER_ORIGIN,
+    credentialEnvironmentName: AGC_GATEWAY_CREDENTIAL_ENV,
+  }),
+  CANARY: Object.freeze({
+    routerOrigin: 'http://127.0.0.1:14646',
+    credentialEnvironmentName: 'AERA_GATEWAY_DSH_EVAL_KEY',
+  }),
+})
+
+const SESSION_ENVIRONMENT_BINDINGS = Symbol.for('aera.gateway.session-environment.v1')
+
+interface AgcSessionEnvironmentBinding {
+  readonly environmentId: AgcGatewayEnvironmentId
+  readonly origin: string
+}
+
+function sessionEnvironmentBindings(): Map<string, AgcSessionEnvironmentBinding> {
+  const global = globalThis as typeof globalThis & { [SESSION_ENVIRONMENT_BINDINGS]?: unknown }
+  const existing = global[SESSION_ENVIRONMENT_BINDINGS]
+  if (existing instanceof Map) return existing as Map<string, AgcSessionEnvironmentBinding>
+  const created = new Map<string, AgcSessionEnvironmentBinding>()
+  global[SESSION_ENVIRONMENT_BINDINGS] = created
+  return created
+}
+
+export interface AgcGovernedGatewayRuntime {
+  readonly routerOrigin: string
+  readonly credentialEnvironmentName: string
+  readonly environmentId: AgcGatewayEnvironmentId
+}
+
+/**
+ * Resolve the environment-specific loopback publication of the SAME governed
+ * Aera Code Connection. Defaults remain the accepted AERA_DEV binding. A
+ * promotion candidate may select another loopback forward and an existing
+ * credential reference, but may not change Connection/runtime identity or
+ * escape the local transport boundary.
+ */
+export function resolveAgcGovernedGatewayRuntime(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AgcGovernedGatewayRuntime {
+  const environmentId = env.AERA_GATEWAY_AGC_ENVIRONMENT_ID?.trim() || 'AERA_DEV'
+  if (environmentId !== 'AERA_DEV' && environmentId !== 'CANARY') {
+    throw new Error('aera-gateway-agc-binding: environment identity is invalid')
+  }
+  const expected = AGC_ENVIRONMENT_RUNTIMES[environmentId]
+  const routerOrigin = env.AERA_GATEWAY_AGC_ROUTER_ORIGIN?.trim() || expected.routerOrigin
+  const credentialEnvironmentName = env.AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME?.trim()
+    || expected.credentialEnvironmentName
+  assertLoopbackOrigin(routerOrigin)
+  if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(credentialEnvironmentName)) {
+    throw new Error('aera-gateway-agc-binding: credential environment name is invalid')
+  }
+  if (new URL(routerOrigin).origin !== expected.routerOrigin
+    || credentialEnvironmentName !== expected.credentialEnvironmentName) {
+    throw new Error('aera-gateway-agc-binding: environment runtime tuple is inconsistent')
+  }
+  return Object.freeze({
+    routerOrigin: new URL(routerOrigin).origin,
+    credentialEnvironmentName,
+    environmentId,
+  })
+}
+
+/** Bind one native Session to one explicit environment for this Host generation. */
+export function bindAgcGatewaySessionEnvironment(
+  sessionId: string,
+  runtime: AgcGovernedGatewayRuntime,
+): void {
+  assertIdentifier('sessionId', sessionId)
+  const bindings = sessionEnvironmentBindings()
+  const current = bindings.get(sessionId)
+  if (current !== undefined
+    && (current.environmentId !== runtime.environmentId || current.origin !== runtime.routerOrigin)) {
+    throw new Error('AERA_GATEWAY_SESSION_ENVIRONMENT_MISMATCH')
+  }
+  if (current === undefined) bindings.set(sessionId, Object.freeze({
+    environmentId: runtime.environmentId,
+    origin: runtime.routerOrigin,
+  }))
+}
+
 /**
  * Build the product-hosted governed provider profile. No argument is taken:
  * every field is frozen by the owner ruling, and a configurable origin is
  * exactly the thing §20 refuses.
  */
-export function buildAgcGovernedGatewayProviderProfile(): AgcGatewayProviderProfile {
-  assertLoopbackOrigin(AGC_GOVERNED_ROUTER_ORIGIN)
+export function buildAgcGovernedGatewayProviderProfile(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AgcGatewayProviderProfile {
+  const runtime = resolveAgcGovernedGatewayRuntime(env)
   assertIdentifier('connectionId', AGC_GOVERNED_CONNECTION_ID)
   assertIdentifier('runtimeInstanceId', AGC_GOVERNED_RUNTIME_INSTANCE_ID)
   return {
-    displayName: 'AERA Gateway (governed)',
+    displayName: `AERA Gateway (governed / ${runtime.environmentId})`,
     api: 'openai-responses',
-    baseURL: `${new URL(AGC_GOVERNED_ROUTER_ORIGIN).origin}/v1`,
-    apiKeyEnv: AGC_GATEWAY_CREDENTIAL_ENV,
+    baseURL: `${runtime.routerOrigin}/v1`,
+    apiKeyEnv: runtime.credentialEnvironmentName,
     headers: {
       [AGC_CONNECTION_HEADER]: AGC_GOVERNED_CONNECTION_ID,
       [AGC_RUNTIME_INSTANCE_HEADER]: AGC_GOVERNED_RUNTIME_INSTANCE_ID,
+      [AGC_ENVIRONMENT_HEADER]: runtime.environmentId,
     },
     transport: 'sse',
     models: [
       {
         id: AGC_GOVERNED_MODEL_ID,
-        name: 'Aera governed route',
+        name: `Aera governed route / ${runtime.environmentId}`,
         contextWindow: 262_144,
         maxTokens: 32_768,
       },
@@ -255,11 +349,12 @@ export function buildAgcGovernedGatewayProviderProfile(): AgcGatewayProviderProf
  */
 export function buildAgcGovernedGatewayProviderSection(
   existing: Readonly<Record<string, unknown>> = {},
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): { providers: Record<string, unknown> } {
   return {
     providers: {
       ...existing,
-      [AGC_GOVERNED_GATEWAY_ROUTE]: buildAgcGovernedGatewayProviderProfile(),
+      [AGC_GOVERNED_GATEWAY_ROUTE]: buildAgcGovernedGatewayProviderProfile(env),
     },
   }
 }

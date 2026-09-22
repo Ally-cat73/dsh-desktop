@@ -7,8 +7,11 @@ import type {} from '@deepseek-ai/dsh-session'
 import {
   AGC_GOVERNED_CONNECTION_ID,
   AGC_GOVERNED_MODEL_ID,
-  AGC_GOVERNED_ROUTER_ORIGIN,
   AGC_GOVERNED_RUNTIME_INSTANCE_ID,
+  bindAgcGatewaySessionEnvironment,
+  resolveAgcGovernedGatewayRuntime,
+  type AgcGatewayEnvironmentId,
+  type AgcGovernedGatewayRuntime,
 } from './aera-gateway-agc-binding.ts'
 import { isSameOriginLoopbackRequest } from './desktop-settings-route.ts'
 import { AERA_GATEWAY_READINESS_PATH } from './aera-gateway-readiness-contract.ts'
@@ -34,6 +37,8 @@ export type AeraGatewayReadinessStatus =
       readonly state: 'BLOCKED'
       readonly code: string
       readonly message: string
+      readonly environmentId: AgcGatewayEnvironmentId
+      readonly routerOrigin: string
     }
   | {
       readonly state: 'READY'
@@ -47,25 +52,30 @@ export type AeraGatewayReadinessStatus =
       readonly modelId: typeof EXPECTED_MODEL
       readonly assignmentRevision: number
       readonly policyEnforcementMode: 'OBSERVATION'
+      readonly environmentId: AgcGatewayEnvironmentId
+      readonly routerOrigin: string
     }
 
 interface ReadinessOptions {
   readonly credential: string
   readonly fetch?: AeraGatewayReadinessFetch
   readonly routerOrigin?: string
+  readonly environmentId?: AgcGatewayEnvironmentId
 }
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function blocked(code: string): AeraGatewayReadinessStatus {
+function blocked(code: string, runtime: AgcGovernedGatewayRuntime): AeraGatewayReadinessStatus {
   return Object.freeze({
     state: 'BLOCKED' as const,
     code,
     message: code === 'PROVIDER_EXECUTION_FORBIDDEN'
       ? 'Aera Gateway authority is not current for this Session.'
       : 'Aera Gateway execution is unavailable for this Session.',
+    environmentId: runtime.environmentId,
+    routerOrigin: runtime.routerOrigin,
   })
 }
 
@@ -79,10 +89,17 @@ export class AeraGatewayReadinessService {
   private readonly inFlight = new Map<string, Promise<AeraGatewayReadinessStatus>>()
   private readonly fetch: AeraGatewayReadinessFetch
   private readonly routerOrigin: string
+  private readonly runtime: AgcGovernedGatewayRuntime
 
   constructor(private readonly options: ReadinessOptions) {
     this.fetch = options.fetch ?? fetch
-    this.routerOrigin = new URL(options.routerOrigin ?? AGC_GOVERNED_ROUTER_ORIGIN).origin
+    const resolved = resolveAgcGovernedGatewayRuntime()
+    this.runtime = Object.freeze({
+      routerOrigin: new URL(options.routerOrigin ?? resolved.routerOrigin).origin,
+      credentialEnvironmentName: resolved.credentialEnvironmentName,
+      environmentId: options.environmentId ?? resolved.environmentId,
+    })
+    this.routerOrigin = this.runtime.routerOrigin
   }
 
   status(sessionId: string): AeraGatewayReadinessStatus {
@@ -90,7 +107,7 @@ export class AeraGatewayReadinessService {
   }
 
   prepare(sessionId: string): Promise<AeraGatewayReadinessStatus> {
-    if (!SESSION_ID.test(sessionId)) return Promise.resolve(blocked('AERA_CODE_SESSION_ID_INVALID'))
+    if (!SESSION_ID.test(sessionId)) return Promise.resolve(blocked('AERA_CODE_SESSION_ID_INVALID', this.runtime))
     const current = this.statuses.get(sessionId)
     if (current?.state === 'READY') return Promise.resolve(current)
     const pending = this.inFlight.get(sessionId)
@@ -112,7 +129,12 @@ export class AeraGatewayReadinessService {
   }
 
   private async perform(sessionId: string): Promise<AeraGatewayReadinessStatus> {
-    if (this.options.credential.length === 0) return blocked('AERA_GATEWAY_CREDENTIAL_UNAVAILABLE')
+    try {
+      bindAgcGatewaySessionEnvironment(sessionId, this.runtime)
+    } catch {
+      return blocked('AERA_GATEWAY_SESSION_ENVIRONMENT_MISMATCH', this.runtime)
+    }
+    if (this.options.credential.length === 0) return blocked('AERA_GATEWAY_CREDENTIAL_UNAVAILABLE', this.runtime)
     try {
       const response = await this.fetch(`${this.routerOrigin}/v1/provider-execution/preflight`, {
         method: 'POST',
@@ -121,6 +143,7 @@ export class AeraGatewayReadinessService {
           'content-type': 'application/json',
           session_id: sessionId,
           'x-client-request-id': sessionId,
+          'x-aera-environment-id': this.runtime.environmentId,
           'x-aera-connection-id': AGC_GOVERNED_CONNECTION_ID,
           'x-aera-runtime-instance-id': AGC_GOVERNED_RUNTIME_INSTANCE_ID,
         },
@@ -130,12 +153,13 @@ export class AeraGatewayReadinessService {
       const payload: unknown = await response.json().catch(() => null)
       if (!response.ok) {
         const error = record(payload) && record(payload.error) ? payload.error : null
-        return blocked(error && typeof error.code === 'string' ? error.code : `HTTP_${response.status}`)
+        return blocked(error && typeof error.code === 'string' ? error.code : `HTTP_${response.status}`, this.runtime)
       }
       if (!record(payload) || payload.status !== 'ok' || payload.provider_effect !== 'NONE'
         || payload.current_authority !== 'PASS' || payload.route_assignment !== 'VALID'
-        || payload.policy_enforcement_mode !== 'OBSERVATION' || !record(payload.identity)) {
-        return blocked('AERA_GATEWAY_PREFLIGHT_RESPONSE_INVALID')
+        || payload.policy_enforcement_mode !== 'OBSERVATION'
+        || payload.environment_id !== this.runtime.environmentId || !record(payload.identity)) {
+        return blocked('AERA_GATEWAY_PREFLIGHT_RESPONSE_INVALID', this.runtime)
       }
       const identity = payload.identity
       if (identity.connection_id !== AGC_GOVERNED_CONNECTION_ID
@@ -143,7 +167,7 @@ export class AeraGatewayReadinessService {
         || typeof identity.session_id !== 'string' || !SESSION_ID.test(identity.session_id)
         || identity.provider_id !== EXPECTED_PROVIDER || identity.channel_id !== EXPECTED_CHANNEL
         || identity.model_id !== EXPECTED_MODEL || !Number.isSafeInteger(identity.assignment_revision)) {
-        return blocked('AERA_GATEWAY_PREFLIGHT_IDENTITY_MISMATCH')
+        return blocked('AERA_GATEWAY_PREFLIGHT_IDENTITY_MISMATCH', this.runtime)
       }
       return Object.freeze({
         state: 'READY' as const,
@@ -157,9 +181,11 @@ export class AeraGatewayReadinessService {
         modelId: EXPECTED_MODEL,
         assignmentRevision: Number(identity.assignment_revision),
         policyEnforcementMode: 'OBSERVATION' as const,
+        environmentId: this.runtime.environmentId,
+        routerOrigin: this.runtime.routerOrigin,
       })
     } catch {
-      return blocked('AERA_GATEWAY_PREFLIGHT_UNAVAILABLE')
+      return blocked('AERA_GATEWAY_PREFLIGHT_UNAVAILABLE', this.runtime)
     }
   }
 }
@@ -177,7 +203,7 @@ export function handleAeraGatewayReadinessRequest(
     res.end()
     return
   }
-  if (!isSameOriginLoopbackRequest(req, expectedOrigin, true)) {
+  if (!isSameOriginLoopbackRequest(req, expectedOrigin, false)) {
     res.statusCode = 403
     res.end()
     return
@@ -198,8 +224,11 @@ export function handleAeraGatewayReadinessRequest(
 
 /** Bind the real DSH Session lifecycle to zero-Provider Gateway bootstrap. */
 export function apply(ctx: Context): void {
+  const runtime = resolveAgcGovernedGatewayRuntime(process.env)
   const service = new AeraGatewayReadinessService({
-    credential: process.env.AERA_GATEWAY_AGC_EXECUTION_KEY ?? '',
+    credential: process.env[runtime.credentialEnvironmentName] ?? '',
+    routerOrigin: runtime.routerOrigin,
+    environmentId: runtime.environmentId,
   })
   const rendererOrigin = `http://127.0.0.1:${String(ctx.webServer.port)}`
   ctx.effect(
