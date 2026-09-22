@@ -183,10 +183,25 @@ export const AGC_GOVERNED_GATEWAY_ROUTE = 'aera-gateway-agc'
 
 /**
  * The loopback AERA_DEV Gateway origin. The SSH LocalForward publishes the
- * AERA_DEV Router here; `assertLoopbackOrigin` is what keeps the binding on
- * it, and it is deliberately not relaxed.
+ * AERA_DEV Router here. The AERA_DEV allowed-origin set contains this origin
+ * and nothing else, so the AERA_DEV boundary is exactly as it was adjudicated.
  */
 export const AGC_GOVERNED_ROUTER_ORIGIN = 'http://127.0.0.1:4646'
+
+/**
+ * WO-AERA-CANARY…-001 §22/§23 — the Lab Canary Router origin, published by
+ * the Lab LocalForward. Retained as a member of the CANARY allowed set so the
+ * accepted rollback target stays reachable by configuration alone.
+ */
+export const AGC_CANARY_LAB_ROUTER_ORIGIN = 'http://127.0.0.1:14646'
+
+/**
+ * WO-AERA-CANARY…-001 §22/§23 — the Sydney Canary Router origin, reached
+ * DIRECTLY over the Tailscale interface (no SSH forward in the product path).
+ * `100.90.140.5` is the owner-verified Tailscale address of `aera-canary-v1`;
+ * it is a frozen constant here, never a hostname class, never user-entered.
+ */
+export const AGC_CANARY_SYDNEY_ROUTER_ORIGIN = 'http://100.90.140.5:14646'
 
 /** Frozen canonical Connection id (owner ruling §4). */
 export const AGC_GOVERNED_CONNECTION_ID = 'relay-messages-dogfood-canonical-connection'
@@ -220,21 +235,110 @@ export const AGC_RUNTIME_INSTANCE_HEADER = 'x-aera-runtime-instance-id'
 
 /** Explicit environment identity; never inferred from a port or profile name. */
 export const AGC_ENVIRONMENT_HEADER = 'x-aera-environment-id'
+
+/**
+ * The WIRE environment identity. Frozen: these are the only two values the
+ * Router, the readiness preflight and the `x-aera-environment-id` header ever
+ * carry. Selecting the Sydney Canary Router does NOT introduce a third
+ * environment — Sydney and Lab are two publications of the SAME `CANARY`
+ * environment.
+ */
 export type AgcGatewayEnvironmentId = 'AERA_DEV' | 'CANARY'
 
+/**
+ * The value `AERA_GATEWAY_AGC_ENVIRONMENT_ID` may carry. `AERA_CANARY` is the
+ * §22 clearly-named Canary PROFILE selector: it resolves to the `CANARY`
+ * environment with the Sydney origin as its default, while the pre-existing
+ * `CANARY` selector keeps the accepted Lab loopback default unchanged. Both
+ * draw from the same finite CANARY allowed-origin set, so Lab↔Sydney is
+ * configuration state within a closed set and the accepted rollback target is
+ * never lost.
+ */
+export type AgcGatewayProfileSelector = 'AERA_DEV' | 'CANARY' | 'AERA_CANARY'
+
+/**
+ * The EXACT, finite set of router origins each environment may serve, with the
+ * frozen credential REFERENCE for that environment. There is no wildcard, no
+ * hostname class, no "private address is trusted" rule and no user-entered
+ * URL: an origin is admissible only by being character-identical to a member
+ * of its own environment's set.
+ */
 const AGC_ENVIRONMENT_RUNTIMES: Readonly<Record<AgcGatewayEnvironmentId, {
-  readonly routerOrigin: string
+  readonly allowedRouterOrigins: readonly string[]
   readonly credentialEnvironmentName: string
 }>> = Object.freeze({
   AERA_DEV: Object.freeze({
-    routerOrigin: AGC_GOVERNED_ROUTER_ORIGIN,
+    allowedRouterOrigins: Object.freeze([AGC_GOVERNED_ROUTER_ORIGIN]),
     credentialEnvironmentName: AGC_GATEWAY_CREDENTIAL_ENV,
   }),
   CANARY: Object.freeze({
-    routerOrigin: 'http://127.0.0.1:14646',
+    allowedRouterOrigins: Object.freeze([
+      AGC_CANARY_LAB_ROUTER_ORIGIN,
+      AGC_CANARY_SYDNEY_ROUTER_ORIGIN,
+    ]),
     credentialEnvironmentName: 'AERA_GATEWAY_DSH_EVAL_KEY',
   }),
 })
+
+/**
+ * Which member of the environment's allowed set a profile selector chooses
+ * when `AERA_GATEWAY_AGC_ROUTER_ORIGIN` is not set. `CANARY` keeps the
+ * accepted Lab loopback (rollback property); `AERA_CANARY` is the owner's
+ * daily-use Sydney selection of §22.
+ */
+const AGC_PROFILE_SELECTORS: Readonly<Record<AgcGatewayProfileSelector, {
+  readonly environmentId: AgcGatewayEnvironmentId
+  readonly defaultRouterOrigin: string
+}>> = Object.freeze({
+  AERA_DEV: Object.freeze({
+    environmentId: 'AERA_DEV' as const,
+    defaultRouterOrigin: AGC_GOVERNED_ROUTER_ORIGIN,
+  }),
+  CANARY: Object.freeze({
+    environmentId: 'CANARY' as const,
+    defaultRouterOrigin: AGC_CANARY_LAB_ROUTER_ORIGIN,
+  }),
+  AERA_CANARY: Object.freeze({
+    environmentId: 'CANARY' as const,
+    defaultRouterOrigin: AGC_CANARY_SYDNEY_ROUTER_ORIGIN,
+  }),
+})
+
+/** Read-only projection of the allowed set, for specs and diagnostics. */
+export function agcAllowedRouterOrigins(
+  environmentId: AgcGatewayEnvironmentId,
+): readonly string[] {
+  return AGC_ENVIRONMENT_RUNTIMES[environmentId].allowedRouterOrigins
+}
+
+/**
+ * Environment-aware EXACT-origin validator. It replaces `assertLoopbackOrigin`
+ * for the product-hosted governed route only; the WO-AGC-002 isolated
+ * acceptance binding above keeps its unmodified loopback guard.
+ */
+function assertAllowedEnvironmentOrigin(
+  environmentId: AgcGatewayEnvironmentId,
+  origin: string,
+): string {
+  let parsed: URL
+  try {
+    parsed = new URL(origin)
+  } catch {
+    throw new Error(`aera-gateway-agc-binding: routerOrigin "${origin}" is not a URL`)
+  }
+  if (parsed.pathname !== '/' && parsed.pathname !== '') {
+    throw new Error(`aera-gateway-agc-binding: routerOrigin must be an origin without a path, got "${origin}"`)
+  }
+  const allowed = AGC_ENVIRONMENT_RUNTIMES[environmentId].allowedRouterOrigins
+  if (!allowed.includes(parsed.origin)) {
+    throw new Error(
+      'aera-gateway-agc-binding: environment runtime tuple is inconsistent;'
+      + ` environment ${environmentId} serves only [${allowed.join(', ')}],`
+      + ` refusing router origin "${origin}"`,
+    )
+  }
+  return parsed.origin
+}
 
 const SESSION_ENVIRONMENT_BINDINGS = Symbol.for('aera.gateway.session-environment.v1')
 
@@ -259,33 +363,41 @@ export interface AgcGovernedGatewayRuntime {
 }
 
 /**
- * Resolve the environment-specific loopback publication of the SAME governed
- * Aera Code Connection. Defaults remain the accepted AERA_DEV binding. A
- * promotion candidate may select another loopback forward and an existing
- * credential reference, but may not change Connection/runtime identity or
- * escape the local transport boundary.
+ * Resolve the environment-specific publication of the SAME governed Aera Code
+ * Connection. The default selector remains the accepted AERA_DEV binding. A
+ * promotion candidate may select another environment and one of that
+ * environment's EXACT declared router origins, but may not change
+ * Connection/runtime identity, the Channel, the model alias, the credential
+ * reference, or reach any origin outside the frozen finite set.
+ *
+ * Selection (established configuration mechanism, unchanged):
+ * - `AERA_GATEWAY_AGC_ENVIRONMENT_ID`: `AERA_DEV` | `CANARY` | `AERA_CANARY`
+ * - `AERA_GATEWAY_AGC_ROUTER_ORIGIN`: optional; must be character-identical to
+ *   a member of the resolved environment's allowed set, else the tuple is
+ *   rejected as inconsistent.
  */
 export function resolveAgcGovernedGatewayRuntime(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): AgcGovernedGatewayRuntime {
-  const environmentId = env.AERA_GATEWAY_AGC_ENVIRONMENT_ID?.trim() || 'AERA_DEV'
-  if (environmentId !== 'AERA_DEV' && environmentId !== 'CANARY') {
+  const selector = env.AERA_GATEWAY_AGC_ENVIRONMENT_ID?.trim() || 'AERA_DEV'
+  if (selector !== 'AERA_DEV' && selector !== 'CANARY' && selector !== 'AERA_CANARY') {
     throw new Error('aera-gateway-agc-binding: environment identity is invalid')
   }
+  const selected = AGC_PROFILE_SELECTORS[selector]
+  const environmentId = selected.environmentId
   const expected = AGC_ENVIRONMENT_RUNTIMES[environmentId]
-  const routerOrigin = env.AERA_GATEWAY_AGC_ROUTER_ORIGIN?.trim() || expected.routerOrigin
+  const routerOrigin = env.AERA_GATEWAY_AGC_ROUTER_ORIGIN?.trim() || selected.defaultRouterOrigin
   const credentialEnvironmentName = env.AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME?.trim()
     || expected.credentialEnvironmentName
-  assertLoopbackOrigin(routerOrigin)
   if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(credentialEnvironmentName)) {
     throw new Error('aera-gateway-agc-binding: credential environment name is invalid')
   }
-  if (new URL(routerOrigin).origin !== expected.routerOrigin
-    || credentialEnvironmentName !== expected.credentialEnvironmentName) {
+  const resolvedOrigin = assertAllowedEnvironmentOrigin(environmentId, routerOrigin)
+  if (credentialEnvironmentName !== expected.credentialEnvironmentName) {
     throw new Error('aera-gateway-agc-binding: environment runtime tuple is inconsistent')
   }
   return Object.freeze({
-    routerOrigin: new URL(routerOrigin).origin,
+    routerOrigin: resolvedOrigin,
     credentialEnvironmentName,
     environmentId,
   })

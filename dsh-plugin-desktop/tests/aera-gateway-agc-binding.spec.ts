@@ -195,9 +195,12 @@ describe('aera-gateway-agc-binding: product-hosted governed profile', () => {
   })
 
   it('refuses a non-loopback governed override and malformed credential environment name', () => {
+    // AERA_DEV's allowed set is the single loopback forward; the Sydney
+    // Canary origin is refused *as an AERA_DEV origin* (no cross-environment
+    // fallback), now via the environment-aware exact-origin validator.
     expect(() => resolveAgcGovernedGatewayRuntime({
       AERA_GATEWAY_AGC_ROUTER_ORIGIN: 'http://100.90.140.5:14646',
-    })).toThrow(/LOOPBACK/)
+    })).toThrow(/runtime tuple/i)
     expect(() => resolveAgcGovernedGatewayRuntime({
       AERA_GATEWAY_AGC_CREDENTIAL_ENV_NAME: 'bad-name',
     })).toThrow(/credential environment/i)
