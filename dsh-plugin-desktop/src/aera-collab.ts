@@ -37,6 +37,13 @@ import {
   handleAeraCollabPacketStateRequest,
 } from './aera-collab-coordination-route.ts'
 import { CollabWorkspaceService, resolveCollabConfig } from './aera-collab-service.ts'
+import {
+  AERA_WORKER_ACTION_PATH,
+  AERA_WORKER_STATUS_PATH,
+  handleAeraWorkerActionRequest,
+  handleAeraWorkerStatusRequest,
+} from './aera-worker-route.ts'
+import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from './aera-worker-composition.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
 /** Stable Cordis plugin name. */
@@ -244,6 +251,37 @@ export function apply(ctx: Context): void {
     }),
     'aera-collab: collab surface read route',
   )
+  /*
+   * GOVERNED WORKER ROUTES (WO-AERA-CODE-CLAUDE-CODE-GOVERNED-WORKER-INTEGRATION-001
+   * §15). Claude Code runs as reasoning-only compute in the main process; the
+   * renderer only reads status and asks for owner actions. Unconfigured, the
+   * status route reports an honest unavailable reason and nothing is spawned.
+   */
+  const worker = composeAeraWorker(process.env)
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_WORKER_STATUS_PATH,
+      handler: (req, res) => {
+        handleAeraWorkerStatusRequest(req, res, rendererOrigin, workOrderId => aeraWorkerStatus(worker, workOrderId), reportError)
+      },
+    }),
+    'aera-collab: governed worker status read route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: AERA_WORKER_ACTION_PATH,
+      handler: (req, res) => {
+        void handleAeraWorkerActionRequest(req, res, rendererOrigin, request => performAeraWorkerAction(worker, request, reportError), reportError)
+      },
+    }),
+    'aera-collab: governed worker action route',
+  )
+  ctx.effect(() => () => {
+    // Host generation ending: no worker process may outlive it.
+    if (worker.kind === 'AVAILABLE') void worker.manager.cancelAll('Aera Code host generation ended')
+  }, 'aera-collab: governed worker shutdown')
   ctx.effect(() => {
     /*
      * TWO ENTRY POINTS, ONE WINDOW (WO-AERA-CODE-COLLAB-READ-FIRST-SURFACE-001,

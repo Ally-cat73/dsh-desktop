@@ -16,13 +16,17 @@ import type { AeraCollabApi, CollabSurfaceView } from './aera-collab-api.ts'
 import type { AeraCollabLocaleKey } from './aera-collab-locales.ts'
 import { AeraCollabRail } from './AeraCollabRail.tsx'
 import { AeraCollabRecord } from './AeraCollabRecord.tsx'
+import { AeraWorkerStatus } from './AeraWorkerStatus.tsx'
+import type { AeraWorkerApi } from './aera-worker-api.ts'
 
 type Translate = (key: AeraCollabLocaleKey) => string
 
 export type CollabMode = 'COLLABORATE' | 'RECORD'
 
-export function AeraCollabWorkspace({ api, workOrderId, t, initialMode = 'COLLABORATE', mode: controlledMode, onModeChange }: {
+export function AeraCollabWorkspace({ api, workOrderId, t, initialMode = 'COLLABORATE', mode: controlledMode, onModeChange, workerApi }: {
   readonly api: Pick<AeraCollabApi, 'view' | 'coordinate' | 'packetState'>
+  /** Governed worker surface (§15 of the Claude worker order). Absent = not shown. */
+  readonly workerApi?: AeraWorkerApi
   readonly workOrderId: string
   readonly t: Translate
   readonly initialMode?: CollabMode
@@ -133,6 +137,16 @@ export function AeraCollabWorkspace({ api, workOrderId, t, initialMode = 'COLLAB
             />
           )
         : <AeraCollabRecord surface={surface} t={t} />}
+      {workerApi === undefined || mode !== 'COLLABORATE'
+        ? null
+        : (
+            <AeraWorkerStatus
+              api={workerApi}
+              workOrderId={workOrderId}
+              t={t}
+              lines={surface.lines.flatMap(line => line.codeWorkingLineId === undefined ? [] : [{ codeWorkingLineId: line.codeWorkingLineId, label: line.label }])}
+            />
+          )}
     </>,
   )
 }

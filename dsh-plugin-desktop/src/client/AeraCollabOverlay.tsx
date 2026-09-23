@@ -45,12 +45,13 @@
  * `AeraCollabSurface` is not used here; it is the pre-split surface.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AeraCollabApi } from './aera-collab-api.ts'
 import type { AeraCollabEntryController } from './aera-collab-entry-controller.ts'
 import { AeraCollabPicker } from './AeraCollabPicker.tsx'
 import { AeraCollabWorkspace, type CollabMode } from './AeraCollabWorkspace.tsx'
+import { createAeraWorkerApi } from './aera-worker-api.ts'
 
 /** Registration-side capabilities for the shell-level Collab drawer. */
 export interface AeraCollabOverlayInjected {
@@ -92,6 +93,8 @@ export function AeraCollabOverlay({ api, controller, t }: AeraCollabOverlayProps
   const [mode, setMode] = useState<CollabMode>('COLLABORATE')
   const [width, setWidth] = useState(DEFAULT_WIDTH)
   const dragging = useRef(false)
+  // Governed worker surface (Claude worker order §15): same-origin, read + owner actions only.
+  const workerApi = useMemo(() => createAeraWorkerApi(), [])
 
   const close = useCallback(() => { controller.close() }, [controller])
 
@@ -184,6 +187,7 @@ export function AeraCollabOverlay({ api, controller, t }: AeraCollabOverlayProps
                   t={t}
                   mode={mode}
                   onModeChange={setMode}
+                  workerApi={workerApi}
                 />
               </>
             )}
