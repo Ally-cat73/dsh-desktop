@@ -38,10 +38,22 @@ export interface WorkerLocalEffectStatusView {
   readonly sessionExpiresAt?: string
 }
 
+/** U8: the model-invocation attest state (public fields only). */
+export interface WorkerModelAttestStatusView {
+  readonly state: string
+  readonly code?: string
+  readonly heartbeat: string
+  readonly workerEpochId?: string
+  readonly casReceiptId?: string
+  readonly notAfter?: string
+  readonly attestedAt?: string
+}
+
 export interface WorkerStatusView {
   readonly workOrderId: string
   readonly installationKey?: WorkerInstallationKeyStatusView
   readonly localEffect?: WorkerLocalEffectStatusView
+  readonly modelAttest?: WorkerModelAttestStatusView
   readonly unavailableReason?: string
   readonly provider?: string
   readonly environmentId?: string
@@ -145,13 +157,40 @@ function localEffect(value: unknown): WorkerLocalEffectStatusView | undefined {
   }
 }
 
+const ATTEST_FIELDS = ['state', 'code', 'heartbeat', 'workerEpochId', 'casReceiptId', 'notAfter', 'attestedAt']
+const ATTEST_STATES = ['NOT_ATTESTED', 'ATTESTED', 'MODEL_AUTHORITY_REFUSED', 'MODEL_AUTHORITY_UNAVAILABLE']
+const HEARTBEATS = ['RUNNING', 'DORMANT', 'HALTED']
+
+/** Public attest projection (U8): an exact field allowlist, so no body, nonce or token can ride along. */
+function modelAttest(value: unknown): WorkerModelAttestStatusView | undefined {
+  if (value === undefined) return undefined
+  if (!isObject(value) || !Object.keys(value).every(key => ATTEST_FIELDS.includes(key))) throw new Error('dsh-plugin-desktop: invalid attest status')
+  if (typeof value.state !== 'string' || !ATTEST_STATES.includes(value.state)) throw new Error('dsh-plugin-desktop: invalid attest state')
+  if (typeof value.heartbeat !== 'string' || !HEARTBEATS.includes(value.heartbeat)) throw new Error('dsh-plugin-desktop: invalid attest heartbeat')
+  if (value.code !== undefined && (typeof value.code !== 'string' || !CODE.test(value.code))) throw new Error('dsh-plugin-desktop: invalid attest code')
+  const workerEpochId = optional(value.workerEpochId, 'attest workerEpochId')
+  const casReceiptId = optional(value.casReceiptId, 'casReceiptId')
+  const notAfter = optional(value.notAfter, 'notAfter')
+  const attestedAt = optional(value.attestedAt, 'attestedAt')
+  return {
+    state: value.state,
+    ...(value.code === undefined ? {} : { code: value.code }),
+    heartbeat: value.heartbeat,
+    ...(workerEpochId === undefined ? {} : { workerEpochId }),
+    ...(casReceiptId === undefined ? {} : { casReceiptId }),
+    ...(notAfter === undefined ? {} : { notAfter }),
+    ...(attestedAt === undefined ? {} : { attestedAt }),
+  }
+}
+
 /** Validate a status response. */
 export function parseWorkerStatus(value: unknown): WorkerStatusView {
   if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid worker status')
   const workOrderId = text(value.workOrderId, 'workOrderId')
   const key = installationKey(value.installationKey)
   const le = localEffect(value.localEffect)
-  const keyView = { ...(key === undefined ? {} : { installationKey: key }), ...(le === undefined ? {} : { localEffect: le }) }
+  const attest = modelAttest(value.modelAttest)
+  const keyView = { ...(key === undefined ? {} : { installationKey: key }), ...(le === undefined ? {} : { localEffect: le }), ...(attest === undefined ? {} : { modelAttest: attest }) }
   if (value.unavailableReason !== undefined) {
     return { workOrderId, ...keyView, unavailableReason: text(value.unavailableReason, 'unavailableReason'), epochCount: 0, authorityEnvelope: [], recentEffects: [] }
   }

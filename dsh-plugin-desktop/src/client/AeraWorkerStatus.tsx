@@ -87,6 +87,8 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
       )
 
   const le = status?.localEffect
+  // U8: the model-invocation attest state; a refusal here is why no worker process or turn starts.
+  const attest = status?.modelAttest
   const beginnable = le !== undefined && (le.state === 'NO_EPOCH' || le.state === 'AWAITING_PENDING_BINDING' || le.state === 'EPOCH_RETIRED')
   const leCard = le === undefined
     ? null
@@ -97,6 +99,15 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
             <dt>{t('workerLeState')}</dt><dd data-state={le.state}>{[le.state, le.reason, le.lastRefusal].filter(Boolean).join(' · ')}</dd>
             {le.workerEpochId === undefined ? null : <><dt>{t('workerLeEpoch')}</dt><dd><code>{le.workerEpochId}</code></dd></>}
             {le.publicEpochPath === undefined ? null : <><dt>{t('workerLeHandOver')}</dt><dd><code>{le.publicEpochPath}</code></dd></>}
+            {attest === undefined
+              ? null
+              : (
+                  <>
+                    <dt>{t('workerAttest')}</dt>
+                    <dd data-state={attest.state}>{[attest.state, attest.code, attest.heartbeat].filter(Boolean).join(' · ')}</dd>
+                    {attest.notAfter === undefined ? null : <><dt>{t('workerAttestNotAfter')}</dt><dd><code>{attest.notAfter}</code></dd></>}
+                  </>
+                )}
           </dl>
           {beginnable
             ? (

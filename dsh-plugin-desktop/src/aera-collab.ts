@@ -306,7 +306,7 @@ export function apply(ctx: Context): void {
         handOverDir: installationKeyScope.handOverDir,
         log: line => { ctx.logger.info(line) },
       })
-  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }) })
+  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), log: line => { ctx.logger.info(line) } })
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',
@@ -329,7 +329,11 @@ export function apply(ctx: Context): void {
   )
   ctx.effect(() => () => {
     // Host generation ending: no worker process may outlive it.
-    if (worker.kind === 'AVAILABLE') void worker.manager.cancelAll('Aera Code host generation ended')
+    if (worker.kind === 'AVAILABLE') {
+      // U8: no attest heartbeat outlives the host generation either.
+      worker.modelAttest?.dispose()
+      void worker.manager.cancelAll('Aera Code host generation ended')
+    }
   }, 'aera-collab: governed worker shutdown')
   ctx.effect(() => {
     /*

@@ -161,6 +161,8 @@ export const zh = {
   workerLeState: '状态',
   workerLeEpoch: '工作者周期 ID',
   workerLeHandOver: '公开周期记录',
+  workerAttest: '模型调用授权（证明）',
+  workerAttestNotAfter: '证明有效至',
   workerLeBegin: '开始工作者周期',
   workerLeBeginHint: '为本委托窗口开始唯一的 CIS 工作者周期。运营方须先写入待定绑定记录，开始后再写入此周期 ID。存在有效周期时不会开始新周期。',
 }
@@ -328,6 +330,8 @@ export const en: Record<AeraCollabLocaleKey, string> = {
   workerLeState: 'State',
   workerLeEpoch: 'Worker Epoch id',
   workerLeHandOver: 'Public Epoch record',
+  workerAttest: 'Model authority (attestation)',
+  workerAttestNotAfter: 'Attestation valid until',
   workerLeBegin: 'Begin Worker Epoch',
   workerLeBeginHint: 'Begins the one CIS Worker Epoch for this delegation window. The operator writes the pending binding first, then this Epoch id after it begins. A live Epoch is never superseded from here.',
 }

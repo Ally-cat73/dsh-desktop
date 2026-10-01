@@ -14,6 +14,13 @@
  *
  * V1 binds the truthfully-labelled local execution policy as the Sentinel
  * seam (see `aera-worker-effect-broker.ts`); no remote endpoint is contacted.
+ *
+ * U8 D-3: when the D-0c local-effect session is composed (the host builds it
+ * whenever installation-key custody is available), the worker is governed:
+ * it is AVAILABLE only with the model-invocation attestor, which needs the
+ * session's governed Connection id (AERA_CLAUDE_WORKER_CONNECTION_ID) to pass
+ * the Gateway Connection grammar. Otherwise it is UNAVAILABLE — never an
+ * ungated fallback. (Retiring the composition without D-0c is M-3, H-1/D-0d.)
  */
 
 import { ParticipationStore } from '@aera/participation-runtime'
@@ -22,6 +29,8 @@ import { resolveAgcGovernedGatewayRuntime } from './aera-gateway-agc-binding.ts'
 import { ClaudeCodeWorkerAdapter, resolveClaudeWorkerPin } from './aera-claude-worker-host.ts'
 import { LocalExecutionPolicyGate } from './aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from './aera-worker-session.ts'
+import { createModelInvocationAttestor, type ModelInvocationAttestor } from './aera-worker-model-attest.ts'
+import { isGatewayConnectionId } from '@aera/local-effect-authority'
 import type { AeraWorkerActionRequest } from './aera-worker-route.ts'
 import type { WorkerInstallationKeyCustody } from './aera-worker-installation-key.ts'
 import type { WorkerLocalEffectSession } from './aera-worker-le-session.ts'
@@ -34,19 +43,21 @@ import type { WorkerLocalEffectSession } from './aera-worker-le-session.ts'
  * is otherwise composed.
  */
 export type AeraWorkerRuntime =
-  | { readonly kind: 'AVAILABLE', readonly manager: AeraWorkerSessionManager, readonly installationKey?: WorkerInstallationKeyCustody, readonly localEffect?: WorkerLocalEffectSession }
+  | { readonly kind: 'AVAILABLE', readonly manager: AeraWorkerSessionManager, readonly installationKey?: WorkerInstallationKeyCustody, readonly localEffect?: WorkerLocalEffectSession, readonly modelAttest?: ModelInvocationAttestor }
   | { readonly kind: 'UNAVAILABLE', readonly reason: string, readonly installationKey?: WorkerInstallationKeyCustody, readonly localEffect?: WorkerLocalEffectSession }
 
 export interface AeraWorkerCompositionOptions {
   readonly installationKey?: WorkerInstallationKeyCustody
   readonly localEffect?: WorkerLocalEffectSession
+  /** Ids and codes only (the attestor never logs a body, nonce or token). */
+  readonly log?: (line: string) => void
 }
 
 export function composeAeraWorker(
   env: Readonly<Record<string, string | undefined>>,
   options: AeraWorkerCompositionOptions = {},
 ): AeraWorkerRuntime {
-  const runtime = composeWorkerRuntime(env)
+  const runtime = composeWorkerRuntime(env, options.localEffect, options.log)
   return {
     ...runtime,
     ...(options.installationKey === undefined ? {} : { installationKey: options.installationKey }),
@@ -54,7 +65,11 @@ export function composeAeraWorker(
   }
 }
 
-function composeWorkerRuntime(env: Readonly<Record<string, string | undefined>>): AeraWorkerRuntime {
+function composeWorkerRuntime(
+  env: Readonly<Record<string, string | undefined>>,
+  localEffect: WorkerLocalEffectSession | undefined,
+  log: ((line: string) => void) | undefined,
+): AeraWorkerRuntime {
   const pick = (key: string): string | undefined => {
     const value = env[key]?.trim()
     return value === undefined || value === '' ? undefined : value
@@ -73,6 +88,13 @@ function composeWorkerRuntime(env: Readonly<Record<string, string | undefined>>)
   }
   const pin = resolveClaudeWorkerPin(env)
   if (pin.kind === 'UNAVAILABLE') return { kind: 'UNAVAILABLE', reason: pin.reason }
+  let modelAttest: ModelInvocationAttestor | undefined
+  if (localEffect !== undefined) {
+    if (!isGatewayConnectionId(localEffect.connectionId)) {
+      return { kind: 'UNAVAILABLE', reason: 'The governed Connection id (AERA_CLAUDE_WORKER_CONNECTION_ID in aera-claude-worker.json) is missing or is not a Gateway Connection id; the worker never runs without the model-invocation attestation.' }
+    }
+    modelAttest = createModelInvocationAttestor({ session: localEffect, ...(log === undefined ? {} : { log }) })
+  }
   return {
     kind: 'AVAILABLE',
     manager: new AeraWorkerSessionManager({
@@ -81,7 +103,9 @@ function composeWorkerRuntime(env: Readonly<Record<string, string | undefined>>)
       gate: new LocalExecutionPolicyGate(),
       config: { humanPrincipalId: principalId, delegationId, environmentId },
       broker: { parentEnv: env },
+      ...(modelAttest === undefined ? {} : { modelAttest }),
     }),
+    ...(modelAttest === undefined ? {} : { modelAttest }),
   }
 }
 
@@ -92,7 +116,9 @@ export function aeraWorkerStatus(runtime: AeraWorkerRuntime, workOrderId: string
   // Public ids, codes and expiry only (never the AGENT session token).
   const localEffect = runtime.localEffect === undefined ? {} : { localEffect: runtime.localEffect.status() }
   if (runtime.kind === 'UNAVAILABLE') return { workOrderId, unavailableReason: runtime.reason, ...installationKey, ...localEffect }
-  return { ...runtime.manager.status(workOrderId), ...installationKey, ...localEffect }
+  // U8: the attest state (state, code, heartbeat, receipt id and times; never a body or nonce).
+  const modelAttest = runtime.modelAttest === undefined ? {} : { modelAttest: runtime.modelAttest.status() }
+  return { ...runtime.manager.status(workOrderId), ...installationKey, ...localEffect, ...modelAttest }
 }
 
 /**

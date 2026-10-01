@@ -112,6 +112,8 @@ export const WORKER_EPOCH_TERMINAL_STATUSES = [
   'AUTH_UNAVAILABLE',
   'MALFORMED_OUTPUT',
   'SUPERSEDED_UNCLEAN',
+  /** U8 D-2: no fresh model-invocation attestation before a turn; no further turn was written. */
+  'MODEL_AUTHORITY_UNAVAILABLE',
 ] as const
 export type WorkerEpochTerminalStatus = (typeof WORKER_EPOCH_TERMINAL_STATUSES)[number]
 

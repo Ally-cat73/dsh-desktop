@@ -61,6 +61,7 @@ import {
   type WorkerBrokerOutcome,
   type WorkerEffectBrokerDeps,
 } from './aera-worker-effect-broker.ts'
+import type { ModelInvocationAttestor } from './aera-worker-model-attest.ts'
 
 export const WORKER_HOST_ADAPTER_ID = 'aera-worker-host'
 export const WORKER_HOST_PRINCIPAL_NAME = 'Aera Code Worker Host'
@@ -93,7 +94,21 @@ export interface AeraWorkerManagerDeps {
   readonly gate: SentinelGate
   readonly config: AeraWorkerManagerConfig
   readonly broker?: Partial<Omit<WorkerEffectBrokerDeps, 'store' | 'principals' | 'gate'>>
+  /**
+   * U8 D-2: the model-invocation attest gate. When composed (governed mode,
+   * D-3), the CLI is not spawned and no turn is written unless a fresh
+   * attestation for the current Worker Epoch is held.
+   */
+  readonly modelAttest?: ModelAttestGate
 }
+
+/** The part of the U8 attestor the session manager drives. */
+export type ModelAttestGate = Pick<ModelInvocationAttestor, 'ensureFresh' | 'noteTurnActivity' | 'setTurnPossible' | 'stop'>
+
+const modelAuthorityRefusal = (result: Exclude<Awaited<ReturnType<ModelAttestGate['ensureFresh']>>, { ok: true }>): string =>
+  result.state === 'MODEL_AUTHORITY_UNAVAILABLE'
+    ? `MODEL_AUTHORITY_UNAVAILABLE:${result.code}`
+    : `MODEL_AUTHORITY_UNAVAILABLE (MODEL_AUTHORITY_REFUSED:${result.code})`
 
 /** Parsed Epoch lifecycle record. */
 export interface WorkerEpochRecord {
@@ -178,6 +193,8 @@ export function buildWorkerSystemPrompt(input: {
 /** Orchestrates Aera Sessions and Worker Epochs over the durable store. */
 export class AeraWorkerSessionManager {
   private readonly live = new Map<string, { handle: WorkerEpochHandle | undefined, state: WorkerLiveState, epochId: string, authClass?: string, modelReported?: string }>()
+  /** Work Orders whose Epoch start is awaiting the model-authority gate (no second start meanwhile). */
+  private readonly gating = new Set<string>()
   private readonly limits: WorkerEpochLimits
 
   constructor(private readonly deps: AeraWorkerManagerDeps) {
@@ -461,8 +478,22 @@ export class AeraWorkerSessionManager {
   }): Promise<WorkerEpochRunResult> {
     const { workOrderId, codeWorkingLineId } = input
     const liveKey = workOrderId
-    if (this.live.get(liveKey)?.handle !== undefined) {
+    if (this.live.get(liveKey)?.handle !== undefined || this.gating.has(liveKey)) {
       throw new WorkerRefusal('EPOCH_ALREADY_RUNNING', 'A Worker Epoch is already running for this Work Order in this Aera Code process')
+    }
+    const modelAttest = this.deps.modelAttest
+    if (modelAttest !== undefined) {
+      // U8 D-2 (C-4): no fresh model-invocation attestation, no CLI process — and nothing recorded.
+      this.gating.add(liveKey)
+      let authority: Awaited<ReturnType<ModelAttestGate['ensureFresh']>>
+      try {
+        authority = await modelAttest.ensureFresh()
+      } finally {
+        this.gating.delete(liveKey)
+      }
+      if (!authority.ok) {
+        throw new WorkerRefusal('MODEL_AUTHORITY_UNAVAILABLE', `${modelAuthorityRefusal(authority)}: the worker process was not started.`)
+      }
     }
     const session = this.openAeraSession(workOrderId)
     const principals = this.principals(workOrderId)
@@ -510,6 +541,7 @@ export class AeraWorkerSessionManager {
     }
     const liveEntry = { handle, state: 'RUNNING' as WorkerLiveState, epochId } as { handle: WorkerEpochHandle | undefined, state: WorkerLiveState, epochId: string, authClass?: string, modelReported?: string }
     this.live.set(liveKey, liveEntry)
+    modelAttest?.setTurnPossible(true)
     const recordStarted = (): void => { this.recordEvidence(session, workOrderId, {
       idempotencyKey: `${epochId}:started`,
       evidenceClass: 'OBSERVATIONAL_EVIDENCE',
@@ -537,6 +569,7 @@ export class AeraWorkerSessionManager {
     } catch (error) {
       // An Epoch Aera cannot record is an Epoch that must not run.
       this.live.delete(liveKey)
+      modelAttest?.stop()
       await handle.cancel('the Epoch start could not be recorded')
       throw error
     }
@@ -556,8 +589,19 @@ export class AeraWorkerSessionManager {
     let ended = false
     try {
       while (!ended) {
+        if (modelAttest !== undefined) {
+          // U8 D-2 (C-4): every stdin turn write needs a fresh attestation; otherwise no write, typed terminal.
+          const authority = await modelAttest.ensureFresh()
+          if (!authority.ok) {
+            const reason = `${modelAuthorityRefusal(authority)}: no further turn was written to the worker.`
+            terminal = { ...await handle.cancel(reason), status: 'MODEL_AUTHORITY_UNAVAILABLE', reason }
+            break
+          }
+          modelAttest.noteTurnActivity()
+        }
         liveEntry.state = 'RUNNING'
         const outcome = await handle.runTurn(nextInput)
+        modelAttest?.noteTurnActivity()
         if (outcome.kind === 'EPOCH_TERMINATED') {
           terminal = outcome.terminal
           break
@@ -614,6 +658,7 @@ export class AeraWorkerSessionManager {
       terminal = await handle.cancel(`host error: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       this.live.delete(liveKey)
+      modelAttest?.stop()
     }
     this.recordEvidence(session, workOrderId, {
       idempotencyKey: `${epochId}:terminal`,
