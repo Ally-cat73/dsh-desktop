@@ -46,6 +46,8 @@ import {
 } from './aera-worker-route.ts'
 import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from './aera-worker-composition.ts'
 import { createWorkerInstallationKeyCustody, resolveInstallationKeyScope, type InstallationKeyScope } from './aera-worker-installation-key.ts'
+import { loadWorkerLocalEffectConfig } from './aera-worker-le-config.ts'
+import { createWorkerLocalEffectSession } from './aera-worker-le-session.ts'
 import { AERA_CODE_PRODUCT } from './product-brand.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
@@ -269,6 +271,7 @@ export function apply(ctx: Context): void {
    * enrolled here: only the owner's ENROL_WORKER_KEY click does that.
    */
   let installationKeyScope: InstallationKeyScope
+  let userDataDir: string | undefined
   try {
     installationKeyScope = resolveInstallationKeyScope({
       platform: process.platform,
@@ -282,9 +285,28 @@ export function apply(ctx: Context): void {
   } catch {
     installationKeyScope = { kind: 'UNAVAILABLE', reason: 'ELECTRON_APP_UNAVAILABLE' }
   }
+  try {
+    userDataDir = electron.app.getPath('userData')
+  } catch {
+    userDataDir = undefined
+  }
   const installationKey = createWorkerInstallationKeyCustody(installationKeyScope, { log: line => { ctx.logger.info(line) } })
   void installationKey.refresh()
-  const worker = composeAeraWorker(process.env, { installationKey })
+  /*
+   * D-0c: the local-effect session (CIS Worker Epoch, AGENT token in memory
+   * only) from the Profile's non-secret aera-claude-worker.json. Nothing is
+   * begun here: only the owner's BEGIN_AGENT_EPOCH action does that.
+   */
+  const localEffect = installationKeyScope.kind === 'UNAVAILABLE' || userDataDir === undefined
+    ? undefined
+    : createWorkerLocalEffectSession({
+        config: loadWorkerLocalEffectConfig(userDataDir),
+        custody: installationKey,
+        stateDir: userDataDir,
+        handOverDir: installationKeyScope.handOverDir,
+        log: line => { ctx.logger.info(line) },
+      })
+  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }) })
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',

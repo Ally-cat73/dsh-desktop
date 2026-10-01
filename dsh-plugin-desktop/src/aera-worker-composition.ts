@@ -24,18 +24,22 @@ import { LocalExecutionPolicyGate } from './aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from './aera-worker-session.ts'
 import type { AeraWorkerActionRequest } from './aera-worker-route.ts'
 import type { WorkerInstallationKeyCustody } from './aera-worker-installation-key.ts'
+import type { WorkerLocalEffectSession } from './aera-worker-le-session.ts'
 
 /**
  * The installation-key custody (D-0b) is carried on BOTH runtime kinds: the
  * owner enrols the key (OA-1) before the worker is configured, while the
- * worker itself is still honestly UNAVAILABLE.
+ * worker itself is still honestly UNAVAILABLE. The local-effect session (D-0c)
+ * likewise: the owner begins the Worker Epoch for the window before the worker
+ * is otherwise composed.
  */
 export type AeraWorkerRuntime =
-  | { readonly kind: 'AVAILABLE', readonly manager: AeraWorkerSessionManager, readonly installationKey?: WorkerInstallationKeyCustody }
-  | { readonly kind: 'UNAVAILABLE', readonly reason: string, readonly installationKey?: WorkerInstallationKeyCustody }
+  | { readonly kind: 'AVAILABLE', readonly manager: AeraWorkerSessionManager, readonly installationKey?: WorkerInstallationKeyCustody, readonly localEffect?: WorkerLocalEffectSession }
+  | { readonly kind: 'UNAVAILABLE', readonly reason: string, readonly installationKey?: WorkerInstallationKeyCustody, readonly localEffect?: WorkerLocalEffectSession }
 
 export interface AeraWorkerCompositionOptions {
   readonly installationKey?: WorkerInstallationKeyCustody
+  readonly localEffect?: WorkerLocalEffectSession
 }
 
 export function composeAeraWorker(
@@ -43,7 +47,11 @@ export function composeAeraWorker(
   options: AeraWorkerCompositionOptions = {},
 ): AeraWorkerRuntime {
   const runtime = composeWorkerRuntime(env)
-  return options.installationKey === undefined ? runtime : { ...runtime, installationKey: options.installationKey }
+  return {
+    ...runtime,
+    ...(options.installationKey === undefined ? {} : { installationKey: options.installationKey }),
+    ...(options.localEffect === undefined ? {} : { localEffect: options.localEffect }),
+  }
 }
 
 function composeWorkerRuntime(env: Readonly<Record<string, string | undefined>>): AeraWorkerRuntime {
@@ -81,8 +89,10 @@ function composeWorkerRuntime(env: Readonly<Record<string, string | undefined>>)
 export function aeraWorkerStatus(runtime: AeraWorkerRuntime, workOrderId: string): unknown {
   // Public projection only: status, scope, x, installationKeyId, JWK sha256, hand-over path.
   const installationKey = runtime.installationKey === undefined ? {} : { installationKey: runtime.installationKey.view() }
-  if (runtime.kind === 'UNAVAILABLE') return { workOrderId, unavailableReason: runtime.reason, ...installationKey }
-  return { ...runtime.manager.status(workOrderId), ...installationKey }
+  // Public ids, codes and expiry only (never the AGENT session token).
+  const localEffect = runtime.localEffect === undefined ? {} : { localEffect: runtime.localEffect.status() }
+  if (runtime.kind === 'UNAVAILABLE') return { workOrderId, unavailableReason: runtime.reason, ...installationKey, ...localEffect }
+  return { ...runtime.manager.status(workOrderId), ...installationKey, ...localEffect }
 }
 
 /**
@@ -106,6 +116,12 @@ export async function performAeraWorkerAction(
       publicJwkSha256: enrolled.publicJwkSha256,
       publicHandOverPath: enrolled.publicHandOverPath,
     }
+  }
+  if (request.action === 'BEGIN_AGENT_EPOCH') {
+    if (runtime.localEffect === undefined) {
+      throw Object.assign(new Error('The worker local-effect session is not available in this process.'), { code: 'WORKER_LOCAL_EFFECT_UNAVAILABLE' })
+    }
+    return await runtime.localEffect.beginEpoch()
   }
   if (runtime.kind === 'UNAVAILABLE') throw Object.assign(new Error(runtime.reason), { code: 'WORKER_UNAVAILABLE' })
   const { manager } = runtime

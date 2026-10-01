@@ -86,12 +86,36 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
         </div>
       )
 
+  const le = status?.localEffect
+  const beginnable = le !== undefined && (le.state === 'NO_EPOCH' || le.state === 'AWAITING_PENDING_BINDING' || le.state === 'EPOCH_RETIRED')
+  const leCard = le === undefined
+    ? null
+    : (
+        <div className="aera-worker-le">
+          <h4>{t('workerLeTitle')}</h4>
+          <dl>
+            <dt>{t('workerLeState')}</dt><dd data-state={le.state}>{[le.state, le.reason, le.lastRefusal].filter(Boolean).join(' · ')}</dd>
+            {le.workerEpochId === undefined ? null : <><dt>{t('workerLeEpoch')}</dt><dd><code>{le.workerEpochId}</code></dd></>}
+            {le.publicEpochPath === undefined ? null : <><dt>{t('workerLeHandOver')}</dt><dd><code>{le.publicEpochPath}</code></dd></>}
+          </dl>
+          {beginnable
+            ? (
+                <>
+                  <p className="aera-worker-key-hint">{t('workerLeBeginHint')}</p>
+                  <button type="button" disabled={busy} onClick={() => { act({ action: 'BEGIN_AGENT_EPOCH' }) }}>{t('workerLeBegin')}</button>
+                </>
+              )
+            : null}
+        </div>
+      )
+
   if (status?.unavailableReason !== undefined) {
     return (
       <section className="aera-worker" aria-label={t('workerTitle')}>
         <h3>{t('workerTitle')}</h3>
         <p className="aera-worker-unavailable">{status.unavailableReason}</p>
         {keyCard}
+        {leCard}
         {error === undefined ? null : <p className="aera-rail-error">{error}</p>}
       </section>
     )
@@ -119,6 +143,7 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
                 </dd>
               </dl>
               {keyCard}
+              {leCard}
               {status.lastTerminal?.terminalReason === undefined || status.currentEpoch !== undefined
                 ? null
                 : <p className="aera-worker-terminal">{status.lastTerminal.terminalReason}</p>}

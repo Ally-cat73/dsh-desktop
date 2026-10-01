@@ -33,8 +33,9 @@
 import { randomBytes } from 'node:crypto'
 import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
-import { isAeraWorkerEpochId, type AgentCredentialProofPayload, type AeraPrincipalId, type AeraWorkerEpochId } from '@aera/cis-contracts'
-import { caFingerprintSha256, createPinnedRouterTransport, RouterTransportError } from '@aera/effect-broker'
+import { AGENT_SENDER_PROOF_PURPOSE, isAeraWorkerEpochId, type AgentCredentialProofPayload, type AgentSenderProofClaims, type AeraPrincipalId, type AeraWorkerEpochId } from '@aera/cis-contracts'
+import { caFingerprintSha256, createPinnedRouterTransport, RouterTransportError, type AgentCredentialPort } from '@aera/effect-broker'
+import { attemptBodyDigest, MODEL_INVOCATION_ATTEST_ROUTE, newSenderProofNonce, sha256Ref } from '@aera/local-effect-admission'
 import { publishPublicHandOverFile, type WorkerInstallationKeyCustody } from './aera-worker-installation-key.ts'
 import type { WorkerLocalEffectConfig, WorkerLocalEffectConfigResult } from './aera-worker-le-config.ts'
 
@@ -48,6 +49,10 @@ export const WORKER_LE_RELAY_ROUTES = Object.freeze({
 })
 /** Renew the AGENT session when less than this remains (plan §4.3). */
 export const WORKER_SESSION_RENEW_MARGIN_MS = 120_000
+/** One signed send makes at most this many attempts, each retry reason at most once (no loops). */
+export const WORKER_SIGNED_MAX_ATTEMPTS = 3
+/** A restarted Router refuses proofs dated at or before its horizon (≈ start + 3 s): wait past it (review m-1). */
+export const WORKER_REPLAY_HORIZON_WAIT_MS = 4_000
 
 export type WorkerLocalEffectState =
   | 'NOT_CONFIGURED' | 'NOT_ENROLLED' | 'KEY_ID_MISMATCH'
@@ -99,6 +104,17 @@ export interface WorkerLocalEffectSession {
   beginEpoch(): Promise<{ readonly workerEpochId: string, readonly publicEpochPath?: string }>
   /** Hold a session with ≥ 120 s left, continuing the known Epoch if needed. Never begins. */
   ensureSession(): Promise<WorkerLocalEffectStatus>
+  /**
+   * U8's attest. Only MODEL_INVOCATION_ATTEST_ROUTE. `build` is called once per attempt (a fresh nonce and
+   * issuedAt each time); this adds agentSessionToken + senderProof, refuses a body naming another Epoch
+   * (STALE_EPOCH), and retries at most once each on 409 MODEL_ATTESTATION_REPLAYED (rebuild),
+   * SENDER_PROOF_REPLAYED (wait past the restart horizon, fresh proof) and SUBJECT_SESSION_INVALID (renew),
+   * within WORKER_SIGNED_MAX_ATTEMPTS. HTTP answers are returned (`{error, reason?}` on refusal); a
+   * fail-fast state or a pinned-transport refusal throws WorkerLocalEffectError(code).
+   */
+  postSigned(route: typeof MODEL_INVOCATION_ATTEST_ROUTE, build: () => Readonly<Record<string, unknown>>): Promise<{ readonly status: number, readonly body: Record<string, unknown> }>
+  /** D-0d2's broker port: the in-memory token and sender proofs over {method, route, body}. */
+  credentials(): AgentCredentialPort
 }
 
 interface EpochRecord { readonly workerEpochId: AeraWorkerEpochId, readonly agentPrincipalId: string, readonly aeraSessionId: string, readonly beganAt: string, readonly bindingConfirmedAt?: string }
@@ -108,6 +124,8 @@ const CODE = /^[A-Z0-9_]{1,80}$/u
 const typedCode = (value: unknown): string => typeof value === 'string' && CODE.test(value) ? value : 'UNTYPED'
 const FAIL_FAST: ReadonlySet<WorkerLocalEffectState> = new Set(['NOT_CONFIGURED', 'NOT_ENROLLED', 'KEY_ID_MISMATCH', 'NO_EPOCH', 'AWAITING_PENDING_BINDING', 'EPOCH_RETIRED'])
 const EPOCH_KEYS = 'aeraSessionId,agentPrincipalId,beganAt,workerEpochId'
+/** Attest refusals meaning "the registry does not (yet) name this Epoch / Worker". */
+const BINDING_REFUSALS: ReadonlySet<string> = new Set(['WORKER_EPOCH_MISMATCH', 'EXECUTION_BINDING_UNRESOLVED', 'EXECUTION_BINDING_NOT_ACTIVE', 'SUBJECT_NOT_BOUND_WORKER'])
 
 function readEpochFile(path: string, config: WorkerLocalEffectConfig, allowConfirmed: boolean): EpochRecord | undefined {
   try {
@@ -141,6 +159,7 @@ function writePrivate(dir: string, filename: string, content: string): void {
 export function createWorkerLocalEffectSession(options: WorkerLocalEffectSessionOptions): WorkerLocalEffectSession {
   const log = options.log ?? (() => {})
   const clock = options.clock ?? (() => Date.now())
+  const sleep = options.sleep ?? (async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) })
   const custody = options.custody
   const listeners = new Set<() => void>()
 
@@ -157,7 +176,7 @@ export function createWorkerLocalEffectSession(options: WorkerLocalEffectSession
   // Only the routes this module sends; each its own pinned transport (only requestRelease is ever used).
   const posts = new Map<string, (body: Record<string, unknown>) => Promise<{ channel: { tlsAuthorized: boolean, caFingerprintSha256: string, uriSans: readonly string[] }, status: number, body: unknown }>>()
   if (config !== undefined && configRefusal === undefined) {
-    for (const route of Object.values(WORKER_LE_RELAY_ROUTES)) {
+    for (const route of [...Object.values(WORKER_LE_RELAY_ROUTES), MODEL_INVOCATION_ATTEST_ROUTE]) {
       const transport = createPinnedRouterTransport({
         url: config.routerUrl,
         caPem: config.caPem,
@@ -342,6 +361,56 @@ export function createWorkerLocalEffectSession(options: WorkerLocalEffectSession
     return status()
   }
 
+  /** Sender-proof claims over this exact request (rehearsal world.ts:1086-1100), signed inside custody. */
+  const proofFor = (method: string, route: string, body: Readonly<Record<string, unknown>>): string => {
+    const claims: AgentSenderProofClaims = {
+      purpose: AGENT_SENDER_PROOF_PURPOSE,
+      audience: config!.routerUriSan,
+      method,
+      route,
+      bodyDigest: attemptBodyDigest(body),
+      nonce: newSenderProofNonce(),
+      issuedAt: Math.floor(clock() / 1000),
+      sessionId: session!.sessionId,
+      sessionTokenDigest: sha256Ref(session!.token),
+      workerEpochId: epoch!.workerEpochId,
+      installationKeyId: config!.installationKeyId,
+    }
+    return custody.senderProof(claims)
+  }
+
+  const postSigned: WorkerLocalEffectSession['postSigned'] = async (route, build) => {
+    if (route !== MODEL_INVOCATION_ATTEST_ROUTE) refuse('ROUTE_NOT_ALLOWED')
+    gate()
+    const used = new Set<string>()
+    let last: { status: number, body: Record<string, unknown> } | undefined
+    for (let attempt = 0; attempt < WORKER_SIGNED_MAX_ATTEMPTS; attempt += 1) {
+      await ensureSession()
+      const body = build()
+      if (body.workerEpochId !== epoch?.workerEpochId) refuse('STALE_EPOCH')
+      if ('agentSessionToken' in body || 'senderProof' in body) refuse('BODY_CARRIES_CREDENTIALS')
+      const signed: Record<string, unknown> = { ...body, agentSessionToken: session!.token }
+      signed.senderProof = proofFor('POST', route, signed)
+      last = await send(route, signed)
+      if (last.status === 200) {
+        bindingConfirmed()
+        return last
+      }
+      const code = typedCode(last.body.error)
+      if (BINDING_REFUSALS.has(code) && lifecycle === 'READY') lifecycle = 'BINDING_NOT_CURRENT'
+      const retry = last.status === 409 && code === 'MODEL_ATTESTATION_REPLAYED' ? 'CONFLICT'
+        : code === 'SENDER_PROOF_REPLAYED' ? 'HORIZON'
+          : code === 'SUBJECT_SESSION_INVALID' ? 'SESSION'
+            : undefined
+      log(`aera-worker-le-session: SIGNED ${route} status=${String(last.status)} code=${code}`)
+      if (retry === undefined || used.has(retry)) return last
+      used.add(retry)
+      if (retry === 'HORIZON') await sleep(WORKER_REPLAY_HORIZON_WAIT_MS)
+      if (retry === 'SESSION') session = undefined
+    }
+    return last!
+  }
+
   return {
     aeraSessionId: config?.aeraSessionId,
     connectionId: config?.connectionId,
@@ -362,5 +431,16 @@ export function createWorkerLocalEffectSession(options: WorkerLocalEffectSession
       })
     },
     ensureSession,
+    postSigned,
+    credentials: () => Object.freeze({
+      async sessionToken() {
+        await ensureSession()
+        return session!.token
+      },
+      async senderProof(input: { method: string, route: string, body: Record<string, unknown> }) {
+        await ensureSession()
+        return proofFor(input.method, input.route, input.body)
+      },
+    }),
   }
 }

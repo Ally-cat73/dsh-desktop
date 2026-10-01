@@ -4,7 +4,7 @@
  * The same strict same-origin loopback pattern as `aera-collab-route.ts`:
  *
  *   GET  /desktop/aera/worker/status   read-only projection of durable records + live state
- *   POST /desktop/aera/worker/action   START_EPOCH | CANCEL | GRANT | REVOKE | ENROL_WORKER_KEY
+ *   POST /desktop/aera/worker/action   START_EPOCH | CANCEL | GRANT | REVOKE | ENROL_WORKER_KEY | BEGIN_AGENT_EPOCH
  *
  * The renderer is never handed a store path, a binary path or any credential.
  * START_EPOCH returns immediately (202); the Epoch runs in the main process
@@ -13,6 +13,9 @@
  * existing RECORD_DECISION coordination action is. ENROL_WORKER_KEY is the
  * owner's explicit Enrol click (W3.1 / OA-1): it carries no parameters, so
  * the renderer can never name a Keychain item or ask for an overwrite.
+ * BEGIN_AGENT_EPOCH is the owner's explicit begin of the CIS Worker Epoch for
+ * this delegation window (D-0c, CD-4); it carries no parameters either, so it
+ * can never ask to supersede a live Epoch.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -32,6 +35,7 @@ export type AeraWorkerActionRequest =
   | { readonly action: 'GRANT', readonly workOrderId: string, readonly codeWorkingLineId: string, readonly classes: readonly WorkerEffectClass[] }
   | { readonly action: 'REVOKE', readonly workOrderId: string, readonly decisionId: string }
   | { readonly action: 'ENROL_WORKER_KEY', readonly workOrderId: string }
+  | { readonly action: 'BEGIN_AGENT_EPOCH', readonly workOrderId: string }
 
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status
@@ -62,6 +66,8 @@ export function parseWorkerAction(value: unknown): AeraWorkerActionRequest | und
       return only(['action', 'workOrderId']) ? { action: 'CANCEL', workOrderId } : undefined
     case 'ENROL_WORKER_KEY':
       return only(['action', 'workOrderId']) ? { action: 'ENROL_WORKER_KEY', workOrderId } : undefined
+    case 'BEGIN_AGENT_EPOCH':
+      return only(['action', 'workOrderId']) ? { action: 'BEGIN_AGENT_EPOCH', workOrderId } : undefined
     case 'GRANT': {
       const codeWorkingLineId = id(body.codeWorkingLineId)
       const classes = body.classes

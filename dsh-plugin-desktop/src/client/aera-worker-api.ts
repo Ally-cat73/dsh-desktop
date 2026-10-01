@@ -29,9 +29,19 @@ export interface WorkerInstallationKeyStatusView {
   readonly reason?: string
 }
 
+export interface WorkerLocalEffectStatusView {
+  readonly state: string
+  readonly reason?: string
+  readonly lastRefusal?: string
+  readonly workerEpochId?: string
+  readonly publicEpochPath?: string
+  readonly sessionExpiresAt?: string
+}
+
 export interface WorkerStatusView {
   readonly workOrderId: string
   readonly installationKey?: WorkerInstallationKeyStatusView
+  readonly localEffect?: WorkerLocalEffectStatusView
   readonly unavailableReason?: string
   readonly provider?: string
   readonly environmentId?: string
@@ -106,12 +116,42 @@ function installationKey(value: unknown): WorkerInstallationKeyStatusView | unde
   }
 }
 
+const LE_FIELDS = ['state', 'reason', 'lastRefusal', 'agentPrincipalId', 'aeraSessionId', 'connectionId', 'workerEpochId', 'sessionExpiresAt', 'publicEpochPath']
+const CODE = /^[A-Z0-9_:]{1,120}$/u
+
+/** Public local-effect projection (D-0c): an exact field allowlist, so no token can ride along. */
+function localEffect(value: unknown): WorkerLocalEffectStatusView | undefined {
+  if (value === undefined) return undefined
+  if (!isObject(value) || !Object.keys(value).every(key => LE_FIELDS.includes(key))) throw new Error('dsh-plugin-desktop: invalid local-effect status')
+  const code = (field: unknown, label: string): string | undefined => {
+    if (field === undefined) return undefined
+    if (typeof field !== 'string' || !CODE.test(field)) throw new Error(`dsh-plugin-desktop: invalid ${label} in local-effect status`)
+    return field
+  }
+  const state = code(value.state, 'state')
+  if (state === undefined) throw new Error('dsh-plugin-desktop: invalid local-effect status')
+  const reason = code(value.reason, 'reason')
+  const lastRefusal = code(value.lastRefusal, 'lastRefusal')
+  const workerEpochId = optional(value.workerEpochId, 'workerEpochId')
+  const publicEpochPath = optional(value.publicEpochPath, 'publicEpochPath')
+  const sessionExpiresAt = optional(value.sessionExpiresAt, 'sessionExpiresAt')
+  return {
+    state,
+    ...(reason === undefined ? {} : { reason }),
+    ...(lastRefusal === undefined ? {} : { lastRefusal }),
+    ...(workerEpochId === undefined ? {} : { workerEpochId }),
+    ...(publicEpochPath === undefined ? {} : { publicEpochPath }),
+    ...(sessionExpiresAt === undefined ? {} : { sessionExpiresAt }),
+  }
+}
+
 /** Validate a status response. */
 export function parseWorkerStatus(value: unknown): WorkerStatusView {
   if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid worker status')
   const workOrderId = text(value.workOrderId, 'workOrderId')
   const key = installationKey(value.installationKey)
-  const keyView = key === undefined ? {} : { installationKey: key }
+  const le = localEffect(value.localEffect)
+  const keyView = { ...(key === undefined ? {} : { installationKey: key }), ...(le === undefined ? {} : { localEffect: le }) }
   if (value.unavailableReason !== undefined) {
     return { workOrderId, ...keyView, unavailableReason: text(value.unavailableReason, 'unavailableReason'), epochCount: 0, authorityEnvelope: [], recentEffects: [] }
   }
