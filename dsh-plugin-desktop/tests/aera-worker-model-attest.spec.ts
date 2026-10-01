@@ -30,7 +30,7 @@ import {
   modelInvocationEffectDigest,
 } from '@aera/local-effect-admission'
 import {
-  CIS_ISSUER, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv,
+  CIS_ISSUER, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv, testModelRoutingEnv,
   type FakeRouter, type Pki, type TestCustody,
 } from './aera-worker-le-fixtures.ts'
 import { makeFakeClaude, makeWorkerWorld } from './aera-worker-fixtures.ts'
@@ -586,12 +586,13 @@ describe('U8 D-3: composed only with D-0c and a grammar-valid governed Connectio
     }
   }
   const leStatus = { state: 'READY' as const }
+  const INSTALLATION_KEY = { view: () => ({ status: 'ENROLLED', scope: 'DEV' }) } as never
   const le = (port: FakePort) => Object.assign(port, { status: () => leStatus, beginEpoch: async () => ({ workerEpochId: EPOCH_A }), ensureSession: async () => leStatus, credentials: () => ({}) })
 
   it('a D-0c session whose Connection id fails the grammar (or is absent) makes the worker UNAVAILABLE', async () => {
     const { env: e } = await env()
     for (const connectionId of ['aera:connection:claude-worker-2', undefined]) {
-      const runtime = composeAeraWorker(e, { localEffect: le(fakePort({ connectionId })) as never })
+      const runtime = composeAeraWorker(e, { installationKey: INSTALLATION_KEY, localEffect: le(fakePort({ connectionId })) as never })
       expect(runtime.kind).toBe('UNAVAILABLE')
       expect(runtime).toMatchObject({ reason: expect.stringContaining('AERA_CLAUDE_WORKER_CONNECTION_ID') })
       expect('modelAttest' in runtime).toBe(false)
@@ -604,7 +605,8 @@ describe('U8 D-3: composed only with D-0c and a grammar-valid governed Connectio
     port.replies.push(new WorkerLocalEffectError('NO_EPOCH'))
     // D-0d2 (M-3): a worker composes only with the governed effect plane too; the attest gate refuses before it is opened.
     const effectPlane = { openEpoch: () => Promise.reject(new Error('never opened')) }
-    const runtime = composeAeraWorker(e, { localEffect: le(port) as never, effectPlane })
+    // H-1: and with the D-0b custody and the Router hot path (its key reader is never called here).
+    const runtime = composeAeraWorker(e, { installationKey: INSTALLATION_KEY, localEffect: le(port) as never, effectPlane, routerHotPath: { baseUrl: 'http://127.0.0.1:4646', readRouterKey: async () => { throw new Error('never read') } } })
     expect(runtime.kind).toBe('AVAILABLE')
     const before = parseWorkerStatus(aeraWorkerStatus(runtime, world.workOrderId))
     expect(before.modelAttest).toMatchObject({ state: 'NOT_ATTESTED', heartbeat: 'DORMANT' })
@@ -663,6 +665,7 @@ describe('U8 over the real D-0c session and the fake Router (builder accepted; 4
         AERA_CLAUDE_WORKER_REPOSITORY_ID: 'aera-repo:aera-stack',
         AERA_CLAUDE_WORKER_WORKING_LINE_ID: 'aera:code_working_line:dogfood-u8',
         ...testEffectCatalogEnv(),
+        ...testModelRoutingEnv(),
       },
     }))
     return createWorkerLocalEffectSession({

@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { issueAeraPrincipalId } from '@aera/cis-contracts'
 import { caFingerprintSha256 } from '@aera/effect-broker'
 import {
-  CIS_ISSUER, ROUTER_SAN, RELAY, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv,
+  CIS_ISSUER, ROUTER_SAN, RELAY, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv, testModelRoutingEnv,
   type FakeRouter, type Pki, type TestCustody,
 } from './aera-worker-le-fixtures.ts'
 
@@ -66,6 +66,7 @@ function environment(overrides: Record<string, string> = {}, caFile = pki.caA, u
     AERA_CLAUDE_WORKER_REPOSITORY_ID: 'aera-repo:aera-stack',
     AERA_CLAUDE_WORKER_WORKING_LINE_ID: 'aera:code_working_line:dogfood-1',
     ...testEffectCatalogEnv(),
+    ...testModelRoutingEnv(),
     ...overrides,
   }
 }

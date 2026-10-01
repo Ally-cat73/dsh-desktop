@@ -28,12 +28,21 @@
  * session's governed Connection id (AERA_CLAUDE_WORKER_CONNECTION_ID) to pass
  * the Gateway Connection grammar. Otherwise it is UNAVAILABLE — never an
  * ungated fallback. (D-0d2 retired the composition without D-0c: M-3.)
+ *
+ * H-1 (D-0d2 review F-1, critical-path step 8): the worker is AVAILABLE only
+ * when ALL of D-0b (installation-key custody), D-0c (local-effect session),
+ * U8 (the attestor, via a grammar-valid Connection), D-0d (the governed effect
+ * plane) and H-1 (the Router hot path) are composed. The hot path is the
+ * config's `AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN`, which must be a member of
+ * the bound environment's EXACT allowed Router origin set, plus the D-0c
+ * pinned Connection and a Router-key reader the adapter calls at each spawn.
+ * There is no adapter without it, so no direct-to-Anthropic worker.
  */
 
 import { ParticipationStore } from '@aera/participation-runtime'
 import { isAeraPrincipalId } from '@aera/cis-contracts'
-import { resolveAgcGovernedGatewayRuntime } from './aera-gateway-agc-binding.ts'
-import { ClaudeCodeWorkerAdapter, resolveClaudeWorkerPin } from './aera-claude-worker-host.ts'
+import { agcAllowedRouterOrigins, resolveAgcGovernedGatewayRuntime, type AgcGatewayEnvironmentId } from './aera-gateway-agc-binding.ts'
+import { ClaudeCodeWorkerAdapter, resolveClaudeWorkerPin, type ClaudeWorkerHotPath } from './aera-claude-worker-host.ts'
 import { NO_LOCAL_AUTHORITY_GATE, type GovernedEffectPlane } from './aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from './aera-worker-session.ts'
 import { createModelInvocationAttestor, type ModelInvocationAttestor } from './aera-worker-model-attest.ts'
@@ -58,15 +67,49 @@ export interface AeraWorkerCompositionOptions {
   readonly localEffect?: WorkerLocalEffectSession
   /** D-0d2: the governed effect plane (built by the host from the same loaded config and session). */
   readonly effectPlane?: GovernedEffectPlane
+  /** H-1: the Router hot path (config origin + Keychain key reader), built by the host from the loaded config. */
+  readonly routerHotPath?: ClaudeWorkerHotPathSource
   /** Ids and codes only (the attestor never logs a body, nonce or token). */
   readonly log?: (line: string) => void
+}
+
+/** H-1: what the host supplies; composition adds the D-0c pinned Connection. */
+export interface ClaudeWorkerHotPathSource {
+  readonly baseUrl: string
+  readonly readRouterKey: () => Promise<string>
+}
+
+export type ClaudeWorkerHotPathResolution =
+  | { readonly kind: 'ROUTED', readonly hotPath: ClaudeWorkerHotPath }
+  | { readonly kind: 'UNAVAILABLE', readonly reason: string }
+
+/**
+ * H-1: the governed CLI's hot path, or an honest reason. The origin must be
+ * character-identical to a member of the bound environment's exact allowed
+ * Router origin set (`aera-gateway-agc-binding`); the Connection is the D-0c
+ * pinned one. The key reader is passed through, never called here.
+ */
+export function resolveClaudeWorkerHotPath(input: {
+  readonly environmentId: AgcGatewayEnvironmentId
+  readonly connectionId: string
+  readonly source: ClaudeWorkerHotPathSource | undefined
+}): ClaudeWorkerHotPathResolution {
+  const { source } = input
+  if (source === undefined || typeof source.readRouterKey !== 'function') {
+    return { kind: 'UNAVAILABLE', reason: 'The Router hot path (AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN in aera-claude-worker.json, and the Router worker key) is not composed; the worker never talks to Anthropic directly.' }
+  }
+  if (!agcAllowedRouterOrigins(input.environmentId).includes(source.baseUrl)) {
+    return { kind: 'UNAVAILABLE', reason: `The Router hot path origin (AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN) is not in the exact allowed set of the bound environment ${input.environmentId}; the worker never talks to Anthropic directly.` }
+  }
+  const readRouterKey = source.readRouterKey
+  return { kind: 'ROUTED', hotPath: Object.freeze({ baseUrl: source.baseUrl, connectionId: input.connectionId, readRouterKey: () => readRouterKey() }) }
 }
 
 export function composeAeraWorker(
   env: Readonly<Record<string, string | undefined>>,
   options: AeraWorkerCompositionOptions = {},
 ): AeraWorkerRuntime {
-  const runtime = composeWorkerRuntime(env, options.localEffect, options.effectPlane, options.log)
+  const runtime = composeWorkerRuntime(env, options)
   return {
     ...runtime,
     ...(options.installationKey === undefined ? {} : { installationKey: options.installationKey }),
@@ -76,10 +119,9 @@ export function composeAeraWorker(
 
 function composeWorkerRuntime(
   env: Readonly<Record<string, string | undefined>>,
-  localEffect: WorkerLocalEffectSession | undefined,
-  effectPlane: GovernedEffectPlane | undefined,
-  log: ((line: string) => void) | undefined,
+  options: AeraWorkerCompositionOptions,
 ): AeraWorkerRuntime {
+  const { localEffect, effectPlane, log } = options
   const pick = (key: string): string | undefined => {
     const value = env[key]?.trim()
     return value === undefined || value === '' ? undefined : value
@@ -90,7 +132,7 @@ function composeWorkerRuntime(
   if (storeDir === undefined) return { kind: 'UNAVAILABLE', reason: 'No durable participation store is configured (AERA_COLLAB_STORE_DIR); a worker is never run without one.' }
   if (principalId === undefined || !isAeraPrincipalId(principalId)) return { kind: 'UNAVAILABLE', reason: 'No canonical human principal is configured (AERA_COLLAB_PRINCIPAL_ID).' }
   if (delegationId === undefined) return { kind: 'UNAVAILABLE', reason: 'No recorded delegation is configured (AERA_COLLAB_DELEGATION_ID); agent participation is never self-authorised.' }
-  let environmentId: string
+  let environmentId: AgcGatewayEnvironmentId
   try {
     environmentId = resolveAgcGovernedGatewayRuntime(env).environmentId
   } catch (cause) {
@@ -98,6 +140,9 @@ function composeWorkerRuntime(
   }
   const pin = resolveClaudeWorkerPin(env)
   if (pin.kind === 'UNAVAILABLE') return { kind: 'UNAVAILABLE', reason: pin.reason }
+  if (options.installationKey === undefined) {
+    return { kind: 'UNAVAILABLE', reason: 'The worker installation-key custody (D-0b) is not composed; there is no governed worker without it.' }
+  }
   if (localEffect === undefined) {
     return { kind: 'UNAVAILABLE', reason: 'The governed local-effect session is not composed (installation-key custody or aera-claude-worker.json is unavailable); there is no ungated worker.' }
   }
@@ -107,12 +152,14 @@ function composeWorkerRuntime(
   if (effectPlane === undefined) {
     return { kind: 'UNAVAILABLE', reason: 'The governed effect plane (CAS through the Router, with the pinned effect catalog in aera-claude-worker.json) is not composed; there is no local-authority worker.' }
   }
+  const routing = resolveClaudeWorkerHotPath({ environmentId, connectionId: localEffect.connectionId, source: options.routerHotPath })
+  if (routing.kind === 'UNAVAILABLE') return { kind: 'UNAVAILABLE', reason: routing.reason }
   const modelAttest = createModelInvocationAttestor({ session: localEffect, ...(log === undefined ? {} : { log }) })
   return {
     kind: 'AVAILABLE',
     manager: new AeraWorkerSessionManager({
       store: new ParticipationStore(storeDir),
-      adapter: new ClaudeCodeWorkerAdapter(pin.pin, { parentEnv: env }),
+      adapter: new ClaudeCodeWorkerAdapter(pin.pin, { parentEnv: env, hotPath: routing.hotPath }),
       gate: NO_LOCAL_AUTHORITY_GATE,
       config: { humanPrincipalId: principalId, delegationId, environmentId },
       broker: { parentEnv: env },

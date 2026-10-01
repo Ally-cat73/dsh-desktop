@@ -21,7 +21,7 @@ import { join } from 'node:path'
 import { ParticipationStore } from '@aera/participation-runtime'
 import { issueAeraPrincipalId, type AeraPrincipalId } from '@aera/cis-contracts'
 import { worktreeInstance, type CodeWorkingLineV1 } from '@aera/participation-contracts'
-import { sha256File, type ClaudeWorkerPin } from '../src/aera-claude-worker-host.ts'
+import { sha256File, type ClaudeWorkerHotPath, type ClaudeWorkerPin } from '../src/aera-claude-worker-host.ts'
 
 export const FAKE_VERSION = '2.1.280-fake'
 export const FAKE_MODEL = 'claude-fake-5-20260101'
@@ -63,6 +63,15 @@ export interface FakeTurn {
 export interface FakeScript {
   readonly version?: string
   readonly model?: string
+  /**
+   * H-1: before each turn's output, POST one Messages request to
+   * `${ANTHROPIC_BASE_URL}/v1/messages` carrying the `ANTHROPIC_CUSTOM_HEADERS`
+   * lines and a per-process UUID `x-claude-code-session-id` (also reported as
+   * the init `session_id`), the way the pinned CLI does. `${ROUTER}` in a
+   * turn's text becomes the HTTP status (or `ERR:<code>` / `NO_BASE_URL`).
+   * No Authorization header is sent: the real CLI's OAuth is its own.
+   */
+  readonly modelRequest?: boolean
   readonly turns: readonly FakeTurn[]
 }
 
@@ -87,6 +96,7 @@ const systemPrompt = argv[argv.indexOf('--system-prompt') + 1] || ''
 const epochId = (/aera:worker-epoch:[0-9a-f-]+/.exec(systemPrompt) || [''])[0]
 const lineId = (/codeWorkingLineId (aera:code_working_line:[A-Za-z0-9_-]+)/.exec(systemPrompt) || ['', ''])[1]
 const model = SCRIPT.model || '${FAKE_MODEL}'
+const SESSION_UUID = crypto.randomUUID()
 let turn = 0
 let buffer = ''
 let keepAlive
@@ -106,12 +116,36 @@ process.stdin.on('data', (chunk) => {
   }
 })
 process.stdin.on('end', () => { if (keepAlive === undefined) process.exit(0) })
+function routerCall(input) {
+  return new Promise((resolve) => {
+    const base = process.env.ANTHROPIC_BASE_URL
+    if (!base) { resolve('NO_BASE_URL'); return }
+    const headers = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'x-claude-code-session-id': SESSION_UUID }
+    for (const line of (process.env.ANTHROPIC_CUSTOM_HEADERS || '').split('\n')) {
+      const at = line.indexOf(':')
+      if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim()
+    }
+    const body = JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: input }] })
+    let url
+    try { url = new URL('/v1/messages', base) } catch { resolve('ERR:BAD_BASE_URL'); return }
+    const request = require('node:http').request(url, { method: 'POST', headers: Object.assign(headers, { 'content-length': Buffer.byteLength(body) }) }, (response) => {
+      response.resume()
+      response.on('end', () => resolve(String(response.statusCode)))
+    })
+    request.on('error', (error) => resolve('ERR:' + (error.code || 'UNKNOWN')))
+    request.end(body)
+  })
+}
 function onMessage(message) {
+  if (!SCRIPT.modelRequest) { handleMessage(message, ''); return }
+  routerCall(String(message.message && message.message.content)).then((status) => handleMessage(message, status))
+}
+function handleMessage(message, routerStatus) {
   turn += 1
   const step = SCRIPT.turns[turn - 1] || SCRIPT.turns[SCRIPT.turns.length - 1]
   const input = String(message.message && message.message.content)
   out({
-    type: 'system', subtype: 'init', cwd: step.initCwd || process.cwd(), session_id: 'fake-session-' + turn,
+    type: 'system', subtype: 'init', cwd: step.initCwd || process.cwd(), session_id: SCRIPT.modelRequest ? SESSION_UUID : 'fake-session-' + turn,
     tools: step.initTools || [], mcp_servers: step.initMcp || [], skills: step.initSkills || [], slash_commands: [],
     plugins: step.initPlugins || [{ name: 'agents-md', path: 'builtin' }, { name: 'telemetry', path: 'builtin' }],
     agents: ['claude', 'Explore'], apiKeySource: step.apiKeySource || 'none',
@@ -135,6 +169,7 @@ function onMessage(message) {
     .split('$' + '{ENV_KEYS}').join(Object.keys(process.env).sort().join(','))
     .split('$' + '{INPUT_SHA}').join(crypto.createHash('sha256').update(input).digest('hex').match(/.{8}/g).join('-'))
     .split('$' + '{INPUT}').join(input)
+    .split('$' + '{ROUTER}').join(routerStatus)
   if (step.intents !== undefined || step.status !== undefined) {
     const batch = {
       version: 'AeraEffectIntentBatchV1',
@@ -256,6 +291,27 @@ export const POISONED_PARENT_ENV: Readonly<Record<string, string>> = Object.free
   CLAUDE_CODE_SESSION_ID: 'controller-session',
   CLAUDECODE: '1',
   ANTHROPIC_API_KEY: 'sk-ant-SHOULD-NEVER-LEAK-0123456789abcdef',
+  ANTHROPIC_AUTH_TOKEN: 'auth-token-SHOULD-NEVER-LEAK-0123456789abcdef',
+  ANTHROPIC_BASE_URL: 'https://poisoned-base-url.invalid',
+  ANTHROPIC_CUSTOM_HEADERS: 'x-poison: SHOULD-NEVER-LEAK',
   AERA_GATEWAY_AGC_EXECUTION_KEY: 'aera-exec-key-SHOULD-NEVER-LEAK',
   AERA_COLLAB_STORE_DIR: '/should/never/leak',
 })
+
+/** H-1: a synthetic Router worker key (test value only; never a real credential). */
+export const TEST_ROUTER_KEY = 'fake-router-worker-key-TEST-ONLY-0001'
+/** H-1: a Gateway-grammar Connection id for host-level tests. */
+export const TEST_HOT_PATH_CONNECTION = 'claude-worker-connection-test'
+
+/**
+ * H-1: a hot path for host-level tests. The default origin is the discard port
+ * on loopback (nothing listens; the fake CLI only calls it with `modelRequest`).
+ */
+export function testHotPath(overrides: Partial<ClaudeWorkerHotPath> = {}): ClaudeWorkerHotPath {
+  return {
+    baseUrl: 'http://127.0.0.1:9',
+    connectionId: TEST_HOT_PATH_CONNECTION,
+    readRouterKey: async () => TEST_ROUTER_KEY,
+    ...overrides,
+  }
+}

@@ -17,7 +17,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ParticipationStore } from '@aera/participation-runtime'
-import { CLAUDE_CODE_TEAM_IDENTIFIER, ClaudeCodeWorkerAdapter, type ClaudeWorkerPin } from '../src/aera-claude-worker-host.ts'
+import { CLAUDE_CODE_TEAM_IDENTIFIER, ClaudeCodeWorkerAdapter, type ClaudeWorkerHotPath, type ClaudeWorkerPin } from '../src/aera-claude-worker-host.ts'
+import { AGC_CANARY_SYDNEY_ROUTER_ORIGIN } from '../src/aera-gateway-agc-binding.ts'
 import { DEFAULT_WORKER_EPOCH_LIMITS } from '../src/aera-worker-adapter.ts'
 import { LocalExecutionPolicyGate } from '../src/aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from '../src/aera-worker-session.ts'
@@ -31,6 +32,18 @@ const PIN: ClaudeWorkerPin = {
   model: process.env.AERA_CLAUDE_WORKER_MODEL ?? 'haiku',
   teamIdentifier: CLAUDE_CODE_TEAM_IDENTIFIER,
 }
+/**
+ * H-1 (review m-10, controller OQ-1). The real CLI only ever gets the Router
+ * hot path, and the live base-URL spike S-1 runs ONLY against the Sydney
+ * Router with the owner present, from the installed app. So this spec pins the
+ * Sydney origin (no override) and its Router-key reader refuses: no agent run
+ * can point the real CLI at another base URL, or hand it a Router key.
+ */
+const REAL_CLI_HOT_PATH: ClaudeWorkerHotPath = {
+  baseUrl: AGC_CANARY_SYDNEY_ROUTER_ORIGIN,
+  connectionId: process.env.AERA_CLAUDE_WORKER_CONNECTION_ID ?? 'connection-not-configured',
+  readRouterKey: async () => { throw new Error('REAL_CLI_ROUTER_KEY_OWNER_ONLY: S-1 runs from the installed app against the Sydney Router with the owner present (OQ-1)') },
+}
 const LIMITS = { ...DEFAULT_WORKER_EPOCH_LIMITS, maxTurns: 3, turnTimeoutMs: 120_000, epochTimeoutMs: 300_000, cancelGraceMs: 2_000 }
 
 function realManager(world: WorkerWorld): AeraWorkerSessionManager {
@@ -38,7 +51,7 @@ function realManager(world: WorkerWorld): AeraWorkerSessionManager {
   mkdirSync(scratchRoot, { recursive: true })
   return new AeraWorkerSessionManager({
     store: new ParticipationStore(world.storeDir),
-    adapter: new ClaudeCodeWorkerAdapter(PIN, { scratchRoot }),
+    adapter: new ClaudeCodeWorkerAdapter(PIN, { scratchRoot, hotPath: REAL_CLI_HOT_PATH }),
     gate: new LocalExecutionPolicyGate(),
     config: { humanPrincipalId: world.owner, delegationId: world.delegationId, environmentId: 'AERA_DEV', limits: LIMITS },
   })

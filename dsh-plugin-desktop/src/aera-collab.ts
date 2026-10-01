@@ -45,7 +45,7 @@ import {
   handleAeraWorkerStatusRequest,
 } from './aera-worker-route.ts'
 import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from './aera-worker-composition.ts'
-import { createWorkerInstallationKeyCustody, resolveInstallationKeyScope, type InstallationKeyScope } from './aera-worker-installation-key.ts'
+import { createClaudeWorkerRouterKeyReader, createWorkerInstallationKeyCustody, resolveInstallationKeyScope, type InstallationKeyScope } from './aera-worker-installation-key.ts'
 import { loadWorkerLocalEffectConfig } from './aera-worker-le-config.ts'
 import { createWorkerLocalEffectSession } from './aera-worker-le-session.ts'
 import { createGovernedEffectPlane } from './aera-worker-effect-broker.ts'
@@ -321,7 +321,20 @@ export function apply(ctx: Context): void {
         journalDir: join(userDataDir, 'aera-worker', 'broker-journal'),
         log: line => { ctx.logger.info(line) },
       })
-  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), ...(effectPlane === undefined ? {} : { effectPlane }), log: line => { ctx.logger.info(line) } })
+  /*
+   * H-1: the Router hot path for the governed CLI — the config's origin (exact
+   * allowed set checked by composition) and a reader of the owner-placed Router
+   * worker key (same PRODUCTION/DEV scope as the installation key). The key is
+   * read by the adapter at each spawn, in this main process, and placed only in
+   * that CLI child's env; nothing is read here.
+   */
+  const routerHotPath = localEffectConfig?.status !== 'loaded'
+    ? undefined
+    : {
+        baseUrl: localEffectConfig.config.modelRouterOrigin,
+        readRouterKey: createClaudeWorkerRouterKeyReader(installationKeyScope),
+      }
+  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), ...(effectPlane === undefined ? {} : { effectPlane }), ...(routerHotPath === undefined ? {} : { routerHotPath }), log: line => { ctx.logger.info(line) } })
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',

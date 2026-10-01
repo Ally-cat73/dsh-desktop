@@ -12,22 +12,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  CLAUDE_WORKER_ENV_KEYS,
+  CLAUDE_WORKER_BASE_ENV_KEYS,
   ClaudeCodeWorkerAdapter,
   buildClaudeWorkerArgv,
-  buildClaudeWorkerEnv,
+  buildClaudeWorkerBaseEnv,
   resolveClaudeWorkerPin,
   verifyClaudeWorkerBinary,
 } from '../src/aera-claude-worker-host.ts'
 import { DEFAULT_WORKER_EPOCH_LIMITS, type WorkerEpochHandle, type WorkerLiveEvent } from '../src/aera-worker-adapter.ts'
-import { FAKE_MODEL, FAKE_VERSION, POISONED_PARENT_ENV, makeFakeClaude, type FakeScript } from './aera-worker-fixtures.ts'
+import { FAKE_MODEL, FAKE_VERSION, POISONED_PARENT_ENV, makeFakeClaude, type FakeScript, testHotPath } from './aera-worker-fixtures.ts'
 
 const LIMITS = { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 10_000, epochTimeoutMs: 30_000, cancelGraceMs: 300 }
 
 async function start(script: FakeScript, overrides: { limits?: Partial<typeof LIMITS>, events?: WorkerLiveEvent[] } = {}): Promise<{ handle: WorkerEpochHandle, scratchRoot: string }> {
   const { pin } = await makeFakeClaude(script)
   const scratchRoot = mkdtempSync(join(tmpdir(), 'aera-host-scratch-'))
-  const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot })
+  const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, hotPath: testHotPath() })
   const handle = await adapter.startEpoch({
     epochId: 'aera:worker-epoch:00000000-0000-4000-8000-000000000001',
     aeraSessionId: 'psession-test',
@@ -99,7 +99,7 @@ describe('pin resolution and verification (§7)', () => {
 
   it('re-verifies at EVERY Epoch start: a binary replaced after preflight is refused before any process exists', async () => {
     const { pin, path } = await makeFakeClaude({ turns: [{ text: 'ok' }] })
-    const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV })
+    const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, hotPath: testHotPath() })
     await adapter.preflight()
     writeFileSync(path, '#!/bin/sh\necho replaced\n')
     await expect(adapter.startEpoch({
@@ -109,9 +109,9 @@ describe('pin resolution and verification (§7)', () => {
 })
 
 describe('clean environment and fixed argv (§7/§13)', () => {
-  it('builds the env from nothing: exactly HOME, PATH, USER, LOGNAME', () => {
-    const env = buildClaudeWorkerEnv(POISONED_PARENT_ENV)
-    expect(Object.keys(env).sort()).toEqual([...CLAUDE_WORKER_ENV_KEYS].sort())
+  it('builds the base env (preflight `--version`) from nothing: exactly HOME, PATH, USER, LOGNAME', () => {
+    const env = buildClaudeWorkerBaseEnv(POISONED_PARENT_ENV)
+    expect(Object.keys(env).sort()).toEqual([...CLAUDE_WORKER_BASE_ENV_KEYS].sort())
     expect(env.PATH).toBe('/usr/bin:/bin')
     expect(JSON.stringify(env)).not.toMatch(/SHOULD-NEVER-LEAK|CLAUDE_CODE|ANTHROPIC|AERA_/u)
   })
@@ -127,13 +127,13 @@ describe('clean environment and fixed argv (§7/§13)', () => {
     for (const flag of ['--bare', '--resume', '--continue', '--mcp-config', '--add-dir', '--dangerously-skip-permissions']) expect(argv).not.toContain(flag)
   })
 
-  it('the running worker sees only the four allowed variables, even with a poisoned parent', async () => {
+  it('the running worker sees only the four base variables plus the H-1 hot-path pair, even with a poisoned parent', async () => {
     const { handle } = await start({ turns: [{ text: 'ENV=${ENV_KEYS}' }] })
     const turn = await handle.runTurn('hello')
     expect(turn.kind).toBe('TURN_COMPLETED')
     const keys = turn.kind === 'TURN_COMPLETED' ? /ENV=([^\n]*)/u.exec(turn.text)?.[1]?.split(',') ?? [] : []
     // `__CF_USER_TEXT_ENCODING` is injected by macOS itself into every process; nothing else may appear.
-    expect(keys.filter(key => key !== '__CF_USER_TEXT_ENCODING').sort()).toEqual(['HOME', 'LOGNAME', 'PATH', 'USER'])
+    expect(keys.filter(key => key !== '__CF_USER_TEXT_ENCODING').sort()).toEqual(['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'HOME', 'LOGNAME', 'PATH', 'USER'])
     await handle.endInput()
   })
 })

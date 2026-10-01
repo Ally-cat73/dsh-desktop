@@ -18,6 +18,11 @@
  * `AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256`; it is loaded HERE through
  * `loadGovernedEffectCatalog`, and any defect is `not-configured` (governed
  * mode, and so the worker, unavailable).
+ *
+ * H-1: `AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN` is the Router hot-path origin
+ * the governed CLI's `ANTHROPIC_BASE_URL` is set to: a bare http(s) origin,
+ * character-identical to its own URL origin. Composition then requires it to
+ * be a member of the bound environment's EXACT allowed Router origin set.
  */
 import { X509Certificate } from 'node:crypto'
 import { lstatSync, readFileSync } from 'node:fs'
@@ -25,6 +30,7 @@ import { isAbsolute, join } from 'node:path'
 import { isAeraPrincipalId } from '@aera/cis-contracts'
 import { caFingerprintSha256 } from '@aera/effect-broker'
 import { loadGovernedEffectCatalog, type PinnedGovernedCatalog } from './aera-worker-governed-effects.ts'
+import { isClaudeWorkerRouterOrigin } from './aera-claude-worker-host.ts'
 
 export const AERA_CLAUDE_WORKER_CONFIG_FILENAME = 'aera-claude-worker.json'
 
@@ -51,6 +57,7 @@ const VALIDATORS = {
   AERA_CLAUDE_WORKER_WORKING_LINE_ID: (v: string) => OPAQUE.test(v),
   AERA_CLAUDE_WORKER_EFFECT_CATALOG: (v: string) => isAbsolute(v),
   AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256: (v: string) => /^[a-f0-9]{64}$/u.test(v),
+  AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN: (v: string) => isClaudeWorkerRouterOrigin(v),
 } as const
 type ConfigKey = keyof typeof VALIDATORS
 
@@ -69,6 +76,8 @@ export interface WorkerLocalEffectConfig {
   readonly workingLineId: string
   /** The reviewed governed-effect catalog, pinned by the sha256 of its bytes (D-0d1). */
   readonly effectCatalog: PinnedGovernedCatalog
+  /** H-1: the Router hot-path origin for the CLI's ANTHROPIC_BASE_URL (exact-set checked at composition). */
+  readonly modelRouterOrigin: string
 }
 
 export type WorkerLocalEffectConfigResult =
@@ -140,6 +149,7 @@ export function loadWorkerLocalEffectConfig(profileDir: string): WorkerLocalEffe
       repositoryId: v.AERA_CLAUDE_WORKER_REPOSITORY_ID,
       workingLineId: v.AERA_CLAUDE_WORKER_WORKING_LINE_ID,
       effectCatalog: catalog.pinned,
+      modelRouterOrigin: v.AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN,
     }),
   }
 }

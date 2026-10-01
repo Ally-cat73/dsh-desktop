@@ -30,9 +30,9 @@ import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from '..
 import { parseWorkerStatus } from '../src/client/aera-worker-api.ts'
 import { AeraWorkerStatus } from '../src/client/AeraWorkerStatus.tsx'
 import { en } from '../src/client/aera-collab-locales.ts'
-import { POISONED_PARENT_ENV, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld } from './aera-worker-fixtures.ts'
+import { POISONED_PARENT_ENV, TEST_ROUTER_KEY, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld, testHotPath } from './aera-worker-fixtures.ts'
 import {
-  CIS_ISSUER, EFFECT_ROUTES, RELAY, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv,
+  CIS_ISSUER, EFFECT_ROUTES, RELAY, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv, testModelRoutingEnv,
   type FakeRouter, type Pki, type TestCustody,
 } from './aera-worker-le-fixtures.ts'
 
@@ -113,6 +113,7 @@ function writeProfile(world: WorkerWorld, overrides: Record<string, string> = {}
       AERA_CLAUDE_WORKER_REPOSITORY_ID: world.line.repositoryId,
       AERA_CLAUDE_WORKER_WORKING_LINE_ID: world.line.codeWorkingLineId,
       ...testEffectCatalogEnv(),
+      ...testModelRoutingEnv(),
       ...overrides,
     },
   }))
@@ -145,7 +146,7 @@ async function manager(world: WorkerWorld, plane: GovernedEffectPlane, script: F
   const { pin } = await makeFakeClaude(script)
   return new AeraWorkerSessionManager({
     store: new ParticipationStore(world.storeDir),
-    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot }),
+    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, hotPath: testHotPath() }),
     // A permissive local gate: governed mode must never consult it.
     gate: new LocalExecutionPolicyGate(),
     config: { humanPrincipalId: world.owner, delegationId: world.delegationId, environmentId: 'AERA_DEV', limits: LIMITS },
@@ -398,7 +399,8 @@ describe('M-3 / N-6 / CD-2: no legacy direct-provider or local-grant worker can 
       expect(runtime.kind).toBe('UNAVAILABLE')
       expect(await codeOf(performAeraWorkerAction(runtime, { action: 'START_EPOCH', workOrderId: world.workOrderId, codeWorkingLineId: world.line.codeWorkingLineId, task: 't' }, () => {}))).toBe('WORKER_UNAVAILABLE')
     }
-    const runtime = composeAeraWorker(env, { localEffect: g.session, effectPlane: g.plane })
+    // H-1: AVAILABLE needs all five — D-0b custody, D-0c session, U8 attestor, D-0d plane and the Router hot path.
+    const runtime = composeAeraWorker(env, { installationKey: custody.port as never, localEffect: g.session, effectPlane: g.plane, routerHotPath: { baseUrl: 'http://127.0.0.1:4646', readRouterKey: async () => TEST_ROUTER_KEY } })
     expect(runtime.kind).toBe('AVAILABLE')
     expect(aeraWorkerStatus(runtime, world.workOrderId)).toMatchObject({ authorityMode: 'CAS' })
     for (const request of [

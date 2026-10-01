@@ -71,6 +71,11 @@ export function testEffectCatalogEnv(catalog: unknown = TEST_EFFECT_CATALOG): { 
   return { AERA_CLAUDE_WORKER_EFFECT_CATALOG: file, AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256: createHash('sha256').update(text).digest('hex') }
 }
 
+/** H-1: the model-routing config key (the AERA_DEV loopback member of the exact allowed set). */
+export function testModelRoutingEnv(origin = 'http://127.0.0.1:4646'): { AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN: string } {
+  return { AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN: origin }
+}
+
 /* ------------------------------------------------------------------ PKI */
 
 export interface Pki { readonly dir: string, readonly caA: string, readonly caB: string, readonly leafA: { cert: Buffer, key: Buffer }, readonly leafB: { cert: Buffer, key: Buffer }, readonly rogueA: { cert: Buffer, key: Buffer } }

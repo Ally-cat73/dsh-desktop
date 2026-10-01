@@ -19,7 +19,7 @@ import { ClaudeCodeWorkerAdapter } from '../src/aera-claude-worker-host.ts'
 import { DEFAULT_WORKER_EPOCH_LIMITS } from '../src/aera-worker-adapter.ts'
 import { LocalExecutionPolicyGate, WorkerEffectBroker } from '../src/aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from '../src/aera-worker-session.ts'
-import { POISONED_PARENT_ENV, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld } from './aera-worker-fixtures.ts'
+import { POISONED_PARENT_ENV, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld, testHotPath } from './aera-worker-fixtures.ts'
 
 const LIMITS = { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 15_000, epochTimeoutMs: 60_000, cancelGraceMs: 300 }
 const CHAT_MARKER = 'PRIVATE-CHAT-MARKER-7731'
@@ -30,7 +30,7 @@ async function freshManager(world: WorkerWorld, script: FakeScript): Promise<Aer
   const { pin } = await makeFakeClaude(script)
   return new AeraWorkerSessionManager({
     store: new ParticipationStore(world.storeDir),
-    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot }),
+    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, hotPath: testHotPath() }),
     gate: new LocalExecutionPolicyGate(),
     config: { humanPrincipalId: world.owner, delegationId: world.delegationId, environmentId: 'AERA_DEV', limits: LIMITS },
     broker: { parentEnv: POISONED_PARENT_ENV },

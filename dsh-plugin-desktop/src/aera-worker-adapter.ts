@@ -140,7 +140,7 @@ export type WorkerTurnOutcome =
 /** Live progress (UI only). Durable truth is what the session manager records. */
 export type WorkerLiveEvent =
   | { readonly kind: 'PROCESS_STARTED', readonly pid: number }
-  | { readonly kind: 'RUNTIME_READY', readonly model: string, readonly cliVersion?: string }
+  | { readonly kind: 'RUNTIME_READY', readonly model: string, readonly cliVersion?: string, readonly providerSessionId?: string }
   | { readonly kind: 'ASSISTANT_TEXT', readonly text: string }
   | { readonly kind: 'TURN_COMPLETED', readonly turn: number }
   | { readonly kind: 'TERMINATED', readonly status: WorkerEpochTerminalStatus }

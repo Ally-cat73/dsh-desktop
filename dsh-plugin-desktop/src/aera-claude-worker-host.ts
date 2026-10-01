@@ -11,9 +11,21 @@
  *   TeamIdentifier equals the pin. Phase A saw the binary replace itself
  *   despite `autoUpdates:false`; a moved binary is refused, not trusted.
  * - ENVIRONMENT BUILT FROM NOTHING. Exactly HOME, PATH=/usr/bin:/bin, USER,
- *   LOGNAME (the minimum for the CLI to find the owner's keychain login).
- *   Nothing is filtered from the parent, so CLAUDE_CODE_MESSAGING_TOKEN,
- *   ANTHROPIC_*, AERA_* and every other variable are absent by construction.
+ *   LOGNAME (the minimum for the CLI to find the owner's keychain login),
+ *   plus the H-1 hot-path pair below. Nothing is filtered from the parent, so
+ *   CLAUDE_CODE_MESSAGING_TOKEN, the parent's ANTHROPIC_*, AERA_* and every
+ *   other variable are absent by construction.
+ * - ROUTER HOT PATH (H-1, critical-path step 8). The CLI's model transport
+ *   goes to the Aera Router hot path, never straight to Anthropic:
+ *   `ANTHROPIC_BASE_URL` is the validated Router origin and
+ *   `ANTHROPIC_CUSTOM_HEADERS` carries `x-aera-gateway-key: <Router worker
+ *   key>` and `x-aera-connection-id: <pinned governed Connection>`. No
+ *   `x-aera-session-id`: the governed Session is bootstrapped by the Router
+ *   from the CLI's own `x-claude-code-session-id`. The worker key is read from
+ *   the Keychain by the injected reader AT SPAWN TIME, in the main process, and
+ *   exists only in that child's env object: never `process.env`, argv, a field,
+ *   logs, evidence or the renderer. There is no adapter without a hot path and
+ *   no spawn without a key: no fallback to direct Anthropic.
  * - NO EXECUTOR. `--tools "" --safe-mode --setting-sources "" --strict-mcp-config
  *   --disable-slash-commands`, verified on EVERY `system/init` by the
  *   fail-closed guard (`aera-claude-stream.ts`).
@@ -33,6 +45,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream, lstatSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import { isGatewayConnectionId } from '@aera/local-effect-authority'
 import {
   NO_USAGE,
   WorkerRefusal,
@@ -66,18 +79,26 @@ export const CLAUDE_CODE_WORKER_TYPE = 'CLAUDE_CODE'
 export const CLAUDE_CODE_TEAM_IDENTIFIER = 'Q6L2SF6YDW'
 /** The PATH the worker sees. The native binary needs nothing else. */
 export const CLAUDE_WORKER_PATH = '/usr/bin:/bin'
-/** The only environment variables the worker process receives. */
-export const CLAUDE_WORKER_ENV_KEYS: readonly string[] = Object.freeze(['HOME', 'PATH', 'USER', 'LOGNAME'])
+/** The base environment (also the preflight `--version` env): never a Router key. */
+export const CLAUDE_WORKER_BASE_ENV_KEYS: readonly string[] = Object.freeze(['HOME', 'PATH', 'USER', 'LOGNAME'])
+/** The only environment variables the worker process receives (H-1: base + the hot-path pair). */
+export const CLAUDE_WORKER_ENV_KEYS: readonly string[] = Object.freeze([...CLAUDE_WORKER_BASE_ENV_KEYS, 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'])
+/** The Router's key door (aera-router providerExecutionContainment `authenticateProviderRequest`). */
+export const CLAUDE_WORKER_ROUTER_KEY_HEADER = 'x-aera-gateway-key'
+/** Must equal the key-bound Connection (aera-router sessionRoutingRegistry `execution_connection_mismatch`). */
+export const CLAUDE_WORKER_CONNECTION_HEADER = 'x-aera-connection-id'
 
 const MAX_STDERR_BYTES = 64 * 1024
+/** A header-safe key: printable ASCII, no whitespace or line break (no header injection). */
+const ROUTER_KEY = /^[\x21-\x7e]{16,512}$/u
 
 /**
  * What the CLI does that Aera cannot see or switch off (Phase A §F), recorded
  * on every Epoch terminal instead of being omitted (§12).
  */
 export const CLAUDE_WORKER_STATIC_LIMITATIONS: readonly string[] = Object.freeze([
-  'model transport is the CLI\'s own connection to Anthropic; Aera Router/Sentinel do not see it',
-  'telemetry@builtin reports to Anthropic; not governed by Aera',
+  'model transport goes through the Aera Router hot path (ANTHROPIC_BASE_URL, governed Connection) to Sentinel; never directly to Anthropic',
+  'declared direct exceptions until the live spike S-1 measures them: the CLI\'s own OAuth token refresh and telemetry@builtin reach Anthropic directly; not governed by Aera',
   'the CLI injects the account email and an environment snapshot into model context; no flag removes them',
   'the CLI opens an inbound messaging socket (/tmp/cc-socks/<pid>.sock) for the Epoch lifetime',
   'the worker process runs as the owner with no OS sandbox; confinement is by executor removal, verified per init',
@@ -141,8 +162,51 @@ export function resolveClaudeWorkerPin(
   }
 }
 
-/** The worker environment: built from nothing, four keys, no inheritance. */
-export function buildClaudeWorkerEnv(parent: Readonly<Record<string, string | undefined>>): Record<string, string> {
+/**
+ * H-1: where the governed CLI's model traffic goes. Built by composition from
+ * the validated config (exact allowed origin of the bound environment) and the
+ * D-0c pinned Connection; `readRouterKey` reads the Router worker key from the
+ * Keychain and is called once per spawn, never at composition.
+ */
+export interface ClaudeWorkerHotPath {
+  readonly baseUrl: string
+  readonly connectionId: string
+  readonly readRouterKey: () => Promise<string>
+}
+
+/** The values one spawn's env is built from (the key only ever in this call's arguments). */
+export interface ClaudeWorkerRouting {
+  readonly baseUrl: string
+  readonly connectionId: string
+  readonly routerKey: string
+}
+
+const routingRefusal = (detail: string): WorkerRefusal =>
+  new WorkerRefusal('WORKER_MODEL_ROUTING_UNAVAILABLE', `The Router hot path is not usable (${detail}); the worker never talks to Anthropic directly.`)
+
+/** A bare http(s) origin, character-identical to its own URL origin (no path, query, fragment or userinfo). */
+export function isClaudeWorkerRouterOrigin(value: unknown): value is string {
+  if (typeof value !== 'string' || value === '') return false
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value
+  } catch {
+    return false
+  }
+}
+
+/** Grammar re-check of a hot path at spawn time (composition already applied the exact allowed set). */
+function checkHotPath(hotPath: unknown): ClaudeWorkerHotPath {
+  if (hotPath === null || typeof hotPath !== 'object') throw routingRefusal('no hot path is configured')
+  const candidate = hotPath as Partial<ClaudeWorkerHotPath>
+  if (!isClaudeWorkerRouterOrigin(candidate.baseUrl)) throw routingRefusal('the base URL is not a Router origin')
+  if (!isGatewayConnectionId(candidate.connectionId)) throw routingRefusal('the Connection id is not a Gateway Connection id')
+  if (typeof candidate.readRouterKey !== 'function') throw routingRefusal('no Router key reader')
+  return candidate as ClaudeWorkerHotPath
+}
+
+/** The base environment: built from nothing, four keys, no inheritance (also the preflight env). */
+export function buildClaudeWorkerBaseEnv(parent: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const home = parent.HOME
   const user = parent.USER ?? parent.LOGNAME
   const logname = parent.LOGNAME ?? parent.USER
@@ -150,6 +214,23 @@ export function buildClaudeWorkerEnv(parent: Readonly<Record<string, string | un
     throw new WorkerRefusal('WORKER_ENV_INCOMPLETE', 'HOME, USER and LOGNAME are required for the CLI to resolve the existing keychain login')
   }
   return { HOME: home, PATH: CLAUDE_WORKER_PATH, USER: user, LOGNAME: logname }
+}
+
+/**
+ * The worker environment (H-1): the base four plus exactly ANTHROPIC_BASE_URL
+ * and ANTHROPIC_CUSTOM_HEADERS. Never an API key, auth token, apiKeyHelper or
+ * `x-aera-session-id`; never writes `parent`. Refusals never echo a value.
+ */
+export function buildClaudeWorkerEnv(parent: Readonly<Record<string, string | undefined>>, routing: ClaudeWorkerRouting): Record<string, string> {
+  if (routing === null || typeof routing !== 'object') throw routingRefusal('no hot path is configured')
+  if (!isClaudeWorkerRouterOrigin(routing.baseUrl)) throw routingRefusal('the base URL is not a Router origin')
+  if (!isGatewayConnectionId(routing.connectionId)) throw routingRefusal('the Connection id is not a Gateway Connection id')
+  if (typeof routing.routerKey !== 'string' || !ROUTER_KEY.test(routing.routerKey)) throw routingRefusal('the Router worker key is malformed')
+  return {
+    ...buildClaudeWorkerBaseEnv(parent),
+    ANTHROPIC_BASE_URL: routing.baseUrl,
+    ANTHROPIC_CUSTOM_HEADERS: `${CLAUDE_WORKER_ROUTER_KEY_HEADER}: ${routing.routerKey}\n${CLAUDE_WORKER_CONNECTION_HEADER}: ${routing.connectionId}`,
+  }
 }
 
 /**
@@ -210,7 +291,7 @@ async function reportedVersion(binaryPath: string, env: Record<string, string>):
 }
 
 export interface ClaudeWorkerHostDeps {
-  /** The parent environment the four allowed keys are copied from. */
+  /** The parent environment the four base keys are copied from. */
   readonly parentEnv?: Readonly<Record<string, string | undefined>>
   /** Where Epoch scratch dirs are created. */
   readonly scratchRoot?: string
@@ -237,8 +318,7 @@ export async function verifyClaudeWorkerBinary(
   if (!stat.isFile()) refuse('pinned path is not a regular file')
   const digest = await sha256File(pin.binaryPath)
   if (digest !== pin.sha256) refuse(`sha256 ${digest.slice(0, 12)}… does not match the pin ${pin.sha256.slice(0, 12)}…`)
-  const env = buildClaudeWorkerEnv(deps.parentEnv ?? process.env)
-  const version = await reportedVersion(pin.binaryPath, env)
+  const version = await reportedVersion(pin.binaryPath, buildClaudeWorkerBaseEnv(deps.parentEnv ?? process.env))
   if (version !== pin.version) refuse(`--version reports ${version ?? 'nothing'}, pinned ${pin.version}`)
   let signer: string | undefined
   if (pin.teamIdentifier !== undefined) {
@@ -263,7 +343,8 @@ export class ClaudeCodeWorkerAdapter implements WorkerAdapter {
 
   constructor(
     private readonly pin: ClaudeWorkerPin,
-    private readonly deps: ClaudeWorkerHostDeps = {},
+    /** H-1: `hotPath` is required — there is no adapter without the Router hot path. */
+    private readonly deps: ClaudeWorkerHostDeps & { readonly hotPath: ClaudeWorkerHotPath },
   ) {}
 
   async preflight(): Promise<WorkerRuntimeIdentity> {
@@ -274,7 +355,17 @@ export class ClaudeCodeWorkerAdapter implements WorkerAdapter {
     // Re-verified at EVERY Epoch start: a binary that moved since the last
     // Epoch is refused here, before any process exists.
     const runtime = await this.preflight()
-    const env = buildClaudeWorkerEnv(this.deps.parentEnv ?? process.env)
+    // H-1: no hot path, no key, no process — and no scratch dir. The key is read here,
+    // in the main process, for THIS spawn only; it lives in `env` and nowhere else.
+    const hotPath = checkHotPath(this.deps.hotPath)
+    let routerKey: string
+    try {
+      routerKey = await hotPath.readRouterKey()
+    } catch (cause) {
+      const code = typeof (cause as { code?: unknown } | undefined)?.code === 'string' ? (cause as { code: string }).code : 'UNTYPED'
+      throw new WorkerRefusal('WORKER_ROUTER_KEY_UNAVAILABLE', `The Router worker key could not be read (${/^[A-Z0-9_]{1,64}$/u.test(code) ? code : 'UNTYPED'}); the worker is not started.`)
+    }
+    const env = buildClaudeWorkerEnv(this.deps.parentEnv ?? process.env, { baseUrl: hotPath.baseUrl, connectionId: hotPath.connectionId, routerKey })
     const scratchDir = mkdtempSync(join(this.deps.scratchRoot ?? tmpdir(), 'aera-worker-epoch-'))
     return ClaudeEpochProcess.launch({
       pin: this.pin,
@@ -480,7 +571,8 @@ class ClaudeEpochProcess implements WorkerEpochHandle {
       if (typeof event.session_id === 'string') this.providerSessionId = event.session_id
       if (typeof event.model === 'string') {
         this.modelReported = event.model
-        this.spec.onEvent?.({ kind: 'RUNTIME_READY', model: event.model, cliVersion: this.pin.version })
+        // H-1 (CD-4 / m-13): the native session id is the CLI's x-claude-code-session-id, i.e. the Gateway Session hint.
+        this.spec.onEvent?.({ kind: 'RUNTIME_READY', model: event.model, cliVersion: this.pin.version, ...(this.providerSessionId === undefined ? {} : { providerSessionId: this.providerSessionId }) })
       }
       return
     }

@@ -52,6 +52,16 @@ export const WORKER_INSTALLATION_KEYCHAIN_PRODUCTION = Object.freeze({
   service: 'com.aera.code.claude-worker.installation',
   account: 'claude-code-worker-installation-v1',
 })
+/**
+ * H-1: the Router worker key for the governed CLI's hot path — the item the
+ * owner's `gw001-worker-key-owner.sh` (E-7B, CR-40 U6) places in the login
+ * Keychain. Read-only here; reachable only from the PRODUCTION scope. It is
+ * deliberately NOT a human-composer Gateway profile (plan review m-5).
+ */
+export const CLAUDE_WORKER_ROUTER_KEYCHAIN_PRODUCTION = Object.freeze({
+  service: 'com.aera.gateway.claude-worker.execution',
+  account: 'aera-code-claude-worker-key-v1',
+})
 /** The ONE public hand-over location for the production key (M-6). Public files only, 0644 in 0755. */
 export const WORKER_INSTALLATION_PUBLIC_HANDOVER_DIR_PRODUCTION = '/Users/Shared/aera-code-worker-public'
 export const WORKER_INSTALLATION_PUBLIC_JWK_FILENAME = 'installation.public.jwk.json'
@@ -62,6 +72,9 @@ export const AERA_CODE_CANONICAL_INSTALL_PATH = '/Users/Allyd/Applications/Aera 
 
 const SYSTEM_SECURITY = '/usr/bin/security'
 const DEV_SERVICE = 'com.aera.code.dev-scoped.claude-worker-key'
+const DEV_ROUTER_KEY_SERVICE = 'com.aera.code.dev-scoped.claude-worker-router-key'
+/** A header-safe Router key: printable ASCII, no whitespace or line break. */
+const ROUTER_KEY_VALUE = /^[\x21-\x7e]{16,512}$/u
 const DEV_HANDOVER_SUBDIR = 'aera-worker-public-dev'
 const ITEM_NAME = /^[A-Za-z0-9._-]{1,128}$/u
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/u
@@ -476,4 +489,43 @@ export function createWorkerInstallationKeyCustody(
     },
   }
   return Object.freeze(custody)
+}
+
+/* ------------------------------------------------------ H-1 Router worker key */
+
+/**
+ * H-1: a value-returning reader of the Router worker key, called by the host
+ * at each governed CLI spawn (never at composition). It never writes
+ * `process.env` and never caches: the value goes from `security`'s stdout to
+ * the caller, which places it only in that child's env. The same scope rules
+ * as the installation key apply: PRODUCTION only for the installed bundle on
+ * its default profile (and never under a test environment, never through a
+ * substituted `security`); every other launch reads a profile-scoped DEV item
+ * (so a dev launch can never read the owner's production key); no test ever
+ * runs the system `security`. Errors carry a code only.
+ */
+export function createClaudeWorkerRouterKeyReader(
+  scope: InstallationKeyScope,
+  options: Pick<WorkerInstallationKeyCustodyOptions, 'securityPath' | 'timeoutMs' | 'environment'> = {},
+): () => Promise<string> {
+  const environment = options.environment ?? process.env
+  let refusal: string | undefined
+  if (scope.kind === 'UNAVAILABLE') refusal = scope.reason
+  else if (scope.kind === 'PRODUCTION' && isTestEnvironment(environment)) refusal = 'PRODUCTION_SCOPE_REFUSED_IN_TEST'
+  else if (scope.kind === 'PRODUCTION' && options.securityPath !== undefined && options.securityPath !== SYSTEM_SECURITY) refusal = 'PRODUCTION_SECURITY_PATH_FIXED'
+  else if (isTestEnvironment(environment) && isSystemSecurity(options.securityPath ?? SYSTEM_SECURITY)) refusal = 'SYSTEM_KEYCHAIN_REFUSED_IN_TEST'
+  const item: KeychainItemName | undefined = scope.kind === 'PRODUCTION'
+    ? CLAUDE_WORKER_ROUTER_KEYCHAIN_PRODUCTION
+    : scope.kind === 'DEV' ? { service: DEV_ROUTER_KEY_SERVICE, account: scope.keychain.account } : undefined
+  if (refusal === undefined && (item === undefined || !ITEM_NAME.test(item.service) || !ITEM_NAME.test(item.account))) refusal = 'KEYCHAIN_UNAVAILABLE'
+  const keychain = refusal === undefined
+    ? securityCliKeychainPort(scope.kind === 'PRODUCTION' ? SYSTEM_SECURITY : (options.securityPath ?? SYSTEM_SECURITY), options.timeoutMs ?? WORKER_INSTALLATION_KEYCHAIN_TIMEOUT_MS)
+    : undefined
+  return async () => {
+    if (refusal !== undefined || keychain === undefined || item === undefined) throw custodyError(refusal ?? 'KEYCHAIN_UNAVAILABLE')
+    const value = await keychain.read(item)
+    if (value === undefined) throw custodyError('ROUTER_KEY_NOT_PRESENT')
+    if (!ROUTER_KEY_VALUE.test(value)) throw custodyError('ROUTER_KEY_MALFORMED')
+    return value
+  }
 }

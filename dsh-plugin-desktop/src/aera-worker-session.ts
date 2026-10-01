@@ -80,6 +80,9 @@ export const workerPrincipalName = (workerType: string): string => `Aera Code Wo
 const EPOCH_STARTED = 'Worker Epoch started: '
 const EPOCH_TERMINAL = 'Worker Epoch terminal: '
 const EPOCH_CONTEXT = 'Worker Epoch context supplied: '
+/** H-1 (CD-4 / m-13): the native CLI session id = the Router's Gateway Session bootstrap hint. */
+const EPOCH_GATEWAY_SESSION = 'Worker Epoch Gateway Session: '
+const NATIVE_SESSION_ID = /^[A-Za-z0-9-]{1,64}$/u
 const WORKER_HANDOFF = 'Worker handoff: '
 const SESSION_ENVIRONMENT = 'Aera worker session environment: '
 const ORIENTATION_PAYLOAD_EXCERPT = 6 * 1024
@@ -549,6 +552,32 @@ export class AeraWorkerSessionManager {
 
     this.live.set(liveKey, { handle: undefined, state: 'STARTING', epochId })
     let handle: WorkerEpochHandle
+    /*
+     * H-1 (CD-4 / m-13): record each distinct native session id the CLI reports
+     * in `system/init` — the `x-claude-code-session-id` the Router bootstraps
+     * the governed Gateway Session from. CD-4 keeps one Gateway Session per
+     * window by running one desktop Epoch per window (a runbook rule); this
+     * record is the CQ-5 evidence of how many there were. An Epoch Aera cannot
+     * record is an Epoch that must not run.
+     */
+    const nativeSessions = new Set<string>()
+    let startedHandle: WorkerEpochHandle | undefined
+    const recordNativeSession = (nativeSessionId: string): void => {
+      if (nativeSessions.has(nativeSessionId) || !NATIVE_SESSION_ID.test(nativeSessionId)) return
+      nativeSessions.add(nativeSessionId)
+      try {
+        this.recordEvidence(session, workOrderId, {
+          idempotencyKey: `${epochId}:gateway-session:${nativeSessionId}`,
+          evidenceClass: 'OBSERVATIONAL_EVIDENCE',
+          subject: `${EPOCH_GATEWAY_SESSION}${epochId}`,
+          outcome: 'RECORDED',
+          body: JSON.stringify({ epochId, aeraSessionId: session.sessionId, nativeSessionId, sequence: nativeSessions.size }),
+          links: { codeWorkingLineIds: [codeWorkingLineId as never] },
+        })
+      } catch {
+        void startedHandle?.cancel('the Gateway Session hint could not be recorded')
+      }
+    }
     try {
       handle = await this.deps.adapter.startEpoch({
         epochId,
@@ -560,6 +589,7 @@ export class AeraWorkerSessionManager {
         onEvent: (event) => {
           const entry = this.live.get(liveKey)
           if (entry !== undefined && event.kind === 'RUNTIME_READY') entry.modelReported = event.model
+          if (event.kind === 'RUNTIME_READY' && event.providerSessionId !== undefined) recordNativeSession(event.providerSessionId)
           input.onEvent?.(event)
         },
       })
@@ -567,6 +597,7 @@ export class AeraWorkerSessionManager {
       this.live.delete(liveKey)
       throw error
     }
+    startedHandle = handle
     const liveEntry = { handle, state: 'RUNNING' as WorkerLiveState, epochId } as { handle: WorkerEpochHandle | undefined, state: WorkerLiveState, epochId: string, authClass?: string, modelReported?: string }
     this.live.set(liveKey, liveEntry)
     modelAttest?.setTurnPossible(true)
