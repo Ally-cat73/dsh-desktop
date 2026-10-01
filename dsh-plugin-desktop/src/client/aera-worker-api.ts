@@ -61,6 +61,8 @@ export interface WorkerStatusView {
   readonly authClass?: string
   readonly modelReported?: string
   readonly epochCount: number
+  /** D-0d2: CAS decides effects through the Router; no local grant is authority (CD-2). */
+  readonly authorityMode?: 'CAS'
   readonly currentEpoch?: WorkerEpochSummaryView
   readonly lastTerminal?: WorkerEpochSummaryView
   readonly authorityEnvelope: readonly { readonly decisionId: string, readonly grant: string }[]
@@ -201,6 +203,7 @@ export function parseWorkerStatus(value: unknown): WorkerStatusView {
   const liveState = optional(value.liveState, 'liveState')
   const authClass = optional(value.authClass, 'authClass')
   const modelReported = optional(value.modelReported, 'modelReported')
+  if (value.authorityMode !== undefined && value.authorityMode !== 'CAS') throw new Error('dsh-plugin-desktop: invalid authorityMode in worker status')
   const currentEpoch = epoch(value.currentEpoch)
   const lastTerminal = epoch(value.lastTerminal)
   return {
@@ -212,6 +215,7 @@ export function parseWorkerStatus(value: unknown): WorkerStatusView {
     ...(authClass === undefined ? {} : { authClass }),
     ...(modelReported === undefined ? {} : { modelReported }),
     epochCount: typeof value.epochCount === 'number' ? value.epochCount : 0,
+    ...(value.authorityMode === 'CAS' ? { authorityMode: 'CAS' as const } : {}),
     ...(currentEpoch === undefined ? {} : { currentEpoch }),
     ...(lastTerminal === undefined ? {} : { lastTerminal }),
     authorityEnvelope: envelope.map(row => {

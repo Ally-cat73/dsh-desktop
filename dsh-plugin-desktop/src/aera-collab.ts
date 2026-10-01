@@ -48,6 +48,7 @@ import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from './
 import { createWorkerInstallationKeyCustody, resolveInstallationKeyScope, type InstallationKeyScope } from './aera-worker-installation-key.ts'
 import { loadWorkerLocalEffectConfig } from './aera-worker-le-config.ts'
 import { createWorkerLocalEffectSession } from './aera-worker-le-session.ts'
+import { createGovernedEffectPlane } from './aera-worker-effect-broker.ts'
 import { AERA_CODE_PRODUCT } from './product-brand.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
@@ -297,16 +298,30 @@ export function apply(ctx: Context): void {
    * only) from the Profile's non-secret aera-claude-worker.json. Nothing is
    * begun here: only the owner's BEGIN_AGENT_EPOCH action does that.
    */
-  const localEffect = installationKeyScope.kind === 'UNAVAILABLE' || userDataDir === undefined
+  const localEffectConfig = userDataDir === undefined ? undefined : loadWorkerLocalEffectConfig(userDataDir)
+  const localEffect = installationKeyScope.kind === 'UNAVAILABLE' || userDataDir === undefined || localEffectConfig === undefined
     ? undefined
     : createWorkerLocalEffectSession({
-        config: loadWorkerLocalEffectConfig(userDataDir),
+        config: localEffectConfig,
         custody: installationKey,
         stateDir: userDataDir,
         handOverDir: installationKeyScope.handOverDir,
         log: line => { ctx.logger.info(line) },
       })
-  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), log: line => { ctx.logger.info(line) } })
+  /*
+   * D-0d2: the governed effect plane (AUTHORITY = CAS through the Router; the
+   * pinned effect catalog; the broker journal in app-data). Without it — and
+   * so without custody or a loaded config — the worker is UNAVAILABLE (M-3).
+   */
+  const effectPlane = localEffect === undefined || userDataDir === undefined || localEffectConfig?.status !== 'loaded'
+    ? undefined
+    : createGovernedEffectPlane({
+        config: localEffectConfig.config,
+        session: localEffect,
+        journalDir: join(userDataDir, 'aera-worker', 'broker-journal'),
+        log: line => { ctx.logger.info(line) },
+      })
+  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), ...(effectPlane === undefined ? {} : { effectPlane }), log: line => { ctx.logger.info(line) } })
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',

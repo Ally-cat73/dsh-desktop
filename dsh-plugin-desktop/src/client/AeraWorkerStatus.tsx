@@ -12,6 +12,10 @@
  * (one explicit click, OA-1) before the worker is configured. The Enrol
  * button exists only while NOT_ENROLLED; the main process refuses anyway if
  * an item exists.
+ *
+ * D-0d2 (CD-2): when the status says `authorityMode: 'CAS'` (the only mode
+ * the product composes), the card shows where authority lives and offers no
+ * grant or revoke control; the main process refuses those actions anyway.
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { AeraWorkerApi, WorkerStatusView } from './aera-worker-api.ts'
@@ -86,6 +90,7 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
         </div>
       )
 
+  const cas = status?.authorityMode === 'CAS'
   const le = status?.localEffect
   // U8: the model-invocation attest state; a refusal here is why no worker process or turn starts.
   const attest = status?.modelAttest
@@ -159,7 +164,9 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
                 ? null
                 : <p className="aera-worker-terminal">{status.lastTerminal.terminalReason}</p>}
               <h4>{t('workerAuthority')}</h4>
-              {status.authorityEnvelope.length === 0
+              {cas
+                ? <p data-authority="CAS">{t('workerAuthorityCas')}</p>
+                : status.authorityEnvelope.length === 0
                 ? <p>{t('workerNoAuthority')}</p>
                 : (
                     <ul className="aera-worker-authority">
@@ -191,6 +198,7 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
             {lines.map(line => <option key={line.codeWorkingLineId} value={line.codeWorkingLineId}>{line.label}</option>)}
           </select>
         </label>
+        {cas ? null : (
         <fieldset>
           <legend>{t('workerGrant')}</legend>
           {GRANTABLE_CLASSES.map(effectClass => (
@@ -207,6 +215,7 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
           ))}
           <button type="button" disabled={busy || lineId === '' || classes.length === 0} onClick={() => { act({ action: 'GRANT', codeWorkingLineId: lineId, classes }) }}>{t('workerGrant')}</button>
         </fieldset>
+        )}
         <label>
           {t('workerTask')}
           <textarea value={task} onChange={(event) => { setTask(event.target.value) }} rows={3} />

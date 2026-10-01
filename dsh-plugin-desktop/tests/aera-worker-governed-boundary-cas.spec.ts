@@ -7,12 +7,14 @@
  * D-0c credentials, decided by CAS at the (fake, TLS 1.3, generated-PKI)
  * Router, and their outcomes reported back through it. No local DecisionV1
  * grant is ever an authority path (owner addendum §11 / §24, CD-2), and no
- * worker can be composed without that plane (review M-3 / U8 N-6; D-0d2b).
+ * worker can be composed without that plane (review M-3 / U8 N-6).
  */
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { issueAeraPrincipalId } from '@aera/cis-contracts'
 import { SANDBOX_CONTRACT_VERSION, caFingerprintSha256, type SandboxPort } from '@aera/effect-broker'
@@ -24,6 +26,10 @@ import { LocalExecutionPolicyGate, createGovernedEffectPlane, type GovernedEffec
 import { AeraWorkerSessionManager } from '../src/aera-worker-session.ts'
 import { AERA_CLAUDE_WORKER_CONFIG_FILENAME, loadWorkerLocalEffectConfig, type WorkerLocalEffectConfig } from '../src/aera-worker-le-config.ts'
 import { createWorkerLocalEffectSession } from '../src/aera-worker-le-session.ts'
+import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from '../src/aera-worker-composition.ts'
+import { parseWorkerStatus } from '../src/client/aera-worker-api.ts'
+import { AeraWorkerStatus } from '../src/client/AeraWorkerStatus.tsx'
+import { en } from '../src/client/aera-collab-locales.ts'
 import { POISONED_PARENT_ENV, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld } from './aera-worker-fixtures.ts'
 import {
   CIS_ISSUER, EFFECT_ROUTES, RELAY, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv,
@@ -34,6 +40,7 @@ const PRINCIPAL = issueAeraPrincipalId()
 const SESSION = 'aera:session:w2-execution-d0d2'
 const CONNECTION = 'claude-worker-d0d2'
 const LIMITS = { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 15_000, epochTimeoutMs: 60_000, cancelGraceMs: 300 }
+const SRC = join(import.meta.dirname, '..', 'src')
 let pki: Pki
 let custody: TestCustody
 let router: FakeRouter
@@ -217,7 +224,7 @@ describe('D-0d2 governed intents: CAS decides through the Router; the effect bro
     const head = git(world.repoRoot, 'rev-parse', 'HEAD')
     const g = await governed(world)
     router.state.casOutcome = 'DENY'
-    const { result } = await run(world, g.plane, {
+    const { result, m } = await run(world, g.plane, {
       turns: [{ intents: [{ intentId: 'w1', kind: 'fs.write', path: 'x.txt', content: 'x' }] }, { status: 'DONE' }],
     }, m => { m.grantAuthority({ workOrderId: world.workOrderId, codeWorkingLineId: world.line.codeWorkingLineId, grants: [{ effectClass: 'fs.write' }] }) })
     expect(result.outcomes[0]).toMatchObject({ performed: false, stage: 'AUTHORITY', code: 'WITHHELD:AUTHORITY_DENY', combinedDecisionId: expect.stringMatching(/\S/u) })
@@ -225,6 +232,8 @@ describe('D-0d2 governed intents: CAS decides through the Router; the effect bro
     repoUnchanged(world, head)
     expect(router.state.attempts).toHaveLength(1)
     expect(router.state.outcomes).toHaveLength(0)
+    // The recorded local grant is not shown as authority either (CD-2).
+    expect(m.status(world.workOrderId)).toMatchObject({ authorityMode: 'CAS', authorityEnvelope: [] })
   }, 60_000)
 
   it('outside the delegated set (commit, shell) and an unmatched test command are refused typed, with no Router call; a catalog test runs in the sandbox', async () => {
@@ -362,5 +371,71 @@ describe('D-0d2 credentials (N-9) and config (F-1)', () => {
     expect(loaded.status).toBe('loaded')
     const config = (loaded as { config: WorkerLocalEffectConfig }).config
     expect(Object.keys(config.effectCatalog.catalog).sort()).toEqual(['aera.repo.patch', 'aera.repo.read', 'aera.test.run'])
+  })
+})
+
+describe('M-3 / N-6 / CD-2: no legacy direct-provider or local-grant worker can be composed (§24 bypass check)', () => {
+  async function legacyEnv(world: WorkerWorld) {
+    const { pin } = await makeFakeClaude({ turns: [{ text: 'never spawned' }] })
+    return {
+      AERA_COLLAB_STORE_DIR: world.storeDir,
+      AERA_COLLAB_PRINCIPAL_ID: world.owner,
+      AERA_COLLAB_DELEGATION_ID: world.delegationId,
+      AERA_CLAUDE_WORKER_BINARY: pin.binaryPath,
+      AERA_CLAUDE_WORKER_SHA256: pin.sha256,
+      AERA_CLAUDE_WORKER_VERSION: pin.version,
+      AERA_CLAUDE_WORKER_MODEL: pin.model,
+    }
+  }
+
+  it('pin + store + delegation without the governed session or plane is UNAVAILABLE (incl. custody unavailable); with both it is governed', async () => {
+    const world = makeWorkerWorld()
+    const env = await legacyEnv(world)
+    const g = await governed(world)
+    const custodyUnavailable = { view: () => ({ status: 'UNAVAILABLE' }) } as never
+    for (const options of [{}, { installationKey: custodyUnavailable }, { localEffect: g.session }, { effectPlane: g.plane }]) {
+      const runtime = composeAeraWorker(env, options)
+      expect(runtime.kind).toBe('UNAVAILABLE')
+      expect(await codeOf(performAeraWorkerAction(runtime, { action: 'START_EPOCH', workOrderId: world.workOrderId, codeWorkingLineId: world.line.codeWorkingLineId, task: 't' }, () => {}))).toBe('WORKER_UNAVAILABLE')
+    }
+    const runtime = composeAeraWorker(env, { localEffect: g.session, effectPlane: g.plane })
+    expect(runtime.kind).toBe('AVAILABLE')
+    expect(aeraWorkerStatus(runtime, world.workOrderId)).toMatchObject({ authorityMode: 'CAS' })
+    for (const request of [
+      { action: 'GRANT' as const, workOrderId: world.workOrderId, codeWorkingLineId: world.line.codeWorkingLineId, classes: ['fs.write' as const] },
+      { action: 'REVOKE' as const, workOrderId: world.workOrderId, decisionId: 'aera:decision:x' },
+    ]) {
+      expect(await codeOf(performAeraWorkerAction(runtime, request, () => {}))).toBe('AUTHORITY_IS_CAS')
+      expect(await codeOf(performAeraWorkerAction({ kind: 'UNAVAILABLE', reason: 'x' }, request, () => {}))).toBe('AUTHORITY_IS_CAS')
+    }
+    expect(new ParticipationStore(world.storeDir).listDecisions(world.workOrderId)).toHaveLength(0)
+    if (runtime.kind === 'AVAILABLE') runtime.modelAttest?.dispose()
+    expect(new ParticipationStore(world.storeDir).listTypedEvidence(world.workOrderId).filter(row => row.subject.startsWith('Worker Epoch'))).toHaveLength(0)
+  }, 60_000)
+
+  it('static: the product composes the manager only in composition, always with the plane, never with the local gate or grants', () => {
+    const composition = readFileSync(join(SRC, 'aera-worker-composition.ts'), 'utf8')
+    expect(composition).not.toMatch(/LocalExecutionPolicyGate|grantAuthority|revokeAuthority/u)
+    expect(composition).toMatch(/new AeraWorkerSessionManager\(\{[\s\S]*effectPlane[\s\S]*\}\)/u)
+    const constructing = readdirSync(SRC).filter(name => name.endsWith('.ts') && readFileSync(join(SRC, name), 'utf8').includes('new AeraWorkerSessionManager('))
+    expect(constructing).toEqual(['aera-worker-composition.ts'])
+    const host = readFileSync(join(SRC, 'aera-collab.ts'), 'utf8')
+    expect(host).toMatch(/createGovernedEffectPlane\(/u)
+    expect(host).toMatch(/const worker = composeAeraWorker\(.*\{ effectPlane \}/u)
+  })
+
+  it('CD-2: in CAS mode the card offers no grant or revoke, and says where authority lives', () => {
+    const status = parseWorkerStatus({
+      workOrderId: 'WO-1', provider: 'Claude Code', liveState: 'IDLE', epochCount: 0, authorityMode: 'CAS',
+      authorityEnvelope: [], recentEffects: [{ subject: 'Worker effect denied: fs.write (w1) at AUTHORITY: WITHHELD:AUTHORITY_DENY', outcome: 'FAIL', evidenceClass: 'DECISION_EVIDENCE', recordedAt: 'x' }],
+    })
+    const t = (key: keyof typeof en): string => en[key]
+    const markup = renderToStaticMarkup(createElement(AeraWorkerStatus, { api: { status: async () => status, action: async () => ({}) }, workOrderId: 'WO-1', lines: [{ codeWorkingLineId: 'L', label: 'Line L' }], t, initialStatus: status }))
+    expect(markup).toContain('data-authority="CAS"')
+    expect(markup).toContain('local grants are not an authority path')
+    expect(markup).toContain('WITHHELD:AUTHORITY_DENY')
+    expect(markup).not.toContain(`>${en.workerGrant}<`)
+    expect(markup).not.toContain(`>${en.workerRevoke}<`)
+    expect(() => parseWorkerStatus({ workOrderId: 'WO', authorityMode: 'LOCAL' })).toThrow()
   })
 })

@@ -12,22 +12,29 @@
  *   AERA_GATEWAY_AGC_ENVIRONMENT_ID  the bound environment (AERA_DEV | CANARY)
  *   AERA_CLAUDE_WORKER_{BINARY,SHA256,VERSION,MODEL}  the pinned local CLI
  *
- * V1 binds the truthfully-labelled local execution policy as the Sentinel
- * seam (see `aera-worker-effect-broker.ts`); no remote endpoint is contacted.
+ * D-0d2 (review M-3, U8 N-6, CD-2): the ONLY worker this composes is the
+ * governed one. It is AVAILABLE only with the D-0c local-effect session, the
+ * U8 attestor and the governed effect plane (AUTHORITY = CAS through the
+ * Router; `createGovernedEffectPlane`). Without any of them — including when
+ * installation-key custody is unavailable, or `aera-claude-worker.json` (with
+ * its pinned effect catalog) is absent or broken — it is UNAVAILABLE. There is
+ * no legacy direct, local-grant or local-policy worker: no local gate is bound
+ * (`NO_LOCAL_AUTHORITY_GATE`), and the GRANT / REVOKE actions refuse
+ * (`AUTHORITY_IS_CAS`; the owner revokes with CAS `act revoke`).
  *
  * U8 D-3: when the D-0c local-effect session is composed (the host builds it
  * whenever installation-key custody is available), the worker is governed:
  * it is AVAILABLE only with the model-invocation attestor, which needs the
  * session's governed Connection id (AERA_CLAUDE_WORKER_CONNECTION_ID) to pass
  * the Gateway Connection grammar. Otherwise it is UNAVAILABLE — never an
- * ungated fallback. (Retiring the composition without D-0c is M-3, H-1/D-0d.)
+ * ungated fallback. (D-0d2 retired the composition without D-0c: M-3.)
  */
 
 import { ParticipationStore } from '@aera/participation-runtime'
 import { isAeraPrincipalId } from '@aera/cis-contracts'
 import { resolveAgcGovernedGatewayRuntime } from './aera-gateway-agc-binding.ts'
 import { ClaudeCodeWorkerAdapter, resolveClaudeWorkerPin } from './aera-claude-worker-host.ts'
-import { LocalExecutionPolicyGate } from './aera-worker-effect-broker.ts'
+import { NO_LOCAL_AUTHORITY_GATE, type GovernedEffectPlane } from './aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from './aera-worker-session.ts'
 import { createModelInvocationAttestor, type ModelInvocationAttestor } from './aera-worker-model-attest.ts'
 import { isGatewayConnectionId } from '@aera/local-effect-authority'
@@ -49,6 +56,8 @@ export type AeraWorkerRuntime =
 export interface AeraWorkerCompositionOptions {
   readonly installationKey?: WorkerInstallationKeyCustody
   readonly localEffect?: WorkerLocalEffectSession
+  /** D-0d2: the governed effect plane (built by the host from the same loaded config and session). */
+  readonly effectPlane?: GovernedEffectPlane
   /** Ids and codes only (the attestor never logs a body, nonce or token). */
   readonly log?: (line: string) => void
 }
@@ -57,7 +66,7 @@ export function composeAeraWorker(
   env: Readonly<Record<string, string | undefined>>,
   options: AeraWorkerCompositionOptions = {},
 ): AeraWorkerRuntime {
-  const runtime = composeWorkerRuntime(env, options.localEffect, options.log)
+  const runtime = composeWorkerRuntime(env, options.localEffect, options.effectPlane, options.log)
   return {
     ...runtime,
     ...(options.installationKey === undefined ? {} : { installationKey: options.installationKey }),
@@ -68,6 +77,7 @@ export function composeAeraWorker(
 function composeWorkerRuntime(
   env: Readonly<Record<string, string | undefined>>,
   localEffect: WorkerLocalEffectSession | undefined,
+  effectPlane: GovernedEffectPlane | undefined,
   log: ((line: string) => void) | undefined,
 ): AeraWorkerRuntime {
   const pick = (key: string): string | undefined => {
@@ -88,24 +98,28 @@ function composeWorkerRuntime(
   }
   const pin = resolveClaudeWorkerPin(env)
   if (pin.kind === 'UNAVAILABLE') return { kind: 'UNAVAILABLE', reason: pin.reason }
-  let modelAttest: ModelInvocationAttestor | undefined
-  if (localEffect !== undefined) {
-    if (!isGatewayConnectionId(localEffect.connectionId)) {
-      return { kind: 'UNAVAILABLE', reason: 'The governed Connection id (AERA_CLAUDE_WORKER_CONNECTION_ID in aera-claude-worker.json) is missing or is not a Gateway Connection id; the worker never runs without the model-invocation attestation.' }
-    }
-    modelAttest = createModelInvocationAttestor({ session: localEffect, ...(log === undefined ? {} : { log }) })
+  if (localEffect === undefined) {
+    return { kind: 'UNAVAILABLE', reason: 'The governed local-effect session is not composed (installation-key custody or aera-claude-worker.json is unavailable); there is no ungated worker.' }
   }
+  if (!isGatewayConnectionId(localEffect.connectionId)) {
+    return { kind: 'UNAVAILABLE', reason: 'The governed Connection id (AERA_CLAUDE_WORKER_CONNECTION_ID in aera-claude-worker.json) is missing or is not a Gateway Connection id; the worker never runs without the model-invocation attestation.' }
+  }
+  if (effectPlane === undefined) {
+    return { kind: 'UNAVAILABLE', reason: 'The governed effect plane (CAS through the Router, with the pinned effect catalog in aera-claude-worker.json) is not composed; there is no local-authority worker.' }
+  }
+  const modelAttest = createModelInvocationAttestor({ session: localEffect, ...(log === undefined ? {} : { log }) })
   return {
     kind: 'AVAILABLE',
     manager: new AeraWorkerSessionManager({
       store: new ParticipationStore(storeDir),
       adapter: new ClaudeCodeWorkerAdapter(pin.pin, { parentEnv: env }),
-      gate: new LocalExecutionPolicyGate(),
+      gate: NO_LOCAL_AUTHORITY_GATE,
       config: { humanPrincipalId: principalId, delegationId, environmentId },
       broker: { parentEnv: env },
-      ...(modelAttest === undefined ? {} : { modelAttest }),
+      modelAttest,
+      effectPlane,
     }),
-    ...(modelAttest === undefined ? {} : { modelAttest }),
+    modelAttest,
   }
 }
 
@@ -149,6 +163,10 @@ export async function performAeraWorkerAction(
     }
     return await runtime.localEffect.beginEpoch()
   }
+  if (request.action === 'GRANT' || request.action === 'REVOKE') {
+    // CD-2: local grants are not an authority path; authority is CAS (the owner revokes with `act revoke`).
+    throw Object.assign(new Error('Authority is CAS: local grants are not an authority path. Use the owner\'s CAS `act revoke` to revoke.'), { code: 'AUTHORITY_IS_CAS' })
+  }
   if (runtime.kind === 'UNAVAILABLE') throw Object.assign(new Error(runtime.reason), { code: 'WORKER_UNAVAILABLE' })
   const { manager } = runtime
   switch (request.action) {
@@ -176,18 +194,6 @@ export async function performAeraWorkerAction(
     case 'CANCEL': {
       const terminal = await manager.cancel(request.workOrderId)
       return { cancelled: terminal !== undefined, ...(terminal === undefined ? {} : { status: terminal.status }) }
-    }
-    case 'GRANT': {
-      const decision = manager.grantAuthority({
-        workOrderId: request.workOrderId,
-        codeWorkingLineId: request.codeWorkingLineId,
-        grants: request.classes.map(effectClass => ({ effectClass })),
-      })
-      return { decisionId: decision.decisionId }
-    }
-    case 'REVOKE': {
-      const decision = manager.revokeAuthority({ workOrderId: request.workOrderId, decisionId: request.decisionId })
-      return { decisionId: decision.decisionId, status: decision.status }
     }
   }
 }

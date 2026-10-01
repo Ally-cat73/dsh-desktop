@@ -602,7 +602,9 @@ describe('U8 D-3: composed only with D-0c and a grammar-valid governed Connectio
     const { world, env: e } = await env()
     const port = fakePort()
     port.replies.push(new WorkerLocalEffectError('NO_EPOCH'))
-    const runtime = composeAeraWorker(e, { localEffect: le(port) as never })
+    // D-0d2 (M-3): a worker composes only with the governed effect plane too; the attest gate refuses before it is opened.
+    const effectPlane = { openEpoch: () => Promise.reject(new Error('never opened')) }
+    const runtime = composeAeraWorker(e, { localEffect: le(port) as never, effectPlane })
     expect(runtime.kind).toBe('AVAILABLE')
     const before = parseWorkerStatus(aeraWorkerStatus(runtime, world.workOrderId))
     expect(before.modelAttest).toMatchObject({ state: 'NOT_ATTESTED', heartbeat: 'DORMANT' })
