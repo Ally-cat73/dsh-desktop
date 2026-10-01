@@ -151,11 +151,18 @@
     "prepack": "yarn run check"
   },
   "dependencies": {
+    "@aera/authority-client": "file:./vendor/aera/aera-authority-client-0.1.0.tgz",
+    "@aera/authority-contracts": "file:./vendor/aera/aera-authority-contracts-0.1.0.tgz",
     "@aera/cis-contracts": "file:./vendor/aera/aera-cis-contracts-0.1.0.tgz",
+    "@aera/cis-issuer": "file:./vendor/aera/aera-cis-issuer-0.1.0.tgz",
+    "@aera/effect-broker": "file:./vendor/aera/aera-effect-broker-0.1.0.tgz",
     "@aera/evidentiary-work-graph": "file:./vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz",
     "@aera/evidentiary-work-graph-contracts": "file:./vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz",
+    "@aera/local-effect-admission": "file:./vendor/aera/aera-local-effect-admission-0.1.0.tgz",
+    "@aera/local-effect-authority": "file:./vendor/aera/aera-local-effect-authority-0.1.0.tgz",
     "@aera/participation-contracts": "file:./vendor/aera/aera-participation-contracts-0.1.0.tgz",
     "@aera/participation-runtime": "file:./vendor/aera/aera-participation-runtime-0.1.0.tgz",
+    "@aera/sentinel-contracts": "file:./vendor/aera/aera-sentinel-contracts-0.1.0.tgz",
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/cordis-plugin-group": "1.0.1",
     "@deepseek-ai/cordis-plugin-include": "1.0.6",

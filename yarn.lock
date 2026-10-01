@@ -5,10 +5,49 @@ __metadata:
   version: 10
   cacheKey: 10c0
 
+"@aera/authority-client@file:./dsh-plugin-desktop/vendor/aera/aera-authority-client-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/authority-client@file:./dsh-plugin-desktop/vendor/aera/aera-authority-client-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-authority-client-0.1.0.tgz::hash=e17151&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/authority-contracts": "npm:0.1.0"
+    jose: "npm:6.2.4"
+  checksum: 10c0/ba36d2542a19174b145334c17c03b17432bf120d813abc99bafcfaecee431faa5922dcd5bc752d830dc534340ed9969ab8a218cf11d227ce61bba8126125b643
+  languageName: node
+  linkType: hard
+
+"@aera/authority-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-authority-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/authority-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-authority-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-authority-contracts-0.1.0.tgz::hash=9b91d3&locator=deepseek-harness-desktop%40workspace%3A."
+  peerDependencies:
+    "@aera/cis-contracts": "*"
+  checksum: 10c0/f532c1db366c7acda91bd4a9a5fd742dec5a8926e2049ca93fb2a097c8fd0b9b960888abbab0675b3da9113f98a8e7f1c7947e0d86dea51430c410f02e702aa9
+  languageName: node
+  linkType: hard
+
 "@aera/cis-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/cis-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz::hash=f00bdf&locator=deepseek-harness-desktop%40workspace%3A."
-  checksum: 10c0/03f196e2bd455cf473359cf456ca6b24b18d854a9e23d7a2bfc4da08194ad2f36203adad2b8cf1bc5a7918ba9f614dfbbf8335c7b64d88d4fbf3fa1261a96122
+  resolution: "@aera/cis-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-cis-contracts-0.1.0.tgz::hash=3dad78&locator=deepseek-harness-desktop%40workspace%3A."
+  checksum: 10c0/59b89c8903cd1f43d967d586dd6b1607a2c9bf5d255b286a3cd6b81428e9b192824334e2387eabf5a992252c21e4a409ddfb08073245bedee57aaf1e803ea108
+  languageName: node
+  linkType: hard
+
+"@aera/cis-issuer@file:./dsh-plugin-desktop/vendor/aera/aera-cis-issuer-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/cis-issuer@file:./dsh-plugin-desktop/vendor/aera/aera-cis-issuer-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-cis-issuer-0.1.0.tgz::hash=6f1173&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/cis-contracts": "npm:0.1.0"
+    jose: "npm:6.2.4"
+  checksum: 10c0/008b328f427edf0dfa97fdaddf4534ce36856967f7b00fd51499ca8191aebcd281d6eb348a8e4b03b32750e57a86d98c7377731a9bdf609b3be80eff59e3b4e8
+  languageName: node
+  linkType: hard
+
+"@aera/effect-broker@file:./dsh-plugin-desktop/vendor/aera/aera-effect-broker-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/effect-broker@file:./dsh-plugin-desktop/vendor/aera/aera-effect-broker-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-effect-broker-0.1.0.tgz::hash=6b6aeb&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/local-effect-authority": "npm:0.1.0"
+    "@aera/sentinel-contracts": "npm:0.1.0"
+  checksum: 10c0/0b0c7eca7268ae2a5bbe33c3c75c9651e7220c35fb2fae1393df5e94cc4af44a9646ff676b0fbc95840fbe42795976a3526cd026695a569c0678516f34646d4a
   languageName: node
   linkType: hard
 
@@ -37,6 +76,29 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@aera/local-effect-admission@file:./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/local-effect-admission@file:./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz::hash=4c5030&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/authority-client": "npm:0.1.0"
+    "@aera/authority-contracts": "npm:0.1.0"
+    "@aera/cis-contracts": "npm:0.1.0"
+    "@aera/cis-issuer": "npm:0.1.0"
+    "@aera/local-effect-authority": "npm:0.1.0"
+  checksum: 10c0/bd3a234061e08770eb55faefe8637ee6500d41f051111287eab8860b2c1945ee9689a6ea9e4b526ef1feab908662e349d949c3db7d53654aff663e20d31053bb
+  languageName: node
+  linkType: hard
+
+"@aera/local-effect-authority@file:./dsh-plugin-desktop/vendor/aera/aera-local-effect-authority-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/local-effect-authority@file:./dsh-plugin-desktop/vendor/aera/aera-local-effect-authority-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-local-effect-authority-0.1.0.tgz::hash=c00694&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@aera/authority-contracts": "npm:0.1.0"
+    "@aera/cis-contracts": "npm:0.1.0"
+  checksum: 10c0/ac226b1d2bdeeb3f4f934de974b97ba75c0e2fbbe0c8fde6df337ef348ab98f4efda9c3b2dad173d7be363ebd10eef88f3a26e54a07414ba904f6d2129fb104b
+  languageName: node
+  linkType: hard
+
 "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
   resolution: "@aera/participation-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-participation-contracts-0.1.0.tgz::hash=3e8671&locator=deepseek-harness-desktop%40workspace%3A."
@@ -57,6 +119,13 @@ __metadata:
     "@aera/harness": "npm:0.1.0"
     "@aera/participation-contracts": "npm:0.1.0"
   checksum: 10c0/3f733bf3cc08b20803d6bc6319d1e41ab115014f4a386eb7c82ede3e9ee03eb52f3760ae29ae3576e1c71572ad42f09bc2ac06b283f3d49614926962cf2179cb
+  languageName: node
+  linkType: hard
+
+"@aera/sentinel-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-sentinel-contracts-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.1.0
+  resolution: "@aera/sentinel-contracts@file:./dsh-plugin-desktop/vendor/aera/aera-sentinel-contracts-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-sentinel-contracts-0.1.0.tgz::hash=85d8b4&locator=deepseek-harness-desktop%40workspace%3A."
+  checksum: 10c0/384fabb6cfb6cc956f5f72b17af2162025bc902133a41d03ccf88f136cbeb856b6bd8535ed4469d1f5ee1c10e8b4d9b2c1b530dba9797033c97224e398370d3e
   languageName: node
   linkType: hard
 
@@ -8668,11 +8737,18 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "dsh-plugin-desktop@workspace:dsh-plugin-desktop"
   dependencies:
+    "@aera/authority-client": "file:./vendor/aera/aera-authority-client-0.1.0.tgz"
+    "@aera/authority-contracts": "file:./vendor/aera/aera-authority-contracts-0.1.0.tgz"
     "@aera/cis-contracts": "file:./vendor/aera/aera-cis-contracts-0.1.0.tgz"
+    "@aera/cis-issuer": "file:./vendor/aera/aera-cis-issuer-0.1.0.tgz"
+    "@aera/effect-broker": "file:./vendor/aera/aera-effect-broker-0.1.0.tgz"
     "@aera/evidentiary-work-graph": "file:./vendor/aera/aera-evidentiary-work-graph-0.1.0.tgz"
     "@aera/evidentiary-work-graph-contracts": "file:./vendor/aera/aera-evidentiary-work-graph-contracts-0.1.0.tgz"
+    "@aera/local-effect-admission": "file:./vendor/aera/aera-local-effect-admission-0.1.0.tgz"
+    "@aera/local-effect-authority": "file:./vendor/aera/aera-local-effect-authority-0.1.0.tgz"
     "@aera/participation-contracts": "file:./vendor/aera/aera-participation-contracts-0.1.0.tgz"
     "@aera/participation-runtime": "file:./vendor/aera/aera-participation-runtime-0.1.0.tgz"
+    "@aera/sentinel-contracts": "file:./vendor/aera/aera-sentinel-contracts-0.1.0.tgz"
     "@base-ui/react": "npm:^1.7.0"
     "@deepseek-ai/cordis": "npm:4.0.1"
     "@deepseek-ai/cordis-plugin-group": "npm:1.0.1"
@@ -10245,6 +10321,13 @@ __metadata:
   bin:
     jiti: lib/jiti-cli.mjs
   checksum: 10c0/1b1e2310a490dce1aeea3da5f5dfe18273516c20ce48be2e98eb8ea452d5f3dcc8fd0cfd6d28b4052a24c5dbab6e3089b2d7e79f0bce7915b10d750929563c42
+  languageName: node
+  linkType: hard
+
+"jose@npm:6.2.4":
+  version: 6.2.4
+  resolution: "jose@npm:6.2.4"
+  checksum: 10c0/aaba866d71a8cd5bfd7c2c228367318df99f36318d7c6f1e7bca835c3bdd74ea3fe38783277f7bf7c9703ae24338bb3642a6ccdef6aa54c006d29a9711e6f782
   languageName: node
   linkType: hard
 

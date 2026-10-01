@@ -1,0 +1,116 @@
+{
+  "schema": "aera.desktop.vendor-manifest.v1",
+  "workOrder": "WO-AERA-CODE-CLAUDE-CODE-GOVERNED-WORKER-INTEGRATION-001 / D-0a",
+  "sourceRepository": "aera-stack",
+  "sourceBranch": "sentinel/cr40-cas-seam",
+  "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+  "build": "git archive of sourceCommit; pnpm install --frozen-lockfile --offline --ignore-scripts (filtered); pnpm --filter <pkg> run build; pnpm pack. authority-contracts and sentinel-contracts: canonical LICENSE added (8686d2654c method; dist byte-identical).",
+  "distTreeDigestAlgorithm": "sha256 over sorted lines '<sha256(file)>  <path relative to package/dist>\\n'",
+  "note": "Entries with sourceCommit null were vendored before D-0a and are not re-vendored by it; only their tarball sha256 is pinned here.",
+  "tarballs": [
+    {
+      "package": "@aera/authority-client",
+      "tarball": "aera-authority-client-0.1.0.tgz",
+      "sha256": "c42b9d7d9eae62e5ace5a6d811784a0bd499a1729e94ca411c000a398667a956",
+      "distTreeDigest": "bd7aae525947edb8a037b7dc75804266f58cc30396730ce1705c8635558b92e0",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/authority-contracts",
+      "tarball": "aera-authority-contracts-0.1.0.tgz",
+      "sha256": "38b1c5c65cb007f9f59cf04421c00f56e1307115f7ae8e69c6c24607dc4efe49",
+      "distTreeDigest": "ca5c4a336f4d78a8871e6003f9dc6c59bc8fdfe8a028f3a07e3d4228b53e972e",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/cis-contracts",
+      "tarball": "aera-cis-contracts-0.1.0.tgz",
+      "sha256": "d9e65f89a13f91450d42754431b1322f0b149fed588a89e2028ac519bf09dab3",
+      "distTreeDigest": "9a27155579f419a1213bee2b53824cbad4637450540acc51f6fbe298a2f47e87",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/cis-issuer",
+      "tarball": "aera-cis-issuer-0.1.0.tgz",
+      "sha256": "2e71015d71ba66c958f10dff7d3bfddab8681298de118afd633b2d397199a02f",
+      "distTreeDigest": "d70ae65ce57f9cbcb83575488290eca25e63af7e36e0652a8c8666499c683dc1",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/effect-broker",
+      "tarball": "aera-effect-broker-0.1.0.tgz",
+      "sha256": "1327a810ea7fc956beff7961110db831edf70fb59d34192cf689bd0162d90625",
+      "distTreeDigest": "22b755edce92c96c175b2f8bdd4954018f6fe15661a67429ba3c19c37bb99de3",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/evidentiary-work-graph",
+      "tarball": "aera-evidentiary-work-graph-0.1.0.tgz",
+      "sha256": "1760b5710b03240cdb7766c49f55b749c5a1e3d4f8de40b7be8656a4ca9902a3",
+      "distTreeDigest": null,
+      "sourceCommit": null,
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/evidentiary-work-graph-contracts",
+      "tarball": "aera-evidentiary-work-graph-contracts-0.1.0.tgz",
+      "sha256": "45d2adcea07c226e3c160825c8b6287c53a7c8787d98ff41b6cb79e26e58be5a",
+      "distTreeDigest": null,
+      "sourceCommit": null,
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/harness",
+      "tarball": "aera-harness-0.1.0.tgz",
+      "sha256": "17b06a8a5953b5702f3a5ae8d1b65bad27a36c6457194fb6ade1a9fa48f165de",
+      "distTreeDigest": null,
+      "sourceCommit": null,
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/local-effect-admission",
+      "tarball": "aera-local-effect-admission-0.1.0.tgz",
+      "sha256": "f52a6f56addac2e355bece8a5a0a8e81269914440ab28b5abe99904503f2cc2b",
+      "distTreeDigest": "f3b2a22efc9e48961fe53d8d9ad6ba7befff2adaef01efebc27e1ada55b52274",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/local-effect-authority",
+      "tarball": "aera-local-effect-authority-0.1.0.tgz",
+      "sha256": "3b8a4f49874cb09b6951411ff8147c5eb897a9b85b77ddd0b0c259309031b335",
+      "distTreeDigest": "d1ed44e0cf6fb7465f562c48bf8edcf12069979f0eb040c30f174e77d5bd1a0c",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/participation-contracts",
+      "tarball": "aera-participation-contracts-0.1.0.tgz",
+      "sha256": "e00ae2acb509dbf966b4342b9e0ef54ebccafc484c660551af6d2a1f05fa0496",
+      "distTreeDigest": null,
+      "sourceCommit": null,
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/participation-runtime",
+      "tarball": "aera-participation-runtime-0.1.0.tgz",
+      "sha256": "2ea9006e7e2ab1886d55e628651e6ad56cb332c859a7ef31883d6b4a6cd59195",
+      "distTreeDigest": null,
+      "sourceCommit": null,
+      "licenseMember": true
+    },
+    {
+      "package": "@aera/sentinel-contracts",
+      "tarball": "aera-sentinel-contracts-0.1.0.tgz",
+      "sha256": "5d86c4a1cc2bc2744da6cc8bbc6a6b2f6f6627b2e90160de890112876f26ae2f",
+      "distTreeDigest": "a79ff1ff0017daeeb5008c907c6224b20a8e87b79e3cfebe9d7437021b033383",
+      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
+      "licenseMember": true
+    }
+  ]
+}
