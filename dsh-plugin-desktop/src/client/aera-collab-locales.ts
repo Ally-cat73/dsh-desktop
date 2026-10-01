@@ -148,6 +148,15 @@ export const zh = {
   workerTask: '本周期任务',
   workerStart: '启动工作者周期',
   workerCancel: '取消',
+  workerKeyTitle: '工作者安装密钥',
+  workerKeyStatus: '状态',
+  workerKeyScope: '范围',
+  workerKeyId: '安装密钥 ID',
+  workerKeyX: '公钥 x',
+  workerKeySha: '公钥 JWK sha256',
+  workerKeyHandOver: '公开交接文件',
+  workerKeyEnrol: '注册工作者密钥',
+  workerKeyEnrolHint: '在 Aera Code 内生成 Ed25519 密钥并仅存入登录钥匙串；只有公钥会离开本应用。已存在的密钥绝不会被覆盖。',
 }
 
 export type AeraCollabLocaleKey = keyof typeof zh
@@ -300,4 +309,13 @@ export const en: Record<AeraCollabLocaleKey, string> = {
   workerTask: 'Task for this Epoch',
   workerStart: 'Start Worker Epoch',
   workerCancel: 'Cancel',
+  workerKeyTitle: 'Worker installation key',
+  workerKeyStatus: 'Status',
+  workerKeyScope: 'Scope',
+  workerKeyId: 'Installation key id',
+  workerKeyX: 'Public key x',
+  workerKeySha: 'Public JWK sha256',
+  workerKeyHandOver: 'Public hand-over file',
+  workerKeyEnrol: 'Enrol worker key',
+  workerKeyEnrolHint: 'Generates an Ed25519 key inside Aera Code and stores it only in your login Keychain; only the public key leaves the app. An existing key is never overwritten.',
 }

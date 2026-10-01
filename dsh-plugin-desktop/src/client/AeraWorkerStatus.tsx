@@ -6,6 +6,12 @@
  * current Worker Epoch, the owner's authority envelope and the governed state
  * of recent effects. Owner actions: start/cancel an Epoch, grant/revoke
  * effect classes on a Working Line. No shell redesign, no provider picker.
+ *
+ * D-0b: the Worker installation key (W3.1). Its public status is shown in
+ * both the available and the unavailable card, because the owner enrols it
+ * (one explicit click, OA-1) before the worker is configured. The Enrol
+ * button exists only while NOT_ENROLLED; the main process refuses anyway if
+ * an item exists.
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { AeraWorkerApi, WorkerStatusView } from './aera-worker-api.ts'
@@ -55,11 +61,38 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
       .finally(() => { setBusy(false); void read() })
   }
 
+  const key = status?.installationKey
+  const keyCard = key === undefined
+    ? null
+    : (
+        <div className="aera-worker-key">
+          <h4>{t('workerKeyTitle')}</h4>
+          <dl>
+            <dt>{t('workerKeyStatus')}</dt><dd data-state={key.status}>{key.reason === undefined ? key.status : `${key.status} (${key.reason})`}</dd>
+            <dt>{t('workerKeyScope')}</dt><dd>{key.scope}</dd>
+            {key.installationKeyId === undefined ? null : <><dt>{t('workerKeyId')}</dt><dd><code>{key.installationKeyId}</code></dd></>}
+            {key.x === undefined ? null : <><dt>{t('workerKeyX')}</dt><dd><code>{key.x}</code></dd></>}
+            {key.publicJwkSha256 === undefined ? null : <><dt>{t('workerKeySha')}</dt><dd><code>{key.publicJwkSha256}</code></dd></>}
+            {key.publicHandOverPath === undefined ? null : <><dt>{t('workerKeyHandOver')}</dt><dd><code>{key.publicHandOverPath}</code></dd></>}
+          </dl>
+          {key.status === 'NOT_ENROLLED'
+            ? (
+                <>
+                  <p className="aera-worker-key-hint">{t('workerKeyEnrolHint')}</p>
+                  <button type="button" disabled={busy} onClick={() => { act({ action: 'ENROL_WORKER_KEY' }) }}>{t('workerKeyEnrol')}</button>
+                </>
+              )
+            : null}
+        </div>
+      )
+
   if (status?.unavailableReason !== undefined) {
     return (
       <section className="aera-worker" aria-label={t('workerTitle')}>
         <h3>{t('workerTitle')}</h3>
         <p className="aera-worker-unavailable">{status.unavailableReason}</p>
+        {keyCard}
+        {error === undefined ? null : <p className="aera-rail-error">{error}</p>}
       </section>
     )
   }
@@ -85,6 +118,7 @@ export function AeraWorkerStatus({ api, workOrderId, lines, t, initialStatus }: 
                     : `#${String(status.currentEpoch.sequence)} ${status.currentEpoch.epochId}`}
                 </dd>
               </dl>
+              {keyCard}
               {status.lastTerminal?.terminalReason === undefined || status.currentEpoch !== undefined
                 ? null
                 : <p className="aera-worker-terminal">{status.lastTerminal.terminalReason}</p>}

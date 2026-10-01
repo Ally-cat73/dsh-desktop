@@ -23,12 +23,30 @@ import { ClaudeCodeWorkerAdapter, resolveClaudeWorkerPin } from './aera-claude-w
 import { LocalExecutionPolicyGate } from './aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from './aera-worker-session.ts'
 import type { AeraWorkerActionRequest } from './aera-worker-route.ts'
+import type { WorkerInstallationKeyCustody } from './aera-worker-installation-key.ts'
 
+/**
+ * The installation-key custody (D-0b) is carried on BOTH runtime kinds: the
+ * owner enrols the key (OA-1) before the worker is configured, while the
+ * worker itself is still honestly UNAVAILABLE.
+ */
 export type AeraWorkerRuntime =
-  | { readonly kind: 'AVAILABLE', readonly manager: AeraWorkerSessionManager }
-  | { readonly kind: 'UNAVAILABLE', readonly reason: string }
+  | { readonly kind: 'AVAILABLE', readonly manager: AeraWorkerSessionManager, readonly installationKey?: WorkerInstallationKeyCustody }
+  | { readonly kind: 'UNAVAILABLE', readonly reason: string, readonly installationKey?: WorkerInstallationKeyCustody }
 
-export function composeAeraWorker(env: Readonly<Record<string, string | undefined>>): AeraWorkerRuntime {
+export interface AeraWorkerCompositionOptions {
+  readonly installationKey?: WorkerInstallationKeyCustody
+}
+
+export function composeAeraWorker(
+  env: Readonly<Record<string, string | undefined>>,
+  options: AeraWorkerCompositionOptions = {},
+): AeraWorkerRuntime {
+  const runtime = composeWorkerRuntime(env)
+  return options.installationKey === undefined ? runtime : { ...runtime, installationKey: options.installationKey }
+}
+
+function composeWorkerRuntime(env: Readonly<Record<string, string | undefined>>): AeraWorkerRuntime {
   const pick = (key: string): string | undefined => {
     const value = env[key]?.trim()
     return value === undefined || value === '' ? undefined : value
@@ -61,8 +79,10 @@ export function composeAeraWorker(env: Readonly<Record<string, string | undefine
 
 /** Status for the renderer, or an honest unavailable reason. */
 export function aeraWorkerStatus(runtime: AeraWorkerRuntime, workOrderId: string): unknown {
-  if (runtime.kind === 'UNAVAILABLE') return { workOrderId, unavailableReason: runtime.reason }
-  return runtime.manager.status(workOrderId)
+  // Public projection only: status, scope, x, installationKeyId, JWK sha256, hand-over path.
+  const installationKey = runtime.installationKey === undefined ? {} : { installationKey: runtime.installationKey.view() }
+  if (runtime.kind === 'UNAVAILABLE') return { workOrderId, unavailableReason: runtime.reason, ...installationKey }
+  return { ...runtime.manager.status(workOrderId), ...installationKey }
 }
 
 /**
@@ -75,6 +95,18 @@ export async function performAeraWorkerAction(
   request: AeraWorkerActionRequest,
   reportError: (operation: string, cause: unknown) => void,
 ): Promise<unknown> {
+  if (request.action === 'ENROL_WORKER_KEY') {
+    if (runtime.installationKey === undefined) {
+      throw Object.assign(new Error('The worker installation-key custody is not available in this process.'), { code: 'WORKER_KEY_CUSTODY_UNAVAILABLE' })
+    }
+    const enrolled = await runtime.installationKey.enrol()
+    return {
+      installationKeyId: enrolled.installationKeyId,
+      x: enrolled.publicJwk.x,
+      publicJwkSha256: enrolled.publicJwkSha256,
+      publicHandOverPath: enrolled.publicHandOverPath,
+    }
+  }
   if (runtime.kind === 'UNAVAILABLE') throw Object.assign(new Error(runtime.reason), { code: 'WORKER_UNAVAILABLE' })
   const { manager } = runtime
   switch (request.action) {

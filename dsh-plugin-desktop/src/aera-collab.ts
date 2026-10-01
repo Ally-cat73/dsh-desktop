@@ -44,6 +44,7 @@ import {
   handleAeraWorkerStatusRequest,
 } from './aera-worker-route.ts'
 import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from './aera-worker-composition.ts'
+import { createWorkerInstallationKeyCustody, resolveInstallationKeyScope, type InstallationKeyScope } from './aera-worker-installation-key.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
 /** Stable Cordis plugin name. */
@@ -257,7 +258,26 @@ export function apply(ctx: Context): void {
    * renderer only reads status and asks for owner actions. Unconfigured, the
    * status route reports an honest unavailable reason and nothing is spawned.
    */
-  const worker = composeAeraWorker(process.env)
+  /*
+   * D-0b: the Worker installation-key custody. PRODUCTION Keychain item only
+   * for the packaged bundle at the canonical install path; any other launch
+   * gets a DEV item scoped to its user-data dir (review M-2). Nothing is ever
+   * enrolled here: only the owner's ENROL_WORKER_KEY click does that.
+   */
+  let installationKeyScope: InstallationKeyScope
+  try {
+    installationKeyScope = resolveInstallationKeyScope({
+      platform: process.platform,
+      isPackaged: electron.app.isPackaged,
+      execPath: process.execPath,
+      userDataDir: electron.app.getPath('userData'),
+    })
+  } catch {
+    installationKeyScope = { kind: 'UNAVAILABLE', reason: 'ELECTRON_APP_UNAVAILABLE' }
+  }
+  const installationKey = createWorkerInstallationKeyCustody(installationKeyScope, { log: line => { ctx.logger.info(line) } })
+  void installationKey.refresh()
+  const worker = composeAeraWorker(process.env, { installationKey })
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',

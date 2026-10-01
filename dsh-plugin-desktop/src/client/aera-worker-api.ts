@@ -19,8 +19,19 @@ export interface WorkerEpochSummaryView {
   readonly terminalReason?: string
 }
 
+export interface WorkerInstallationKeyStatusView {
+  readonly status: 'NOT_ENROLLED' | 'ENROLLED' | 'UNAVAILABLE'
+  readonly scope: 'PRODUCTION' | 'DEV' | 'NONE'
+  readonly installationKeyId?: string
+  readonly x?: string
+  readonly publicJwkSha256?: string
+  readonly publicHandOverPath?: string
+  readonly reason?: string
+}
+
 export interface WorkerStatusView {
   readonly workOrderId: string
+  readonly installationKey?: WorkerInstallationKeyStatusView
   readonly unavailableReason?: string
   readonly provider?: string
   readonly environmentId?: string
@@ -63,12 +74,46 @@ function epoch(value: unknown): WorkerEpochSummaryView | undefined {
   }
 }
 
+const KEY_FIELDS = ['status', 'scope', 'installationKeyId', 'x', 'publicJwkSha256', 'publicHandOverPath', 'reason']
+const B64URL_43 = /^[A-Za-z0-9_-]{43}$/u
+
+/** Public installation-key projection: an exact field allowlist, so no private member can ride along. */
+function installationKey(value: unknown): WorkerInstallationKeyStatusView | undefined {
+  if (value === undefined) return undefined
+  if (!isObject(value) || !Object.keys(value).every(key => KEY_FIELDS.includes(key))) throw new Error('dsh-plugin-desktop: invalid installation key in worker status')
+  const status = value.status
+  const scope = value.scope
+  if (status !== 'NOT_ENROLLED' && status !== 'ENROLLED' && status !== 'UNAVAILABLE') throw new Error('dsh-plugin-desktop: invalid installation key status')
+  if (scope !== 'PRODUCTION' && scope !== 'DEV' && scope !== 'NONE') throw new Error('dsh-plugin-desktop: invalid installation key scope')
+  const pattern = (field: unknown, label: string, re: RegExp): string | undefined => {
+    if (field === undefined) return undefined
+    if (typeof field !== 'string' || !re.test(field)) throw new Error(`dsh-plugin-desktop: invalid ${label} in worker status`)
+    return field
+  }
+  const installationKeyId = pattern(value.installationKeyId, 'installationKeyId', B64URL_43)
+  const x = pattern(value.x, 'x', B64URL_43)
+  const publicJwkSha256 = pattern(value.publicJwkSha256, 'publicJwkSha256', /^[0-9a-f]{64}$/u)
+  const publicHandOverPath = optional(value.publicHandOverPath, 'publicHandOverPath')
+  const reason = optional(value.reason, 'reason')
+  return {
+    status,
+    scope,
+    ...(installationKeyId === undefined ? {} : { installationKeyId }),
+    ...(x === undefined ? {} : { x }),
+    ...(publicJwkSha256 === undefined ? {} : { publicJwkSha256 }),
+    ...(publicHandOverPath === undefined ? {} : { publicHandOverPath }),
+    ...(reason === undefined ? {} : { reason }),
+  }
+}
+
 /** Validate a status response. */
 export function parseWorkerStatus(value: unknown): WorkerStatusView {
   if (!isObject(value)) throw new Error('dsh-plugin-desktop: invalid worker status')
   const workOrderId = text(value.workOrderId, 'workOrderId')
+  const key = installationKey(value.installationKey)
+  const keyView = key === undefined ? {} : { installationKey: key }
   if (value.unavailableReason !== undefined) {
-    return { workOrderId, unavailableReason: text(value.unavailableReason, 'unavailableReason'), epochCount: 0, authorityEnvelope: [], recentEffects: [] }
+    return { workOrderId, ...keyView, unavailableReason: text(value.unavailableReason, 'unavailableReason'), epochCount: 0, authorityEnvelope: [], recentEffects: [] }
   }
   const envelope = Array.isArray(value.authorityEnvelope) ? value.authorityEnvelope.slice(0, MAX_ROWS) : []
   const effects = Array.isArray(value.recentEffects) ? value.recentEffects.slice(0, MAX_ROWS) : []
@@ -81,6 +126,7 @@ export function parseWorkerStatus(value: unknown): WorkerStatusView {
   const lastTerminal = epoch(value.lastTerminal)
   return {
     workOrderId,
+    ...keyView,
     ...(provider === undefined ? {} : { provider }),
     ...(environmentId === undefined ? {} : { environmentId }),
     ...(liveState === undefined ? {} : { liveState }),

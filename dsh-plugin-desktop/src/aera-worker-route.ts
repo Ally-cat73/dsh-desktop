@@ -4,13 +4,15 @@
  * The same strict same-origin loopback pattern as `aera-collab-route.ts`:
  *
  *   GET  /desktop/aera/worker/status   read-only projection of durable records + live state
- *   POST /desktop/aera/worker/action   START_EPOCH | CANCEL | GRANT | REVOKE
+ *   POST /desktop/aera/worker/action   START_EPOCH | CANCEL | GRANT | REVOKE | ENROL_WORKER_KEY
  *
  * The renderer is never handed a store path, a binary path or any credential.
  * START_EPOCH returns immediately (202); the Epoch runs in the main process
  * and its progress is read back through GET status. GRANT / REVOKE are the
  * owner's own acts, recorded as the configured human principal exactly as the
- * existing RECORD_DECISION coordination action is.
+ * existing RECORD_DECISION coordination action is. ENROL_WORKER_KEY is the
+ * owner's explicit Enrol click (W3.1 / OA-1): it carries no parameters, so
+ * the renderer can never name a Keychain item or ask for an overwrite.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -29,6 +31,7 @@ export type AeraWorkerActionRequest =
   | { readonly action: 'CANCEL', readonly workOrderId: string }
   | { readonly action: 'GRANT', readonly workOrderId: string, readonly codeWorkingLineId: string, readonly classes: readonly WorkerEffectClass[] }
   | { readonly action: 'REVOKE', readonly workOrderId: string, readonly decisionId: string }
+  | { readonly action: 'ENROL_WORKER_KEY', readonly workOrderId: string }
 
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status
@@ -57,6 +60,8 @@ export function parseWorkerAction(value: unknown): AeraWorkerActionRequest | und
     }
     case 'CANCEL':
       return only(['action', 'workOrderId']) ? { action: 'CANCEL', workOrderId } : undefined
+    case 'ENROL_WORKER_KEY':
+      return only(['action', 'workOrderId']) ? { action: 'ENROL_WORKER_KEY', workOrderId } : undefined
     case 'GRANT': {
       const codeWorkingLineId = id(body.codeWorkingLineId)
       const classes = body.classes
