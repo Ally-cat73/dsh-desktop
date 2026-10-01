@@ -27,6 +27,11 @@
  * Scenario order matters (R-1 review N-3: an attestation admits key-door turns
  * for the AGENT + Connection for 120 s), so every "refused" model turn is
  * asserted before the first attestation of this run, or after the revoke.
+ *
+ * (3b) is the INT-1 review Y-1 step (plan §4.9 scenario 1): an app restart over
+ * the same Profile restores READY and renews by a LIVE relay → CIS continue on
+ * the same Epoch, and a near-expiry session (the session's own injected clock)
+ * renews again without a restart.
  */
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createPrivateKey, createPublicKey, sign } from 'node:crypto'
@@ -92,6 +97,8 @@ let owner: string
 let session: WorkerLocalEffectSession
 let plane: GovernedEffectPlane
 let runtime: AeraWorkerRuntime
+/** The runtime composed after the simulated app restart (scenario 3b), disposed in afterAll. */
+let restartedRuntime: AeraWorkerRuntime | undefined
 let manager: AeraWorkerSessionManager
 let windowEpochId: string | undefined
 let worldEpochAtHandOver: string
@@ -340,6 +347,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!ENABLED) return
   if (runtime?.kind === 'AVAILABLE') runtime.modelAttest?.dispose()
+  if (restartedRuntime?.kind === 'AVAILABLE') restartedRuntime.modelAttest?.dispose()
   if (harness !== undefined && harness.exitCode === null) {
     harness.kill('SIGTERM')
     const code = await Promise.race([harnessExit, new Promise<'TIMEOUT'>(resolve => { setTimeout(() => { resolve('TIMEOUT') }, 60_000) })])
@@ -558,6 +566,92 @@ describe.skipIf(!ENABLED)('INT-1 desktop ↔ rehearsal world (fresh world per ru
     console.log(`INT1_K9 git_rev_parse_ms=${(Number(process.hrtime.bigint() - t) / 1e6).toFixed(1)}`)
   }, 180_000)
 
+  it('(3b) app restart over the same Profile → READY restored with the SAME Epoch; a live CIS continue mints a NEW session token; a near-expiry session renews again; attest 200; a governed model turn through the Router', async () => {
+    if (windowEpochId === undefined) throw new Error('no window Epoch')
+    const stub0 = (await stubCalls()).length
+    const heldBefore = new Set(agentTokens)
+    // The restart: config, custody, D-0c session, D-0d2 plane and composition rebuilt from the Profile, as the host does at launch.
+    const custody = handOffCustody()
+    const loaded = loadWorkerLocalEffectConfig(stateDir)
+    if (loaded.status !== 'loaded') throw new Error(`handoff config refused: ${loaded.reason}`)
+    let skewMs = 0
+    const restarted = createWorkerLocalEffectSession({ config: loaded, custody: custody.port as never, stateDir, handOverDir: join(stateDir, 'public'), log: line => { logs.push(line) }, clock: () => Date.now() + skewMs })
+    // Restored from the persisted Epoch record alone: READY, the window Epoch, and no session token in memory yet.
+    expect(restarted.status()).toMatchObject({ state: 'READY', workerEpochId: windowEpochId })
+    expect(restarted.status().sessionExpiresAt).toBeUndefined()
+    expect(restarted.workerEpochId()).toBe(windowEpochId)
+
+    // (i) The first credential use runs a live relay → CIS continue on the SAME Epoch: a NEW token.
+    const onRestart = await restarted.credentials().sessionToken()
+    const newOnRestart = !heldBefore.has(onRestart)
+    expect(newOnRestart).toBe(true)
+    agentTokens.add(onRestart)
+    expect(restarted.status()).toMatchObject({ state: 'READY', workerEpochId: windowEpochId })
+    const expiresA = Date.parse(String(restarted.status().sessionExpiresAt))
+    expect(Number.isFinite(expiresA)).toBe(true)
+
+    // (ii) Near expiry without a restart: the session's own clock is moved so that < WORKER_SESSION_RENEW_MARGIN_MS (120 s)
+    // remains; the next credential use renews by a second live continue, then the clock is put back.
+    skewMs = expiresA - Date.now() - 60_000
+    expect(skewMs).toBeGreaterThan(0)
+    const nearExpiry = await restarted.credentials().sessionToken()
+    skewMs = 0
+    const newOnNearExpiry = nearExpiry !== onRestart && !heldBefore.has(nearExpiry)
+    expect(newOnNearExpiry).toBe(true)
+    agentTokens.add(nearExpiry)
+    expect(restarted.workerEpochId()).toBe(windowEpochId)
+    expect(Date.parse(String(restarted.status().sessionExpiresAt))).toBeGreaterThanOrEqual(expiresA)
+    // A fresh session is not renewed again.
+    expect(await restarted.credentials().sessionToken() === nearExpiry).toBe(true)
+
+    // (iii) The restarted composition: a fresh attestor attests the window Epoch (200) with the renewed session.
+    const pin = await fake({
+      turns: [
+        { text: 'router=${ROUTER}', intents: [{ intentId: 'r2', kind: 'fs.read', path: h.workingLine.readPath }] },
+        { text: 'router=${ROUTER}', status: 'DONE' },
+      ],
+    })
+    const restartedPlane = createGovernedEffectPlane({ config: loaded.config, session: restarted, journalDir: join(stateDir, 'aera-worker', 'broker-journal'), log: line => { logs.push(line) } })
+    const routerHotPath = { baseUrl: loaded.config.modelRouterOrigin, readRouterKey: async () => readFileSync(h.connection.workerKeyFile, 'utf8').trim() }
+    restartedRuntime = composeAeraWorker(compositionEnv(pin), { installationKey: custody.port as never, localEffect: restarted, effectPlane: restartedPlane, routerHotPath, log: line => { logs.push(line) } })
+    if (restartedRuntime.kind !== 'AVAILABLE' || restartedRuntime.modelAttest === undefined) throw new Error('no attestor composed after restart')
+    expect(aeraWorkerStatus(restartedRuntime, h.binding.workOrderId)).toMatchObject({ authorityMode: 'CAS', localEffect: { state: 'READY', workerEpochId: windowEpochId } })
+    const attested = await restartedRuntime.modelAttest.ensureFresh()
+    expect(attested).toMatchObject({ ok: true, workerEpochId: windowEpochId })
+    expect(restarted.status().state).toBe('READY')
+
+    // (iv) A governed model turn after the restart (spec-built manager, as in (3): the fake CLI is unsigned).
+    const routing = resolveClaudeWorkerHotPath({ environmentId: ENVIRONMENT_ID, connectionId: h.connection.connectionId, source: routerHotPath })
+    if (routing.kind !== 'ROUTED') throw new Error(routing.reason)
+    const restartedManager = new AeraWorkerSessionManager({
+      store: new ParticipationStore(storeDir),
+      adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, hotPath: routing.hotPath }),
+      gate: NO_LOCAL_AUTHORITY_GATE,
+      config: { humanPrincipalId: owner as never, delegationId: DELEGATION_ID, environmentId: ENVIRONMENT_ID, limits: { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 30_000, epochTimeoutMs: 90_000, cancelGraceMs: 500 } },
+      broker: { parentEnv: POISONED_PARENT_ENV },
+      modelAttest: restartedRuntime.modelAttest,
+      effectPlane: restartedPlane,
+    })
+    const result = await restartedManager.runEpoch({ workOrderId: h.binding.workOrderId, codeWorkingLineId: h.binding.workingLineId, task: 'INT-1 window task after an app restart' })
+    observations.push(...result.outcomes.map(outcome => outcome.observation))
+    agentTokens.add(await restarted.credentials().sessionToken())
+    expect(result.terminal.status).toBe('COMPLETED')
+    expect(result.outcomes.find(outcome => outcome.intentId === 'r2')).toMatchObject({ performed: true, stage: 'EXECUTION', code: 'PERFORMED' })
+    const calls = (await stubCalls()).slice(stub0)
+    expect(calls).toHaveLength(2)
+    for (const call of calls) {
+      expect(call.hasAuthorization).toBe(true)
+      expect(call.headerNames.filter(name => name.toLowerCase().startsWith('x-aera-'))).toEqual([])
+    }
+    const store = new ParticipationStore(storeDir)
+    const turnTexts = store.listTypedEvidence(h.binding.workOrderId).map(row => row.body).join('\n')
+    expect(turnTexts).toContain('router=200')
+    expect(turnTexts).not.toMatch(/router=(?!200)\S+/u)
+    // The restarted desktop Epoch has its own (one) Gateway Session record.
+    expect(store.listTypedEvidence(h.binding.workOrderId).filter(row => row.subject === `${GATEWAY_SESSION_SUBJECT}${result.epochId}`)).toHaveLength(1)
+    console.log(`INT1_RESTART restored_state=READY epoch_same=${String(restarted.workerEpochId() === windowEpochId)} token_new_on_restart=${String(newOnRestart)} token_new_on_near_expiry=${String(newOnNearExpiry)} attest_ok=${String(attested.ok)} turn_stub_calls=${String(calls.length)} state_after=${restarted.status().state} tokens=${String(agentTokens.size)}`)
+  }, 180_000)
+
   it('(5) revoke the delegation → the next model turn is refused (even within a fresh receipt), the next attest is refused, and nothing spawns', async () => {
     if (runtime.kind !== 'AVAILABLE' || runtime.modelAttest === undefined) throw new Error('no attestor composed')
     const stub0 = (await stubCalls()).length
@@ -569,6 +663,9 @@ describe.skipIf(!ENABLED)('INT-1 desktop ↔ rehearsal world (fresh world per ru
     const attest = await runtime.modelAttest.attestNow()
     expect(attest).toMatchObject({ ok: false, state: 'MODEL_AUTHORITY_REFUSED' })
     expect(aeraWorkerStatus(runtime, h.binding.workOrderId)).toMatchObject({ modelAttest: { state: 'MODEL_AUTHORITY_REFUSED' } })
+    // The restarted composition (3b) is refused too.
+    if (restartedRuntime?.kind !== 'AVAILABLE' || restartedRuntime.modelAttest === undefined) throw new Error('no restarted attestor')
+    expect(await restartedRuntime.modelAttest.attestNow()).toMatchObject({ ok: false, state: 'MODEL_AUTHORITY_REFUSED' })
     expect(await codeOf(manager.runEpoch({ workOrderId: h.binding.workOrderId, codeWorkingLineId: h.binding.workingLineId, task: 'after revoke' }))).toBe('MODEL_AUTHORITY_UNAVAILABLE')
     expect(await codeOf(performAeraWorkerAction(runtime, { action: 'START_EPOCH', workOrderId: h.binding.workOrderId, codeWorkingLineId: h.binding.workingLineId, task: 't' }, () => {}))).toBe('MODEL_AUTHORITY_UNAVAILABLE')
     expect(new ParticipationStore(storeDir).listTypedEvidence(h.binding.workOrderId).filter(row => row.subject.startsWith('Worker Epoch started'))).toHaveLength(started0)
