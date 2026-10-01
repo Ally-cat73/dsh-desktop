@@ -17,7 +17,7 @@ import { issueAeraPrincipalId } from '@aera/cis-contracts'
 import { caFingerprintSha256 } from '@aera/effect-broker'
 import { attemptBodyDigest, MODEL_INVOCATION_ATTEST_ROUTE } from '@aera/local-effect-admission'
 import {
-  CIS_ISSUER, ROUTER_SAN, RELAY, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody,
+  CIS_ISSUER, ROUTER_SAN, RELAY, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv,
   type FakeRouter, type Pki, type TestCustody,
 } from './aera-worker-le-fixtures.ts'
 
@@ -88,7 +88,8 @@ function makeSession(sleeps: number[] = []) {
       AERA_CLAUDE_WORKER_CONNECTION_ID: CONNECTION,
       AERA_CLAUDE_WORKER_ORGANISATION_ID: 'aera:org:aera-studios',
       AERA_CLAUDE_WORKER_REPOSITORY_ID: 'aera-repo:aera-stack',
-      AERA_CLAUDE_WORKER_WORKING_LINE_ID: 'aera:working-line:dogfood-2',
+      AERA_CLAUDE_WORKER_WORKING_LINE_ID: 'aera:code_working_line:dogfood-2',
+      ...testEffectCatalogEnv(),
     },
   }))
   return createWorkerLocalEffectSession({

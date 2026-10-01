@@ -24,12 +24,30 @@
  *
  * The worker process holds no executor (`aera-claude-worker-host.ts`), so this
  * is the only path by which anything a worker proposes can happen.
+ *
+ * GOVERNED MODE (D-0d2) — the only mode the product composes
+ * (`aera-worker-composition.ts`). After RESOLVE, steps 2–4 are NOT local: a
+ * parser-validated intent is planned by D-0d1 (`planGovernedEffect`; anything
+ * but an ok plan is a refusal), and the vendored `EffectBroker` asks the Router
+ * attempts route, where CAS (and Sentinel) decide; only a RELEASED combined
+ * decision executes, in the sandbox, and the outcome goes back through the
+ * Router. No DecisionV1 grant, local gate or RecordedAuthorityPort is on that
+ * path (owner addendum §11: no parallel authority).
  */
 
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
+import {
+  EffectBroker,
+  FileBrokerJournal,
+  RouterTransportError,
+  createPinnedRouterTransport,
+  type BrokerResult,
+  type RouterReleasePort,
+  type SandboxPort,
+} from '@aera/effect-broker'
 import {
   RecordedAuthorityPort,
   requireParticipationExecutionContext,
@@ -47,6 +65,11 @@ import {
 } from './aera-worker-effect-intent.ts'
 import { evaluateWorkerAuthority, type WorkerAuthorityResult } from './aera-worker-authority.ts'
 import { maskSecrets } from './mask-secrets.ts'
+import { WorkerRefusal } from './aera-worker-adapter.ts'
+import { checkWorkingLineBinding, planGovernedEffect } from './aera-worker-governed-effects.ts'
+import { createSandboxExecPort } from './aera-worker-sandbox-exec.ts'
+import { WORKER_LE_EFFECT_ROUTES, type WorkerLocalEffectSession } from './aera-worker-le-session.ts'
+import type { WorkerLocalEffectConfig } from './aera-worker-le-config.ts'
 
 /** Bound on any single observation returned to the worker (and recorded). */
 export const MAX_OBSERVATION_BYTES = 64 * 1024
@@ -279,9 +302,11 @@ export interface WorkerBrokerContext {
   /** LIVE lookup of the Aera Session's current Epoch from the store. */
   readonly currentEpochId: () => string | undefined
   readonly modelId?: string
+  /** Governed mode: the host's attempt numbering (monotonic per desktop Epoch, N-4). */
+  readonly attempt?: { readonly turn: number, readonly ordinal: number }
 }
 
-export type BrokerStage = 'CONTEXT' | 'AUTHORITY' | 'NO_EXECUTOR' | 'SENTINEL' | 'EXECUTION' | 'VERIFICATION'
+export type BrokerStage = 'CONTEXT' | 'AUTHORITY' | 'NO_EXECUTOR' | 'SENTINEL' | 'RELEASE' | 'EXECUTION' | 'VERIFICATION'
 
 export interface WorkerBrokerOutcome {
   readonly intentId: string
@@ -296,6 +321,8 @@ export interface WorkerBrokerOutcome {
   readonly sentinelEventId?: string
   readonly authority?: WorkerAuthorityResult
   readonly gate?: SentinelGateVerdict
+  /** Governed mode: the Router's combined (CAS + Sentinel) decision, whenever one exists. */
+  readonly combinedDecisionId?: string
 }
 
 interface ExecutionResult {
@@ -318,6 +345,8 @@ export interface WorkerEffectBrokerDeps {
   readonly commandPath?: string
   readonly commandTimeoutMs?: number
   readonly parentEnv?: Readonly<Record<string, string | undefined>>
+  /** Governed mode (D-0d2): this desktop Epoch's CAS-governed effects. When set, no local authority is consulted. */
+  readonly governed?: GovernedEpochEffects
 }
 
 const sha256 = (text: string | Buffer): string => createHash('sha256').update(text).digest('hex')
@@ -396,7 +425,7 @@ export class WorkerEffectBroker {
   }
 
   /** Resolve the Working Line's worktree root and verify it is where the line says. */
-  private async resolveWorktree(line: CodeWorkingLineV1): Promise<{ ok: true, root: string } | { ok: false, reason: string }> {
+  async resolveWorktree(line: CodeWorkingLineV1): Promise<{ ok: true, root: string } | { ok: false, reason: string }> {
     const location = line.worktrees.find(worktree => worktree.repositoryId === line.repositoryId && existsSync(worktree.localPath))
     if (location === undefined) return { ok: false, reason: 'the Working Line has no recorded worktree location on this device' }
     let root: string
@@ -447,6 +476,7 @@ export class WorkerEffectBroker {
       authority?: WorkerAuthorityResult
       gate?: SentinelGateVerdict
       sentinelEventId?: string
+      combinedDecisionId?: string
     } = {}): WorkerBrokerOutcome => {
       const observation = boundObservation(`[${intent.intentId} ${intent.kind}] DENIED at ${stage} (${code}): ${reason}. Nothing was performed.`)
       const outcome = this.record(ctx, {
@@ -470,6 +500,7 @@ export class WorkerEffectBroker {
         ...(extra.authority === undefined ? {} : { authority: extra.authority }),
         ...(extra.gate === undefined ? {} : { gate: extra.gate }),
         ...(extra.sentinelEventId === undefined ? {} : { sentinelEventId: extra.sentinelEventId }),
+        ...(extra.combinedDecisionId === undefined ? {} : { combinedDecisionId: extra.combinedDecisionId }),
       }
     }
 
@@ -497,8 +528,10 @@ export class WorkerEffectBroker {
     const line = store.listCodeWorkingLines(ctx.workOrderId).find(row => row.codeWorkingLineId === ctx.codeWorkingLineId)
     if (line === undefined) return deny('CONTEXT', 'WORKING_LINE_MISMATCH', 'the Working Line is not recorded under this Work Order')
     if (line.lifecycle !== 'OPEN') return deny('CONTEXT', 'WORKING_LINE_NOT_OPEN', `the Working Line is ${line.lifecycle}`)
-    const worktree = intent.kind === 'context.read' ? { ok: true as const, root: '' } : await this.resolveWorktree(line)
+    const worktree = intent.kind === 'context.read' && this.deps.governed === undefined ? { ok: true as const, root: '' } : await this.resolveWorktree(line)
     if (!worktree.ok) return deny('CONTEXT', 'WORKING_LINE_LOCATION_MISMATCH', worktree.reason)
+    // GOVERNED MODE: authority is CAS through the Router; nothing below (local grants, local gate) is consulted.
+    if (this.deps.governed !== undefined) return await this.governedIntent(this.deps.governed, ctx, intent, worktree.root, line, key, proposal, deny)
 
     // (2) AUTHORITY --------------------------------------------------------
     const action = intentToActionRequest(intent, line.repositoryId)
@@ -599,6 +632,68 @@ export class WorkerEffectBroker {
       sentinelEventId: sentinelEvent.eventId,
       authority,
       gate: gated.verdict,
+    }
+  }
+
+  /** D-0d2: plan (D-0d1) → EffectBroker (Router attempts route; CAS decides) → map the BrokerResult → record. */
+  private async governedIntent(
+    governed: GovernedEpochEffects,
+    ctx: WorkerBrokerContext,
+    intent: EffectIntentV1,
+    root: string,
+    line: CodeWorkingLineV1,
+    key: string,
+    proposal: string | undefined,
+    deny: (stage: BrokerStage, code: string, reason: string, extra?: { combinedDecisionId?: string }) => WorkerBrokerOutcome,
+  ): Promise<WorkerBrokerOutcome> {
+    if (root !== governed.workspaceRoot) return deny('CONTEXT', 'WORKING_LINE_LOCATION_MISMATCH', 'the worktree is not the one this Epoch\'s effect broker was opened on')
+    if (ctx.attempt === undefined) return deny('CONTEXT', 'EFFECT_ATTEMPT_UNNUMBERED', 'the host did not number this attempt')
+    const answer = await governed.execute(intent, ctx.attempt)
+    if (answer.kind === 'REFUSED') return deny(answer.code === 'NOT_DELEGATED_IN_GOVERNED_MODE' ? 'NO_EXECUTOR' : 'CONTEXT', answer.code, answer.reason)
+    const result = answer.result
+    switch (result.status) {
+      case 'WITHHELD':
+        return deny(result.releaseResult === 'WITHHELD_BY_AUTHORITY' ? 'AUTHORITY' : 'SENTINEL', `WITHHELD:${result.reasonCode}`, `${result.releaseResult}, decided at the Router (combined decision ${result.combinedDecisionId})`, { combinedDecisionId: result.combinedDecisionId })
+      case 'REFUSED':
+        return deny('RELEASE', `REFUSED:${result.reason}`, 'the effect broker refused before any release')
+      case 'RELEASE_UNAVAILABLE':
+        return deny('RELEASE', `RELEASE_UNAVAILABLE:${result.reason}`, 'no release was seen from the Router')
+      case 'NOT_EXECUTED':
+        return deny('EXECUTION', `NOT_EXECUTED:${result.reason}`, `released but not executed (outcome reported: ${result.outcomeReported ? 'yes' : 'no'})`, result.combinedDecisionId === undefined ? {} : { combinedDecisionId: result.combinedDecisionId })
+      default:
+        break
+    }
+    const failed = result.status === 'FAILED'
+    const output = Buffer.from(result.output)
+    const content = intent.content ?? ''
+    const execution: ExecutionResult = intent.kind === 'fs.write'
+      ? { observation: `wrote ${intent.path ?? ''} (${String(Buffer.byteLength(content, 'utf8'))} bytes, sha256 ${sha256(content)})`, detail: { sha256: sha256(content) }, failed }
+      : intent.kind === 'fs.read'
+        ? { observation: `${intent.path ?? ''} (${String(output.byteLength)} bytes, sha256 ${sha256(output)}):\n${redact(output.toString('utf8'))}`, detail: { sha256: sha256(output) }, failed }
+        : { observation: `exit ${String(result.exitStatus ?? 'none')}${result.timedOut ? ' (timed out)' : ''}\n--- stdout ---\n${redact(output.toString('utf8'))}`, detail: {}, failed }
+    const verification: VerificationResult = failed ? { outcome: 'FAIL', detail: result.reason ?? 'the effect broker observed a failure' } : await this.verify(intent, root, execution)
+    const observation = boundObservation(`[${intent.intentId} ${intent.kind}] PERFORMED by the Aera effect broker (released by CAS through the Router: combined decision ${result.combinedDecisionId}; outcome reported: ${result.outcomeReported ? 'yes' : 'no'}; verification ${verification.outcome}).\n${execution.observation}`)
+    const outcomeEvidence = this.record(ctx, {
+      idempotencyKey: `${key}:outcome`,
+      evidenceClass: 'EXECUTION_EVIDENCE',
+      subject: `Worker effect performed: ${intent.kind} (${intent.intentId})${failed ? ' — effect reported failure' : ''}`,
+      outcome: failed || verification.outcome === 'FAIL' ? 'FAIL' : verification.outcome === 'PASS' ? 'PASS' : 'INCONCLUSIVE',
+      body: observation,
+      sourceRef: `sha256:${sha256(observation)}`,
+      links: { codeWorkingLineIds: [ctx.codeWorkingLineId as never], repositoryIds: [line.repositoryId] },
+      performedBy: this.deps.principals.broker,
+      verifiedBy: this.deps.principals.verifier,
+    })
+    return {
+      intentId: intent.intentId,
+      kind: intent.kind,
+      performed: true,
+      stage: 'EXECUTION',
+      code: failed ? 'PERFORMED_WITH_FAILURE' : 'PERFORMED',
+      observation,
+      combinedDecisionId: result.combinedDecisionId,
+      ...(proposal === undefined ? {} : { proposalEvidenceId: proposal }),
+      ...(outcomeEvidence === undefined ? {} : { outcomeEvidenceId: outcomeEvidence }),
     }
   }
 
@@ -793,5 +888,136 @@ export class WorkerEffectBroker {
     } catch (error) {
       return { outcome: 'INCONCLUSIVE', detail: error instanceof Error ? error.message : String(error) }
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Governed mode (D-0d2): AUTHORITY = CAS through the Router attempts route
+// ---------------------------------------------------------------------------
+
+/** Bound by the governed composition in place of any local policy: it permits nothing (no local authority path). */
+export const NO_LOCAL_AUTHORITY_GATE: SentinelGate = Object.freeze({
+  evaluator: 'NO_LOCAL_AUTHORITY',
+  remote: false,
+  async gate() {
+    return { verdict: { verdict: 'DENY' as const, evaluator: 'NO_LOCAL_AUTHORITY', remote: false, reason: 'authority is CAS through the Router; no local gate is an authority path' }, effectExecuted: false }
+  },
+})
+
+export interface GovernedEffectPlaneOptions {
+  /** The loaded profile config: pinned Router identity, the canonical binding and the pinned catalog. */
+  readonly config: WorkerLocalEffectConfig
+  /** D-0c: the CIS Worker Epoch and the credentials port (N-9: attempt/outcome routes only). */
+  readonly session: Pick<WorkerLocalEffectSession, 'workerEpochId' | 'credentials'>
+  /** `<app-data>/aera-worker/broker-journal` (0700); one journal per CIS Worker Epoch. */
+  readonly journalDir: string
+  /** Default: the macOS sandbox-exec port (D-0d1 F-2). */
+  readonly sandbox?: SandboxPort
+  readonly releaseTimeoutMs?: number
+  /** Ids and codes only. */
+  readonly log?: (line: string) => void
+}
+
+export type GovernedEffectAnswer =
+  | { readonly kind: 'REFUSED', readonly code: string, readonly reason: string }
+  | { readonly kind: 'BROKER', readonly effectAttemptId: string, readonly result: BrokerResult }
+
+/** One desktop Epoch's governed effects: one EffectBroker over the CIS Epoch, reconciled at open. */
+export interface GovernedEpochEffects {
+  readonly workerEpochId: string
+  readonly workspaceRoot: string
+  readonly reconciled: readonly BrokerResult[]
+  execute(intent: EffectIntentV1, attempt: { readonly turn: number, readonly ordinal: number }): Promise<GovernedEffectAnswer>
+}
+
+export interface GovernedEffectPlane {
+  /** Throws a typed WorkerRefusal (nothing spawned, nothing recorded) when the Epoch cannot be governed. */
+  openEpoch(input: { readonly desktopEpochId: string, readonly line: CodeWorkingLineV1, readonly workspaceRoot: string }): Promise<GovernedEpochEffects>
+}
+
+export function createGovernedEffectPlane(options: GovernedEffectPlaneOptions): GovernedEffectPlane {
+  const { config, session } = options
+  const log = options.log ?? (() => {})
+  const sandbox = options.sandbox ?? createSandboxExecPort()
+  const pinned = { caFingerprintSha256: config.caFingerprintSha256, routerUriSan: config.routerUriSan }
+  const binding = { organisationId: config.organisationId, repositoryId: config.repositoryId, workingLineId: config.workingLineId }
+  // Each route its own pinned post, so the channel identity is checked on EVERY answer (D-0c review carry).
+  const post = (route: string) => createPinnedRouterTransport({ url: config.routerUrl, caPem: config.caPem, pinned, routes: { attempt: route, outcome: route } }).requestRelease
+  const posts = { attempt: post(WORKER_LE_EFFECT_ROUTES.attempt), outcome: post(WORKER_LE_EFFECT_ROUTES.outcome) }
+  const checked = async (send: RouterReleasePort['requestRelease'], body: Record<string, unknown>) => {
+    const answer = await send(body)
+    const channel = answer.channel
+    if (channel.tlsAuthorized !== true || channel.caFingerprintSha256 !== pinned.caFingerprintSha256 || channel.uriSans.length !== 1 || channel.uriSans[0] !== pinned.routerUriSan) {
+      throw new RouterTransportError('TLS_PEER_NOT_PINNED')
+    }
+    return answer
+  }
+  const router: RouterReleasePort = {
+    requestRelease: body => checked(posts.attempt, body),
+    reportOutcome: async (body) => {
+      const { status, body: answer } = await checked(posts.outcome, body)
+      return { status, body: answer }
+    },
+  }
+  return {
+    async openEpoch({ desktopEpochId, line, workspaceRoot }) {
+      const workerEpochId = session.workerEpochId()
+      if (workerEpochId === undefined) throw new WorkerRefusal('NO_WORKER_EPOCH', 'No CIS Worker Epoch is known; the owner begins it (Begin Worker Epoch) before a governed Epoch can run.')
+      const bound = checkWorkingLineBinding(binding, line)
+      if (!bound.ok) throw new WorkerRefusal(bound.code, bound.reason)
+      let broker: EffectBroker
+      let journal: FileBrokerJournal
+      let reconciled: readonly BrokerResult[]
+      try {
+        mkdirSync(options.journalDir, { recursive: true, mode: 0o700 })
+        chmodSync(options.journalDir, 0o700)
+        journal = new FileBrokerJournal(join(options.journalDir, `${sha256(workerEpochId).slice(0, 32)}.jsonl`))
+        broker = new EffectBroker({
+          aeraSessionId: config.aeraSessionId,
+          location: bound.location,
+          workspaceRoot,
+          workerEpochId,
+          currentEpoch: () => session.workerEpochId() ?? '',
+          catalog: config.effectCatalog.catalog,
+          router,
+          credentials: session.credentials(),
+          journal,
+          pinned,
+          sandbox,
+          ...(options.releaseTimeoutMs === undefined ? {} : { releaseTimeoutMs: options.releaseTimeoutMs }),
+        })
+        // Crash recovery: finish every open attempt from durable state, on Epoch start.
+        reconciled = await broker.reconcile()
+      } catch (cause) {
+        log(`aera-worker-effects: UNAVAILABLE ${cause instanceof Error ? cause.name : 'Error'}`)
+        throw new WorkerRefusal('GOVERNED_EFFECTS_UNAVAILABLE', 'The governed effect broker could not be opened (journal or binding); nothing was started.')
+      }
+      log(`aera-worker-effects: OPEN desktopEpochId=${desktopEpochId} workerEpochId=${workerEpochId} reconciled=${String(reconciled.length)}`)
+      const issued = new Set<string>()
+      return Object.freeze({
+        workerEpochId,
+        workspaceRoot,
+        reconciled,
+        async execute(intent: EffectIntentV1, attempt: { readonly turn: number, readonly ordinal: number }): Promise<GovernedEffectAnswer> {
+          let plan: ReturnType<typeof planGovernedEffect> | undefined
+          try {
+            plan = planGovernedEffect({ pinned: config.effectCatalog, binding, resolved: line, attempt: { desktopEpochId, ...attempt }, intent })
+          } catch {
+            plan = undefined
+          }
+          // N-1: anything other than an ok plan is a refusal.
+          if (plan?.ok !== true) return { kind: 'REFUSED', code: plan?.code ?? 'INTENT_NOT_PLANNED', reason: plan?.reason ?? 'the intent has no governed plan; nothing was performed' }
+          const effectAttemptId = plan.request.effectAttemptId
+          // N-4: never reuse an attempt id in this Epoch, in this process or (via the journal) after a restart.
+          if (issued.has(effectAttemptId) || journal.attempt(effectAttemptId) !== undefined) {
+            return { kind: 'REFUSED', code: 'EFFECT_ATTEMPT_ID_REUSED', reason: 'this effect attempt id was already used in this Worker Epoch; nothing was performed' }
+          }
+          issued.add(effectAttemptId)
+          const result = await broker.execute(plan.request)
+          log(`aera-worker-effects: ${result.status} effectAttemptId=${effectAttemptId}`)
+          return { kind: 'BROKER', effectAttemptId, result }
+        },
+      })
+    },
   }
 }

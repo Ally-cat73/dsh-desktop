@@ -8,9 +8,15 @@
  * 25fadd1e): relay `localEffectAgentRelay.ts` (registry gate, `{refusal}`),
  * CIS `agent-credentials.ts` (begin supersedes, continue keeps the id),
  * attest `modelInvocationAttest.ts` (`{error, reason?}`, 409 replay).
+ *
+ * D-0d2: the effect attempts and outcome routes (`localEffectHandler.ts`
+ * LOCAL_EFFECT_ROUTE / LOCAL_EFFECT_OUTCOME_ROUTE): the AGENT token and the
+ * sender proof over the exact route and body are verified, then the CAS
+ * outcome (set per test) decides through a minted combined decision (the
+ * vendored `mintCombinedEffectDecision`, as `broker.test.ts` FakeRouter).
  */
 import { execFileSync } from 'node:child_process'
-import { generateKeyPairSync, randomBytes, randomUUID, sign, verify, type KeyObject } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, verify, type KeyObject } from 'node:crypto'
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:https'
 import { tmpdir } from 'node:os'
@@ -27,7 +33,13 @@ import { attemptBodyDigest, createAgentSenderProof, sha256Ref, MODEL_INVOCATION_
 const LOCAL_EFFECT_CHANNEL_BINDING_HEADER = 'aera-local-effect-channel-binding'
 const localEffectChannelBinding = (socket: TLSSocket): string =>
   socket.exportKeyingMaterial(32, 'EXPORTER-aera-local-effect-channel-binding/v1', Buffer.alloc(0)).toString('hex')
+import * as localEffectEvidence from '@aera/sentinel-contracts/local-effect-evidence'
 import { installationKeyThumbprint } from '../src/aera-worker-installation-key.ts'
+/* Runtime members of the same vendored barrel (untypable here, D-0c F-3). */
+const { mintCombinedEffectDecision, computeReleaseResult } = localEffectEvidence as unknown as {
+  mintCombinedEffectDecision(input: Record<string, unknown>): { decision: Record<string, unknown> & { combinedDecisionId: string } }
+  computeReleaseResult(facts: Record<string, unknown>): { releaseResult: string }
+}
 
 export const ROUTER_SAN = 'spiffe://aera.local/workload/aera-router'
 export const CIS_ISSUER = 'https://cis.test.aera.invalid'
@@ -36,6 +48,28 @@ export const RELAY = Object.freeze({
   begin: '/v1/local-effects/agents/epochs',
   continue: '/v1/local-effects/agents/epochs/continue',
 })
+/** The Router effect routes (`localEffectHandler.ts:115-116`). */
+export const EFFECT_ROUTES = Object.freeze({ attempt: '/v1/local-effects/attempts', outcome: '/v1/local-effects/outcomes' })
+
+/** The reviewed-catalog shape the dogfood uses (D-0d1 spec), pinned by its bytes. */
+export const TEST_EFFECT_CATALOG = Object.freeze({
+  'aera.repo.read': { kind: 'READ_FILE', maxBytes: 65_536 },
+  'aera.repo.patch': { kind: 'REPLACE_FILE', maxBytes: 262_144 },
+  'aera.test.run': {
+    kind: 'PROCESS',
+    mutation: 'READ_ONLY',
+    parameters: { component: ['router'], suite: ['affected'] },
+    commands: { 'component=router&suite=affected': { executable: '/bin/echo', argv: ['router affected: 17 passed'], cwd: '', env: { LANG: 'C' }, timeoutMs: 5_000, maxOutputBytes: 4_096 } },
+  },
+})
+
+/** The two F-1 config keys for a freshly written, pinned test catalog. */
+export function testEffectCatalogEnv(catalog: unknown = TEST_EFFECT_CATALOG): { AERA_CLAUDE_WORKER_EFFECT_CATALOG: string, AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256: string } {
+  const file = join(mkdtempSync(join(tmpdir(), 'd0d2-catalog-')), 'effect-catalog.json')
+  const text = JSON.stringify(catalog)
+  writeFileSync(file, text)
+  return { AERA_CLAUDE_WORKER_EFFECT_CATALOG: file, AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256: createHash('sha256').update(text).digest('hex') }
+}
 
 /* ------------------------------------------------------------------ PKI */
 
@@ -138,6 +172,15 @@ export interface FakeRouterState {
   readonly attestClaims: Record<string, unknown>[]
   readonly attestNonces: Set<string>
   readonly proofNonces: Set<string>
+  /** D-0d2: what CAS decides for the next effect attempts. */
+  casOutcome: 'ALLOW' | 'DENY'
+  /** D-0d2: attempts are never answered (a Router timeout). */
+  attemptHang: boolean
+  /** D-0d2: the next N outcome reports answer 503. */
+  outcomeUnavailable: number
+  readonly attempts: Record<string, unknown>[]
+  readonly attemptClaims: Record<string, unknown>[]
+  readonly outcomes: Record<string, unknown>[]
 }
 
 export interface FakeRouter { readonly url: string, readonly state: FakeRouterState, close(): void }
@@ -162,6 +205,12 @@ export async function startFakeRouter(material: { cert: Buffer, key: Buffer }, i
     attestClaims: [],
     attestNonces: new Set(),
     proofNonces: new Set(),
+    casOutcome: 'ALLOW',
+    attemptHang: false,
+    outcomeUnavailable: 0,
+    attempts: [],
+    attemptClaims: [],
+    outcomes: [],
   }
   const publicKey = ids.custody.publicKey
 
@@ -184,7 +233,82 @@ export async function startFakeRouter(material: { cert: Buffer, key: Buffer }, i
     return { token, sessionId, expiresAt: new Date(expiresAtMs).toISOString(), signingKeyId: 'cis-key-1' }
   }
 
-  const handle = (path: string, body: Record<string, unknown>): { status: number, body: unknown } => {
+  /** AGENT token + sender proof over (route, body without the proof), as the Router admission. */
+  const agentProof = (route: string, unsigned: Record<string, unknown>, proof: unknown): { error: string } | { session: { sessionId: string, workerEpochId: string }, claims: Record<string, unknown> } => {
+    const token = String(unsigned.agentSessionToken)
+    const session = state.sessions.get(token)
+    if (session === undefined || session.expiresAtMs <= Date.now()) return { error: 'SUBJECT_SESSION_INVALID' }
+    if (state.registry?.status !== 'ACTIVE' || state.registry.currentWorkerEpochId !== session.workerEpochId) return { error: 'WORKER_EPOCH_MISMATCH' }
+    const [h, p, s] = String(proof).split('.')
+    if (h === undefined || p === undefined || s === undefined || !verify(null, Buffer.from(`${h}.${p}`, 'ascii'), publicKey, Buffer.from(s, 'base64url'))) return { error: 'SENDER_PROOF_INVALID' }
+    const claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')) as Record<string, unknown>
+    if (claims.audience !== ROUTER_SAN || claims.route !== route || claims.method !== 'POST' || claims.bodyDigest !== attemptBodyDigest(unsigned)
+      || claims.sessionTokenDigest !== sha256Ref(token) || claims.workerEpochId !== session.workerEpochId || claims.installationKeyId !== ids.custody.installationKeyId) return { error: 'SENDER_PROOF_INVALID' }
+    if (state.proofNonces.has(String(claims.nonce))) return { error: 'SENDER_PROOF_REPLAYED' }
+    state.proofNonces.add(String(claims.nonce))
+    return { session, claims }
+  }
+  const hex = (value: string): string => createHash('sha256').update(value).digest('hex')
+  const effectDecisions = new Map<string, Record<string, unknown> & { combinedDecisionId: string }>()
+  const attempt = (body: Record<string, unknown>): { status: number, body: unknown } | undefined => {
+    state.attempts.push(body)
+    if (state.attemptHang) return undefined
+    const { senderProof, ...unsigned } = (body.attempt ?? {}) as Record<string, unknown>
+    const admitted = agentProof(EFFECT_ROUTES.attempt, unsigned, senderProof)
+    if ('error' in admitted) return json(403, { error: admitted.error })
+    state.attemptClaims.push(admitted.claims)
+    const release = body.release as { effectDigest: string, workerEpochId: string, brokerNonce: string }
+    if (release.workerEpochId !== admitted.session.workerEpochId) return json(403, { error: 'WORKER_EPOCH_MISMATCH' })
+    const key = String(unsigned.idempotencyKey)
+    let decision = effectDecisions.get(key)
+    if (decision === undefined) {
+      const allow = state.casOutcome === 'ALLOW'
+      const facts = {
+        casOutcome: allow ? 'ALLOW' : 'DENY', casStatus: allow ? 'OK' : 'DENY', casReceiptVerified: true, bindingMatchesCas: true,
+        sentinelStatus: allow ? 'PERMIT' : 'NOT_EVALUATED', subjectDigestAgreement: allow ? 'AGREED' : undefined,
+        temporalBasisCommitted: allow, effectDigestBoundToDescriptor: true,
+      }
+      const descriptor = body.descriptor as { resource: { containerPath: { kind: string, id: string }[] } }
+      const container = (kind: string): string => descriptor.resource.containerPath.find(entry => entry.kind === kind)?.id ?? 'unknown'
+      decision = mintCombinedEffectDecision({
+        proposal: {
+          effectAttemptId: key,
+          effectDigest: release.effectDigest,
+          effectDescriptorRef: { authoritySystem: 'sentinel-evidence', objectType: 'EFFECT_REQUEST', objectId: `ev_${hex(key).slice(0, 16)}`, immutableRevision: 'r1', digest: release.effectDigest, byteCount: 100 },
+          binding: {
+            organisationId: container('ORGANISATION'), tenantId: 'tenant-test', aeraSessionId: String(unsigned.aeraSessionId), workOrderId: 'WO-TEST',
+            repositoryId: container('REPOSITORY'), workingLineId: container('WORKING_LINE'), principalId: ids.principalId, workerEpochId: release.workerEpochId,
+          },
+          authority: { casOutcome: facts.casOutcome, casStatus: facts.casStatus, casReceiptId: `authrcpt_${hex(key).slice(0, 16)}`, casReceiptDigest: `sha256:${hex(key)}`, authorityGeneration: 1, authorityContractVersion: 'AERA_AUTHORITY_CONTRACT_V1' },
+          governance: allow
+            ? { sentinelStatus: 'PERMIT', detectionId: `det_${hex(key).slice(0, 16)}`, detectionDigest: hex(`det-${key}`), evaluatedSubjectDigest: hex('subject'), subjectDigestAgreement: 'AGREED' }
+            : { sentinelStatus: 'NOT_EVALUATED' },
+          temporal: allow ? { temporalBasisRevision: 0, temporalBasisDigest: hex('basis'), contributionDigest: hex('contribution') } : {},
+          proposedReleaseResult: computeReleaseResult(facts).releaseResult,
+        },
+        facts,
+        issuedAtLogicalMs: Date.now(),
+      }).decision
+      effectDecisions.set(key, decision)
+    }
+    return json(200, {
+      schema: 'aera.local-effect-release-response/v1',
+      combinedEffect: decision,
+      spineReceiptId: `rcpt_${hex(decision.combinedDecisionId).slice(0, 32)}`,
+      spineReceiptDigest: hex(`receipt-${decision.combinedDecisionId}`),
+      echo: release,
+    })
+  }
+  const outcome = (body: Record<string, unknown>): { status: number, body: unknown } => {
+    if (state.outcomeUnavailable > 0) { state.outcomeUnavailable -= 1; return json(503, { error: 'SPINE_UNAVAILABLE' }) }
+    const { senderProof, ...unsigned } = body
+    const admitted = agentProof(EFFECT_ROUTES.outcome, unsigned, senderProof)
+    if ('error' in admitted) return json(403, { error: admitted.error })
+    state.outcomes.push(body)
+    return json(201, { receipt: { receiptId: `rcpt_outcome_${String(state.outcomes.length)}` } })
+  }
+
+  const handle = (path: string, body: Record<string, unknown>): { status: number, body: unknown } | undefined => {
     switch (path) {
       case RELAY.challenge: {
         const gate = bound(body.aeraSessionId, body.principalId)
@@ -252,6 +376,10 @@ export async function startFakeRouter(material: { cert: Buffer, key: Buffer }, i
         state.attestNonces.add(String(body.nonce))
         return json(200, { status: 'ATTESTED', casReceiptId: `cas-receipt-${String(state.attestNonces.size)}`, notAfter: new Date(Date.now() + 120_000).toISOString() })
       }
+      case EFFECT_ROUTES.attempt:
+        return attempt(body)
+      case EFFECT_ROUTES.outcome:
+        return outcome(body)
       default:
         return json(404, { error: 'NO_SUCH_ROUTE' })
     }
@@ -266,6 +394,7 @@ export async function startFakeRouter(material: { cert: Buffer, key: Buffer }, i
       let body: Record<string, unknown> = {}
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown> } catch { /* malformed → handler refuses */ }
       const answer = handle(path, body)
+      if (answer === undefined) return // a hung attempt (closed with the server)
       res.setHeader(LOCAL_EFFECT_CHANNEL_BINDING_HEADER, state.badBinding ? 'ab'.repeat(32) : localEffectChannelBinding(req.socket as TLSSocket))
       res.writeHead(answer.status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(answer.body))
@@ -274,7 +403,7 @@ export async function startFakeRouter(material: { cert: Buffer, key: Buffer }, i
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   const port = typeof address === 'object' && address !== null ? address.port : 0
-  return { url: `https://127.0.0.1:${String(port)}/`, state, close: () => { server.close() } }
+  return { url: `https://127.0.0.1:${String(port)}/`, state, close: () => { server.closeAllConnections(); server.close() } }
 }
 
 /** The operator's DP-9 writes (C-7): a pending record before begin, the begun Epoch after. */

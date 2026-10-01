@@ -30,7 +30,7 @@ import {
   modelInvocationEffectDigest,
 } from '@aera/local-effect-admission'
 import {
-  CIS_ISSUER, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody,
+  CIS_ISSUER, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv,
   type FakeRouter, type Pki, type TestCustody,
 } from './aera-worker-le-fixtures.ts'
 import { makeFakeClaude, makeWorkerWorld } from './aera-worker-fixtures.ts'
@@ -659,7 +659,8 @@ describe('U8 over the real D-0c session and the fake Router (builder accepted; 4
         AERA_CLAUDE_WORKER_CONNECTION_ID: CONNECTION,
         AERA_CLAUDE_WORKER_ORGANISATION_ID: 'aera:org:aera-studios',
         AERA_CLAUDE_WORKER_REPOSITORY_ID: 'aera-repo:aera-stack',
-        AERA_CLAUDE_WORKER_WORKING_LINE_ID: 'aera:working-line:dogfood-u8',
+        AERA_CLAUDE_WORKER_WORKING_LINE_ID: 'aera:code_working_line:dogfood-u8',
+        ...testEffectCatalogEnv(),
       },
     }))
     return createWorkerLocalEffectSession({

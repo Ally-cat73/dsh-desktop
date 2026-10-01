@@ -47,6 +47,8 @@ export const WORKER_LE_RELAY_ROUTES = Object.freeze({
   begin: '/v1/local-effects/agents/epochs',
   continue: '/v1/local-effects/agents/epochs/continue',
 })
+/** The Router effect routes (`localEffectHandler.ts:115-116`): the ONLY routes `credentials().senderProof` signs (D-0c review N-9). */
+export const WORKER_LE_EFFECT_ROUTES = Object.freeze({ attempt: '/v1/local-effects/attempts', outcome: '/v1/local-effects/outcomes' })
 /** Renew the AGENT session when less than this remains (plan §4.3). */
 export const WORKER_SESSION_RENEW_MARGIN_MS = 120_000
 /** One signed send makes at most this many attempts, each retry reason at most once (no loops). */
@@ -113,7 +115,7 @@ export interface WorkerLocalEffectSession {
    * fail-fast state or a pinned-transport refusal throws WorkerLocalEffectError(code).
    */
   postSigned(route: typeof MODEL_INVOCATION_ATTEST_ROUTE, build: () => Readonly<Record<string, unknown>>): Promise<{ readonly status: number, readonly body: Record<string, unknown> }>
-  /** D-0d2's broker port: the in-memory token and sender proofs over {method, route, body}. */
+  /** D-0d2's broker port: the in-memory token and sender proofs over {POST, attempt|outcome route, body} only (N-9). */
   credentials(): AgentCredentialPort
 }
 
@@ -438,6 +440,7 @@ export function createWorkerLocalEffectSession(options: WorkerLocalEffectSession
         return session!.token
       },
       async senderProof(input: { method: string, route: string, body: Record<string, unknown> }) {
+        if (input.method !== 'POST' || (input.route !== WORKER_LE_EFFECT_ROUTES.attempt && input.route !== WORKER_LE_EFFECT_ROUTES.outcome)) refuse('ROUTE_NOT_ALLOWED')
         await ensureSession()
         return proofFor(input.method, input.route, input.body)
       },

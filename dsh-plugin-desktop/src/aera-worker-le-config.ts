@@ -12,12 +12,19 @@
  * hold exactly one certificate, a CA, whose SHA-256 DER fingerprint equals
  * `AERA_CLAUDE_WORKER_LE_CA_SHA256`. `createPinnedRouterTransport` trusts the
  * PEM it is given but does not compare the fingerprint itself.
+ *
+ * D-0d2 (D-0d1 F-1): the governed effect catalog is named by
+ * `AERA_CLAUDE_WORKER_EFFECT_CATALOG` and pinned by
+ * `AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256`; it is loaded HERE through
+ * `loadGovernedEffectCatalog`, and any defect is `not-configured` (governed
+ * mode, and so the worker, unavailable).
  */
 import { X509Certificate } from 'node:crypto'
 import { lstatSync, readFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { isAeraPrincipalId } from '@aera/cis-contracts'
 import { caFingerprintSha256 } from '@aera/effect-broker'
+import { loadGovernedEffectCatalog, type PinnedGovernedCatalog } from './aera-worker-governed-effects.ts'
 
 export const AERA_CLAUDE_WORKER_CONFIG_FILENAME = 'aera-claude-worker.json'
 
@@ -42,6 +49,8 @@ const VALIDATORS = {
   AERA_CLAUDE_WORKER_ORGANISATION_ID: (v: string) => OPAQUE.test(v),
   AERA_CLAUDE_WORKER_REPOSITORY_ID: (v: string) => OPAQUE.test(v),
   AERA_CLAUDE_WORKER_WORKING_LINE_ID: (v: string) => OPAQUE.test(v),
+  AERA_CLAUDE_WORKER_EFFECT_CATALOG: (v: string) => isAbsolute(v),
+  AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256: (v: string) => /^[a-f0-9]{64}$/u.test(v),
 } as const
 type ConfigKey = keyof typeof VALIDATORS
 
@@ -58,6 +67,8 @@ export interface WorkerLocalEffectConfig {
   readonly organisationId: string
   readonly repositoryId: string
   readonly workingLineId: string
+  /** The reviewed governed-effect catalog, pinned by the sha256 of its bytes (D-0d1). */
+  readonly effectCatalog: PinnedGovernedCatalog
 }
 
 export type WorkerLocalEffectConfigResult =
@@ -111,6 +122,8 @@ export function loadWorkerLocalEffectConfig(profileDir: string): WorkerLocalEffe
   } catch {
     return notConfigured('LE_CA_NOT_SINGLE_CERTIFICATE')
   }
+  const catalog = loadGovernedEffectCatalog(v.AERA_CLAUDE_WORKER_EFFECT_CATALOG, v.AERA_CLAUDE_WORKER_EFFECT_CATALOG_SHA256)
+  if (catalog.status !== 'loaded') return notConfigured(catalog.reason)
   return {
     status: 'loaded',
     config: Object.freeze({
@@ -126,6 +139,7 @@ export function loadWorkerLocalEffectConfig(profileDir: string): WorkerLocalEffe
       organisationId: v.AERA_CLAUDE_WORKER_ORGANISATION_ID,
       repositoryId: v.AERA_CLAUDE_WORKER_REPOSITORY_ID,
       workingLineId: v.AERA_CLAUDE_WORKER_WORKING_LINE_ID,
+      effectCatalog: catalog.pinned,
     }),
   }
 }

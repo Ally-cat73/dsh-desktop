@@ -21,6 +21,12 @@
  * it, recorded as OBSERVATIONAL evidence (started / terminal). Exactly one
  * Epoch is current; anything proposed under another Epoch id is STALE_EPOCH.
  * The exact context each Epoch received is recorded (§13).
+ *
+ * D-0d2: with the governed effect plane (the only composition the product
+ * builds), each Epoch opens ONE vendored EffectBroker over the CIS Worker Epoch
+ * before anything is recorded or spawned (the Working Line binding is checked,
+ * the journal reconciled); authority is then CAS through the Router, and the
+ * owner's local DecisionV1 grants are neither consulted nor shown as authority.
  */
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -57,6 +63,8 @@ import {
   boundObservation,
   redact,
   type SentinelGate,
+  type GovernedEffectPlane,
+  type GovernedEpochEffects,
   type WorkerBoundaryPrincipals,
   type WorkerBrokerOutcome,
   type WorkerEffectBrokerDeps,
@@ -100,6 +108,8 @@ export interface AeraWorkerManagerDeps {
    * attestation for the current Worker Epoch is held.
    */
   readonly modelAttest?: ModelAttestGate
+  /** D-0d2: governed effects (AUTHORITY = CAS through the Router). The product always composes it. */
+  readonly effectPlane?: GovernedEffectPlane
 }
 
 /** The part of the U8 attestor the session manager drives. */
@@ -148,6 +158,8 @@ export interface AeraWorkerStatusView {
   readonly currentEpoch?: WorkerEpochRecord
   readonly lastTerminal?: WorkerEpochRecord
   readonly epochCount: number
+  /** D-0d2: CAS whenever the governed effect plane is composed (no local grant is authority). */
+  readonly authorityMode?: 'CAS'
   readonly authClass?: string
   readonly modelReported?: string
   readonly authorityEnvelope: readonly { readonly decisionId: string, readonly grant: string, readonly codeWorkingLineIds: readonly string[] }[]
@@ -428,8 +440,12 @@ export class AeraWorkerSessionManager {
       ...(performed.length === 0 ? ['  none'] : performed.map(row => `  - ${row.subject} [${row.outcome ?? 'RECORDED'}] ${row.evidenceId}`)),
       'Recently denied effects:',
       ...(denied.length === 0 ? ['  none'] : denied.map(row => `  - ${row.subject}`)),
-      'Authority envelope (owner decisions, evaluated live on every intent; anything not listed is denied):',
-      ...(envelope.length === 0 ? ['  none — every effect will be denied'] : envelope.map(entry => `  - ${formatWorkerGrant(entry.grant)} (decision ${entry.decisionId})`)),
+      ...(this.deps.effectPlane !== undefined
+        ? ['Authority: CAS decides every effect through the Router, against the owner\'s delegation (fs.read, fs.write and exec.test with a reviewed test command only). There are no local grants.']
+        : [
+            'Authority envelope (owner decisions, evaluated live on every intent; anything not listed is denied):',
+            ...(envelope.length === 0 ? ['  none — every effect will be denied'] : envelope.map(entry => `  - ${formatWorkerGrant(entry.grant)} (decision ${entry.decisionId})`)),
+          ]),
       '',
       `Task for this Epoch (from the owner): ${redact(input.task)}`,
     ].join('\n')
@@ -502,6 +518,18 @@ export class AeraWorkerSessionManager {
     this.closeUncleanEpochs(session, workOrderId)
 
     const epochId = `aera:worker-epoch:${randomUUID()}`
+    // D-0d2: open this Epoch's governed effects BEFORE anything is recorded or spawned; a refusal is typed.
+    let governed: GovernedEpochEffects | undefined
+    if (this.deps.effectPlane !== undefined) {
+      this.gating.add(liveKey)
+      try {
+        const located = await new WorkerEffectBroker({ store: this.store, principals, gate: this.deps.gate, ...this.deps.broker }).resolveWorktree(line)
+        if (!located.ok) throw new WorkerRefusal('WORKING_LINE_LOCATION_MISMATCH', located.reason)
+        governed = await this.deps.effectPlane.openEpoch({ desktopEpochId: epochId, line, workspaceRoot: located.root })
+      } finally {
+        this.gating.delete(liveKey)
+      }
+    }
     const sequence = this.epochs(workOrderId, session.sessionId).length + 1
     const limits: WorkerEpochLimits = { ...this.limits, ...input.limits }
     const systemPrompt = buildWorkerSystemPrompt({ epochId, codeWorkingLineId })
@@ -579,8 +607,11 @@ export class AeraWorkerSessionManager {
       principals,
       gate: this.deps.gate,
       ...this.deps.broker,
+      ...(governed === undefined ? {} : { governed }),
     })
     const outcomes: WorkerBrokerOutcome[] = []
+    /** N-4: the host's attempt turn — monotonic within this desktop Epoch, never the adapter's count. */
+    let attemptTurn = 0
     let handoffEvidenceId: string | undefined
     let modelId: string | undefined
     let nextInput = orientation
@@ -631,7 +662,8 @@ export class AeraWorkerSessionManager {
         } else {
           silentTurns = 0
           const { batch } = extraction
-          for (const intent of batch.intents) {
+          if (batch.intents.length > 0) attemptTurn += 1
+          for (const [index, intent] of batch.intents.entries()) {
             const result = await broker.handleIntent({
               aeraSessionId: session.sessionId,
               // The batch's own claim; the broker refuses it unless it is current.
@@ -640,6 +672,7 @@ export class AeraWorkerSessionManager {
               codeWorkingLineId,
               currentEpochId: () => this.currentEpochId(workOrderId, session.sessionId),
               ...(modelId === undefined ? {} : { modelId }),
+              attempt: { turn: attemptTurn, ordinal: index + 1 },
             }, intent)
             outcomes.push(result)
             observations.push(result.observation)
@@ -776,9 +809,11 @@ export class AeraWorkerSessionManager {
       ...(current === undefined ? {} : { currentEpoch: current }),
       ...(lastTerminal === undefined ? {} : { lastTerminal }),
       epochCount: epochs.length,
+      ...(this.deps.effectPlane === undefined ? {} : { authorityMode: 'CAS' as const }),
       ...(authClass === undefined ? {} : { authClass }),
       ...(modelReported === undefined ? {} : { modelReported }),
-      authorityEnvelope: envelope.map(entry => ({ decisionId: entry.decisionId, grant: formatWorkerGrant(entry.grant), codeWorkingLineIds: entry.codeWorkingLineIds })),
+      // Governed: local grants are not authority, so none is shown as such (CD-2).
+      authorityEnvelope: this.deps.effectPlane !== undefined ? [] : envelope.map(entry => ({ decisionId: entry.decisionId, grant: formatWorkerGrant(entry.grant), codeWorkingLineIds: entry.codeWorkingLineIds })),
       recentEffects,
     }
   }
