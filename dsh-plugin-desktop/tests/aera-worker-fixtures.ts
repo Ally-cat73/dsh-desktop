@@ -72,6 +72,12 @@ export interface FakeScript {
    * No Authorization header is sent: the real CLI's OAuth is its own.
    */
   readonly modelRequest?: boolean
+  /**
+   * INT-1: with `modelRequest`, also send `authorization: Bearer <value>` — a
+   * TEST-ONLY stand-in for the CLI's own OAuth bearer (e.g. the rehearsal
+   * world's `testClientBearer`), never a real credential.
+   */
+  readonly modelBearer?: string
   readonly turns: readonly FakeTurn[]
 }
 
@@ -121,6 +127,7 @@ function routerCall(input) {
     const base = process.env.ANTHROPIC_BASE_URL
     if (!base) { resolve('NO_BASE_URL'); return }
     const headers = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'x-claude-code-session-id': SESSION_UUID }
+    if (SCRIPT.modelBearer) headers.authorization = 'Bearer ' + SCRIPT.modelBearer
     for (const line of (process.env.ANTHROPIC_CUSTOM_HEADERS || '').split('\n')) {
       const at = line.indexOf(':')
       if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim()

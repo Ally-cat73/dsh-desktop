@@ -453,6 +453,82 @@ interface GateStub {
   stop(): void
   status(): Record<string, unknown>
 }
+describe('U8 review N-1 (carried to INT-1): receipt notAfter, in-flight Epoch recheck, stale-answer guard', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a receipt satisfies the gate only until its notAfter, even well inside the 60 s age window', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    port.replies.push({ status: 200, body: { status: 'ATTESTED', casReceiptId: 'cas-short', notAfter: new Date(T0 + 10_000).toISOString() } })
+    const a = attestor(port)
+    expect(await a.ensureFresh()).toMatchObject({ ok: true, casReceiptId: 'cas-short' })
+    await vi.advanceTimersByTimeAsync(9_999)
+    expect(await a.ensureFresh()).toMatchObject({ ok: true, casReceiptId: 'cas-short' })
+    expect(port.posts).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    // 10 s old (< 60 s) but at its notAfter: not fresh, so one new attempt.
+    expect(await a.ensureFresh()).toMatchObject({ ok: true })
+    expect(port.posts).toHaveLength(2)
+    a.dispose()
+  })
+
+  it('an answer for an Epoch that moved while it was in flight is not an attestation — signalled or not', async () => {
+    vi.useFakeTimers({ now: T0 })
+    // Not signalled: the session's Epoch changes under the answer with no onEpochChanged.
+    const silent = fakePort()
+    let silentEpoch: string | undefined = EPOCH_A
+    silent.workerEpochId = () => silentEpoch
+    const silentPost = silent.postSigned.bind(silent)
+    silent.postSigned = async (route, build) => {
+      const answer = await silentPost(route, build)
+      silentEpoch = EPOCH_B
+      return answer
+    }
+    const a = attestor(silent)
+    expect(await a.ensureFresh()).toEqual({ ok: false, state: 'MODEL_AUTHORITY_UNAVAILABLE', code: 'EPOCH_CHANGED' })
+    expect(a.status()).toMatchObject({ state: 'MODEL_AUTHORITY_UNAVAILABLE', code: 'EPOCH_CHANGED' })
+    expect(a.status().casReceiptId).toBeUndefined()
+    a.dispose()
+    // Signalled: a begin lands while the answer is in flight; the caller is still told it proves nothing.
+    const signalled = fakePort()
+    const signalledPost = signalled.postSigned.bind(signalled)
+    signalled.postSigned = async (route, build) => {
+      const answer = await signalledPost(route, build)
+      signalled.setEpoch(EPOCH_B)
+      return answer
+    }
+    const b = attestor(signalled)
+    expect(await b.ensureFresh()).toEqual({ ok: false, state: 'MODEL_AUTHORITY_UNAVAILABLE', code: 'EPOCH_CHANGED' })
+    expect(b.status()).toMatchObject({ state: 'NOT_ATTESTED', code: 'EPOCH_CHANGED' })
+    b.dispose()
+  })
+
+  it('an answer that lands after stop() is discarded: no receipt kept, no heartbeat re-armed, the next gate attests afresh', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    let release: () => void = () => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const post = port.postSigned.bind(port)
+    port.postSigned = async (route, build) => {
+      await held
+      return await post(route, build)
+    }
+    const a = attestor(port)
+    a.setTurnPossible(true)
+    const late = a.attestNow()
+    a.stop()
+    release()
+    expect(await late).toMatchObject({ ok: true })
+    expect(a.status()).toMatchObject({ state: 'NOT_ATTESTED', heartbeat: 'DORMANT' })
+    expect(a.status().casReceiptId).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    expect(port.posts).toHaveLength(1)
+    await a.ensureFresh()
+    expect(port.posts).toHaveLength(2)
+    a.dispose()
+  })
+})
+
 const fresh = { ok: true as const, workerEpochId: EPOCH_A, casReceiptId: 'cas-1', notAfter: '2099-01-01T00:00:00.000Z', attestedAtMs: 0 }
 
 function gateStub(results: GateStub['results'], order: string[]): GateStub {
