@@ -18,14 +18,17 @@
  *   `installationKeyThumbprint`) and the JWK sha256, published to ONE public
  *   hand-over location the operator reads without touching app data (M-6).
  *
- * PRODUCTION vs DEV (review M-2). The production Keychain item and the
- * production hand-over directory are used only by the packaged bundle running
- * from the canonical install path named in `.aera-product-identity.json`.
- * Every other launch (a dev Electron, a worktree package, a rollback copy, a
- * test) gets a profile-scoped DEV item and a hand-over directory inside its
- * own user-data dir. A production custody also refuses to run at all under a
- * test environment and never accepts a substituted `security` binary; under a
- * test environment no custody ever runs the system `security` at all.
+ * PRODUCTION vs DEV (review M-2, D-0b review R-1). The production Keychain
+ * item and the production hand-over directory are used only by the packaged
+ * bundle running from the canonical install path named in
+ * `.aera-product-identity.json` ON ITS DEFAULT user-data dir (no
+ * AERA_DESKTOP_USER_DATA_DIR override). Every other launch (a dev Electron, a
+ * worktree package, a rollback copy, an isolated acceptance/verification
+ * profile of the installed bundle, a test) gets a profile-scoped DEV item and
+ * a hand-over directory inside its own user-data dir. A production custody
+ * also refuses to run at all under a test environment and never accepts a
+ * substituted `security` binary; under a test environment no custody ever runs
+ * the system `security` at all, in any spelling of its path (R-3).
  *
  * This module deliberately does not reuse `aera-gateway-keychain.ts`: that
  * bootstrap places values into `process.env` and resolves through the human
@@ -34,9 +37,9 @@
 
 import { spawn } from 'node:child_process'
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto'
-import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, writeSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import {
   canonicalAgentCredentialProofBytes,
   type AgentCredentialProofPayload,
@@ -73,22 +76,37 @@ export type InstallationKeyScope =
 
 /**
  * Decide which Keychain item this process may ever touch. PRODUCTION only for
- * the packaged bundle at the canonical install path; everything else is a DEV
- * item scoped to the user-data dir, so a dev launch can never create, read or
- * collide with the production item.
+ * the packaged bundle at the canonical install path running on its default
+ * user-data dir; everything else is a DEV item scoped to the user-data dir, so
+ * a dev launch or an isolated profile can never create, read or collide with
+ * the production item.
+ *
+ * R-1: an isolated profile of the installed bundle (AERA_DESKTOP_USER_DATA_DIR,
+ * or any userData that is not exactly `<appData>/<userDataDirectoryName>`) is
+ * DEV, not UNAVAILABLE: acceptance/verification launches keep a working,
+ * throwaway custody inside their own profile — the same treatment every other
+ * non-production launch already gets — while the production item stays
+ * reachable only from the owner's default profile.
  */
 export function resolveInstallationKeyScope(input: {
   readonly platform: NodeJS.Platform
   readonly isPackaged: boolean
   readonly execPath: string
   readonly userDataDir: string
+  /** The default `<appData>/<userDataDirectoryName>` the host derives for this bundle (main.ts). */
+  readonly defaultUserDataDir: string
+  /** The raw AERA_DESKTOP_USER_DATA_DIR value; any value at all (even one main.ts ignores) rules out PRODUCTION. */
+  readonly userDataOverride: string | undefined
 }): InstallationKeyScope {
   if (input.platform !== 'darwin') return { kind: 'UNAVAILABLE', reason: 'KEYCHAIN_REQUIRES_MACOS' }
   const canonicalExecDir = `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/`
   const canonical = input.execPath.startsWith(canonicalExecDir)
     && !input.execPath.slice(canonicalExecDir.length).includes('/')
     && !input.execPath.includes('/../')
-  if (input.isPackaged === true && canonical) {
+  const defaultProfile = input.userDataOverride === undefined
+    && input.defaultUserDataDir !== ''
+    && input.userDataDir === input.defaultUserDataDir
+  if (input.isPackaged === true && canonical && defaultProfile) {
     return { kind: 'PRODUCTION', keychain: WORKER_INSTALLATION_KEYCHAIN_PRODUCTION, handOverDir: WORKER_INSTALLATION_PUBLIC_HANDOVER_DIR_PRODUCTION }
   }
   const tag = createHash('sha256').update(input.userDataDir, 'utf8').digest('hex').slice(0, 16)
@@ -209,7 +227,11 @@ interface KeychainPort {
   add(item: KeychainItemName, value: string): Promise<void>
 }
 
-function securityCliKeychain(securityPath: string, timeoutMs: number): KeychainPort {
+/**
+ * The `security` CLI port. Exported ONLY so the spec can pin its defensive
+ * value guard; no other module may use it (a static test enforces this).
+ */
+export function securityCliKeychainPort(securityPath: string, timeoutMs: number): KeychainPort {
   const find = async (item: KeychainItemName, withValue: boolean): Promise<SecurityRun> => {
     const run = await runSecurity(securityPath, ['find-generic-password', '-a', item.account, '-s', item.service, ...(withValue ? ['-w'] : [])], { captureStdout: withValue, timeoutMs })
     if (run.timedOut) throw custodyError('KEYCHAIN_TIMEOUT')
@@ -282,6 +304,16 @@ export interface WorkerInstallationKeyCustodyOptions {
 const isTestEnvironment = (environment: Readonly<Record<string, string | undefined>>): boolean =>
   environment.VITEST !== undefined || environment.VITEST_WORKER_ID !== undefined || environment.NODE_ENV === 'test'
 
+/** R-3: does this path name the system `security` binary in any spelling (`//`, `./`, `../`, a link to it)? */
+function isSystemSecurity(path: string): boolean {
+  if (normalize(path).replace(/^\/+/u, '/') === SYSTEM_SECURITY) return true
+  try {
+    return realpathSync(path) === realpathSync(SYSTEM_SECURITY)
+  } catch {
+    return false
+  }
+}
+
 export function createWorkerInstallationKeyCustody(
   scope: InstallationKeyScope,
   options: WorkerInstallationKeyCustodyOptions = {},
@@ -294,12 +326,12 @@ export function createWorkerInstallationKeyCustody(
   else if (scope.kind === 'PRODUCTION' && isTestEnvironment(environment)) refusal = 'PRODUCTION_SCOPE_REFUSED_IN_TEST'
   else if (scope.kind === 'PRODUCTION' && options.securityPath !== undefined && options.securityPath !== SYSTEM_SECURITY) refusal = 'PRODUCTION_SECURITY_PATH_FIXED'
   // Tripwire: a test never reaches the real Keychain, not even for a DEV item.
-  else if (isTestEnvironment(environment) && (options.securityPath ?? SYSTEM_SECURITY) === SYSTEM_SECURITY) refusal = 'SYSTEM_KEYCHAIN_REFUSED_IN_TEST'
+  else if (isTestEnvironment(environment) && isSystemSecurity(options.securityPath ?? SYSTEM_SECURITY)) refusal = 'SYSTEM_KEYCHAIN_REFUSED_IN_TEST'
   else if (!ITEM_NAME.test(scope.keychain.service) || !ITEM_NAME.test(scope.keychain.account)) refusal = 'KEYCHAIN_UNAVAILABLE'
 
   const keychain = scope.kind === 'UNAVAILABLE' || refusal !== undefined
     ? undefined
-    : securityCliKeychain(scope.kind === 'PRODUCTION' ? SYSTEM_SECURITY : (options.securityPath ?? SYSTEM_SECURITY), options.timeoutMs ?? WORKER_INSTALLATION_KEYCHAIN_TIMEOUT_MS)
+    : securityCliKeychainPort(scope.kind === 'PRODUCTION' ? SYSTEM_SECURITY : (options.securityPath ?? SYSTEM_SECURITY), options.timeoutMs ?? WORKER_INSTALLATION_KEYCHAIN_TIMEOUT_MS)
   const item = scope.kind === 'UNAVAILABLE' ? undefined : scope.keychain
   const handOverDir = scope.kind === 'UNAVAILABLE' ? undefined : scope.handOverDir
 

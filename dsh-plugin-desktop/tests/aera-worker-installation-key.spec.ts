@@ -10,8 +10,8 @@
  * directory are never reachable from a test or dev configuration (review M-2).
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createHash, createPrivateKey, createPublicKey, verify } from 'node:crypto'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync, readdirSync } from 'node:fs'
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, verify } from 'node:crypto'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { inspect } from 'node:util'
@@ -56,6 +56,8 @@ const {
   resolveInstallationKeyScope,
   createWorkerInstallationKeyCustody,
   installationKeyThumbprint,
+  publishPublicHandOverFile,
+  securityCliKeychainPort,
 } = custodyModule
 const { parseWorkerAction, handleAeraWorkerActionRequest, handleAeraWorkerStatusRequest } = await import('../src/aera-worker-route.ts')
 const { composeAeraWorker, aeraWorkerStatus, performAeraWorkerAction } = await import('../src/aera-worker-composition.ts')
@@ -83,7 +85,7 @@ interface FakeSecurity {
   readonly root: string
   state(): Record<string, string>
   log(): readonly { argv: string[], stdin?: string[] }[]
-  mode(mode: 'normal' | 'hang-add' | 'fail-add' | 'readback-mismatch' | 'exists-error'): void
+  mode(mode: 'normal' | 'hang-add' | 'fail-add' | 'readback-mismatch' | 'exists-error' | 'store-then-fail-add' | 'store-then-hang'): void
   seed(service: string, account: string, value: string): void
 }
 
@@ -128,6 +130,8 @@ if (args.length === 1 && args[0] === '-i') {
       if (key in state && !tokens.includes('-U')) { process.stderr.write('already exists\\n'); process.exit(45) }
       state[key] = value
       save()
+      if (mode === 'store-then-fail-add') process.exit(1)
+      if (mode === 'store-then-hang') { setInterval(() => {}, 1000); return }
     }
     process.exit(0)
   })
@@ -156,8 +160,21 @@ if (args.length === 1 && args[0] === '-i') {
   }
 }
 
+/** The default Electron user-data dir of the installed bundle (`<appData>/<userDataDirectoryName>`, main.ts). */
+const DEFAULT_USER_DATA_DIR = '/Users/Allyd/Library/Application Support/Aera Code'
+const INSTALLED_EXEC_PATH = `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/Aera Code`
+/** The installed, packaged bundle on its default profile — the only PRODUCTION launch. */
+const INSTALLED_DEFAULT = Object.freeze({
+  platform: 'darwin' as const,
+  isPackaged: true,
+  execPath: INSTALLED_EXEC_PATH,
+  userDataDir: DEFAULT_USER_DATA_DIR,
+  defaultUserDataDir: DEFAULT_USER_DATA_DIR,
+  userDataOverride: undefined,
+})
+
 function devScope(userDataDir = mkdtempSync(join(tmpdir(), 'd0b-user-data-'))) {
-  const scope = resolveInstallationKeyScope({ platform: 'darwin', isPackaged: false, execPath: '/some/dev/electron/Electron', userDataDir })
+  const scope = resolveInstallationKeyScope({ platform: 'darwin', isPackaged: false, execPath: '/some/dev/electron/Electron', userDataDir, defaultUserDataDir: DEFAULT_USER_DATA_DIR, userDataOverride: undefined })
   if (scope.kind !== 'DEV') throw new Error('expected a DEV scope')
   return scope
 }
@@ -239,12 +256,12 @@ describe('M-2: the PRODUCTION Keychain item is unreachable from dev and test con
     const userDataA = mkdtempSync(join(tmpdir(), 'd0b-ud-a-'))
     const userDataB = mkdtempSync(join(tmpdir(), 'd0b-ud-b-'))
     const configs = [
-      { platform: 'darwin' as const, isPackaged: false, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/Aera Code`, userDataDir: userDataA },
-      { platform: 'darwin' as const, isPackaged: false, execPath: '/Users/Allyd/AERA-Workspace/worktrees/x/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron', userDataDir: userDataA },
-      { platform: 'darwin' as const, isPackaged: true, execPath: '/Users/Allyd/AERA-Workspace/worktrees/x/release/mac-arm64/Aera Code.app/Contents/MacOS/Aera Code', userDataDir: userDataA },
-      { platform: 'darwin' as const, isPackaged: true, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}.pre-desktop-worker-20261001/Contents/MacOS/Aera Code`, userDataDir: userDataB },
-      { platform: 'darwin' as const, isPackaged: true, execPath: `/Applications/Aera Code.app/Contents/MacOS/Aera Code`, userDataDir: userDataB },
-      { platform: 'darwin' as const, isPackaged: true, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}/../Aera Code.app/Contents/MacOS/Aera Code`, userDataDir: userDataB },
+      { platform: 'darwin' as const, isPackaged: false, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/Aera Code`, userDataDir: userDataA, defaultUserDataDir: DEFAULT_USER_DATA_DIR, userDataOverride: undefined },
+      { platform: 'darwin' as const, isPackaged: false, execPath: '/Users/Allyd/AERA-Workspace/worktrees/x/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron', userDataDir: userDataA, defaultUserDataDir: DEFAULT_USER_DATA_DIR, userDataOverride: undefined },
+      { platform: 'darwin' as const, isPackaged: true, execPath: '/Users/Allyd/AERA-Workspace/worktrees/x/release/mac-arm64/Aera Code.app/Contents/MacOS/Aera Code', userDataDir: userDataA, defaultUserDataDir: DEFAULT_USER_DATA_DIR, userDataOverride: undefined },
+      { platform: 'darwin' as const, isPackaged: true, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}.pre-desktop-worker-20261001/Contents/MacOS/Aera Code`, userDataDir: userDataB, defaultUserDataDir: DEFAULT_USER_DATA_DIR, userDataOverride: undefined },
+      { platform: 'darwin' as const, isPackaged: true, execPath: `/Applications/Aera Code.app/Contents/MacOS/Aera Code`, userDataDir: userDataB, defaultUserDataDir: DEFAULT_USER_DATA_DIR, userDataOverride: undefined },
+      { platform: 'darwin' as const, isPackaged: true, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}/../Aera Code.app/Contents/MacOS/Aera Code`, userDataDir: userDataB, defaultUserDataDir: DEFAULT_USER_DATA_DIR, userDataOverride: undefined },
     ]
     const accounts = new Set<string>()
     for (const config of configs) {
@@ -266,7 +283,7 @@ describe('M-2: the PRODUCTION Keychain item is unreachable from dev and test con
   })
 
   it('only the installed, packaged bundle at the canonical path resolves to PRODUCTION (pure resolution)', () => {
-    const scope = resolveInstallationKeyScope({ platform: 'darwin', isPackaged: true, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/Aera Code`, userDataDir: '/nonexistent/ud' })
+    const scope = resolveInstallationKeyScope(INSTALLED_DEFAULT)
     expect(scope.kind).toBe('PRODUCTION')
     if (scope.kind !== 'PRODUCTION') return
     expect(scope.keychain).toEqual(WORKER_INSTALLATION_KEYCHAIN_PRODUCTION)
@@ -274,7 +291,7 @@ describe('M-2: the PRODUCTION Keychain item is unreachable from dev and test con
   })
 
   it('a PRODUCTION custody refuses to run under a test environment or with an injected security binary — nothing is spawned', async () => {
-    const scope = resolveInstallationKeyScope({ platform: 'darwin', isPackaged: true, execPath: `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/Aera Code`, userDataDir: '/nonexistent/ud' })
+    const scope = resolveInstallationKeyScope(INSTALLED_DEFAULT)
     const fake = makeFakeSecurity()
     const underTest = createWorkerInstallationKeyCustody(scope)
     expect(underTest.view()).toMatchObject({ status: 'UNAVAILABLE', scope: 'PRODUCTION', reason: 'PRODUCTION_SCOPE_REFUSED_IN_TEST' })
@@ -295,6 +312,222 @@ describe('M-2: the PRODUCTION Keychain item is unreachable from dev and test con
     await expect(custody.enrol()).rejects.toMatchObject({ code: 'SYSTEM_KEYCHAIN_REFUSED_IN_TEST' })
     const explicit = createWorkerInstallationKeyCustody(devScope(), { securityPath: '/usr/bin/security' })
     await expect(explicit.enrol()).rejects.toMatchObject({ code: 'SYSTEM_KEYCHAIN_REFUSED_IN_TEST' })
+    expect(trip.hits).toEqual([])
+  })
+})
+
+/* ------------------------------------------- D-0b-F: review R-1, R-2, R-3 regressions */
+
+describe('D-0b-F R-1: PRODUCTION also requires the default user-data dir (no isolated profile)', () => {
+  it('the installed, packaged bundle on its default profile is PRODUCTION', () => {
+    expect(resolveInstallationKeyScope(INSTALLED_DEFAULT).kind).toBe('PRODUCTION')
+  })
+
+  it('the installed bundle with AERA_DESKTOP_USER_DATA_DIR or a non-default userData resolves to a profile-scoped DEV item, never PRODUCTION', () => {
+    const isolated = mkdtempSync(join(tmpdir(), 'd0bf-isolated-profile-'))
+    const variants = [
+      // The acceptance/verification override (main.ts) on the installed bundle.
+      { ...INSTALLED_DEFAULT, userDataDir: isolated, userDataOverride: isolated },
+      // Any override present, even one main.ts ignores or one naming the default path.
+      { ...INSTALLED_DEFAULT, userDataOverride: '' },
+      { ...INSTALLED_DEFAULT, userDataOverride: 'relative/profile' },
+      { ...INSTALLED_DEFAULT, userDataOverride: DEFAULT_USER_DATA_DIR },
+      // userData moved some other way (no env override): still not the default.
+      { ...INSTALLED_DEFAULT, userDataDir: isolated },
+      { ...INSTALLED_DEFAULT, userDataDir: `${DEFAULT_USER_DATA_DIR}/` },
+      { ...INSTALLED_DEFAULT, userDataDir: '/Users/Allyd/Library/Application Support/../Application Support/Aera Code' },
+      { ...INSTALLED_DEFAULT, userDataDir: '', defaultUserDataDir: '' },
+    ]
+    for (const variant of variants) {
+      const scope = resolveInstallationKeyScope(variant)
+      expect(scope.kind, JSON.stringify(variant)).toBe('DEV')
+      if (scope.kind !== 'DEV') continue
+      expect(scope.keychain.service).not.toBe(WORKER_INSTALLATION_KEYCHAIN_PRODUCTION.service)
+      expect(scope.keychain.account).not.toBe(WORKER_INSTALLATION_KEYCHAIN_PRODUCTION.account)
+      expect(scope.handOverDir.startsWith(WORKER_INSTALLATION_PUBLIC_HANDOVER_DIR_PRODUCTION)).toBe(false)
+      expect(scope.handOverDir).toBe(join(variant.userDataDir, 'aera-worker-public-dev'))
+    }
+    // The isolated profile is scoped to its own dir: a distinct dev item per profile.
+    const a = resolveInstallationKeyScope(variants[0]!)
+    const b = resolveInstallationKeyScope({ ...variants[0]!, userDataDir: mkdtempSync(join(tmpdir(), 'd0bf-isolated-other-')) })
+    expect(a.kind === 'DEV' && b.kind === 'DEV' && a.keychain.account !== b.keychain.account).toBe(true)
+  })
+
+  it('the host wiring passes the override env and the <appData>/<userDataDirectoryName> default, exactly as main.ts derives them', () => {
+    const collab = readFileSync(join(SRC, 'aera-collab.ts'), 'utf8')
+    const main = readFileSync(join(SRC, 'main.ts'), 'utf8')
+    expect(collab).toContain('userDataOverride: process.env.AERA_DESKTOP_USER_DATA_DIR,')
+    expect(collab).toContain("defaultUserDataDir: join(electron.app.getPath('appData'), AERA_CODE_PRODUCT.userDataDirectoryName),")
+    expect(collab).toContain("userDataDir: electron.app.getPath('userData'),")
+    expect(main).toContain('const userDataOverride = process.env.AERA_DESKTOP_USER_DATA_DIR')
+    expect(main).toContain("const appData = app.getPath('appData')")
+    expect(main).toContain('join(appData, AERA_CODE_PRODUCT.userDataDirectoryName)')
+  })
+})
+
+describe('D-0b-F R-2: regression tests for the defensive guards (reviewer probes P1–P5)', () => {
+  it('P3: a nested executable inside the canonical bundle is not PRODUCTION', () => {
+    for (const execPath of [
+      `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/nested/Aera Code`,
+      `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS/Helpers/Other.app/Contents/MacOS/Aera Code`,
+      `${AERA_CODE_CANONICAL_INSTALL_PATH}/Contents/MacOS//Aera Code`,
+    ]) expect(resolveInstallationKeyScope({ ...INSTALLED_DEFAULT, execPath }).kind, execPath).toBe('DEV')
+  })
+
+  it('P4: a scope whose item names could reach the security -i line parser is refused before anything is spawned', async () => {
+    const fake = makeFakeSecurity()
+    const handOverDir = join(mkdtempSync(join(tmpdir(), 'd0bf-bad-item-')), 'handover')
+    const ok = devScope().keychain
+    const bad = [
+      { service: ok.service, account: 'dev-x -w injected' },
+      { service: ok.service, account: 'dev-x\nadd-generic-password -a a -s b -w c' },
+      { service: ok.service, account: 'dev-"quoted"' },
+      { service: ok.service, account: 'dev-#comment' },
+      { service: ok.service, account: '' },
+      { service: ok.service, account: 'a'.repeat(129) },
+      { service: 'svc with space', account: ok.account },
+      { service: 'svc\n', account: ok.account },
+    ]
+    for (const keychain of bad) {
+      const custody = createWorkerInstallationKeyCustody({ kind: 'DEV', keychain, handOverDir }, { securityPath: fake.path })
+      expect(custody.view(), JSON.stringify(keychain)).toMatchObject({ status: 'UNAVAILABLE', scope: 'DEV', reason: 'KEYCHAIN_UNAVAILABLE' })
+      await expect(custody.refresh()).resolves.toMatchObject({ status: 'UNAVAILABLE', reason: 'KEYCHAIN_UNAVAILABLE' })
+      await expect(custody.enrol()).rejects.toMatchObject({ code: 'KEYCHAIN_UNAVAILABLE' })
+    }
+    expect(fake.log()).toEqual([])
+    expect(fake.state()).toEqual({})
+    expect(existsSync(handOverDir)).toBe(false)
+  })
+
+  it('P2: the Keychain port refuses a non-base64 add value without spawning security (no stdin command smuggling)', async () => {
+    const fake = makeFakeSecurity()
+    const port = securityCliKeychainPort(fake.path, 2_000)
+    const item = devScope().keychain
+    for (const value of [
+      'QUFB\ndelete-generic-password -a x -s y',
+      'QUFB -U',
+      'QUFB"',
+      'QUFB#',
+      'QUFB\n',
+      '',
+      'QUFB===',
+    ]) await expect(port.add(item, value), JSON.stringify(value)).rejects.toMatchObject({ code: 'KEYCHAIN_ADD_FAILED' })
+    expect(fake.log()).toEqual([])
+    expect(fake.state()).toEqual({})
+    // A well-formed value is accepted by the same port.
+    await expect(port.add(item, 'QUFBQQ==')).resolves.toBeUndefined()
+    expect(fake.state()[`${item.service}|${item.account}`]).toBe('QUFBQQ==')
+  })
+
+  it('P2: only the custody module uses the security CLI port', () => {
+    const srcFiles = (dir = SRC): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry =>
+      entry.isDirectory() ? srcFiles(join(dir, entry.name)) : /\.(ts|tsx)$/u.test(entry.name) ? [join(dir, entry.name)] : [])
+    for (const file of srcFiles()) {
+      if (file.endsWith('/aera-worker-installation-key.ts')) continue
+      expect(readFileSync(file, 'utf8'), file).not.toContain('securityCliKeychainPort')
+    }
+  })
+
+  it('P1: the hand-over refuses a symlinked directory and a directory owned by another user', () => {
+    const base = mkdtempSync(join(tmpdir(), 'd0bf-handover-'))
+    // Symlinked directory: refused, the symlink target stays empty.
+    const victim = join(base, 'victim')
+    mkdirSync(victim)
+    const link = join(base, 'link')
+    symlinkSync(victim, link)
+    expect(() => publishPublicHandOverFile(link, WORKER_INSTALLATION_PUBLIC_JWK_FILENAME, '{}')).toThrow(expect.objectContaining({ code: 'PUBLIC_HANDOVER_UNSAFE' }) as Error)
+    expect(readdirSync(victim)).toEqual([])
+    // A directory owned by another uid (root-owned /usr): refused before any chmod or write.
+    const foreign = '/usr'
+    expect(statSync(foreign).uid).not.toBe(process.getuid!())
+    expect(() => publishPublicHandOverFile(foreign, WORKER_INSTALLATION_PUBLIC_JWK_FILENAME, '{}')).toThrow(expect.objectContaining({ code: 'PUBLIC_HANDOVER_UNSAFE' }) as Error)
+    expect(existsSync(join(foreign, WORKER_INSTALLATION_PUBLIC_JWK_FILENAME))).toBe(false)
+    // A traversal filename is refused.
+    expect(() => publishPublicHandOverFile(victim, '../escape.json', '{}')).toThrow(expect.objectContaining({ code: 'PUBLIC_HANDOVER_UNSAFE' }) as Error)
+    expect(existsSync(join(base, 'escape.json'))).toBe(false)
+  })
+
+  it('P1: a world-writable own directory is tightened to 0755 and a pre-planted symlink at the target is replaced, not followed', () => {
+    const base = mkdtempSync(join(tmpdir(), 'd0bf-handover-'))
+    const dir = join(base, 'handover')
+    mkdirSync(dir)
+    chmodSync(dir, 0o777)
+    const outside = join(base, 'outside.txt')
+    writeFileSync(outside, 'untouched')
+    symlinkSync(outside, join(dir, WORKER_INSTALLATION_PUBLIC_JWK_FILENAME))
+    const target = publishPublicHandOverFile(dir, WORKER_INSTALLATION_PUBLIC_JWK_FILENAME, '{"public":true}')
+    expect(statSync(dir).mode & 0o777).toBe(0o755)
+    expect(lstatSync(target).isSymbolicLink()).toBe(false)
+    expect(statSync(target).mode & 0o777).toBe(0o644)
+    expect(readFileSync(target, 'utf8')).toBe('{"public":true}')
+    expect(readFileSync(outside, 'utf8')).toBe('untouched')
+  })
+
+  it('P5: no failure path of enrol or refresh leaks the private value into an error, the view or a log line', async () => {
+    const cases = [
+      { mode: 'store-then-fail-add' as const, code: 'KEYCHAIN_ADD_FAILED', timeoutMs: undefined },
+      { mode: 'readback-mismatch' as const, code: 'KEYCHAIN_READBACK_MISMATCH', timeoutMs: undefined },
+      { mode: 'store-then-hang' as const, code: 'KEYCHAIN_TIMEOUT', timeoutMs: 400 },
+    ]
+    for (const testCase of cases) {
+      const logs: string[] = []
+      const { fake, scope, custody } = devCustody({ log: line => logs.push(line), ...(testCase.timeoutMs === undefined ? {} : { timeoutMs: testCase.timeoutMs }) })
+      fake.mode(testCase.mode)
+      let caught: unknown
+      try {
+        await custody.enrol()
+      } catch (error) {
+        caught = error
+      }
+      expect(caught, testCase.mode).toMatchObject({ code: testCase.code })
+      // The fake stored the generated value before failing: that is the secret to scan for.
+      const stored = fake.state()[`${scope.keychain.service}|${scope.keychain.account}`]
+      expect(typeof stored, testCase.mode).toBe('string')
+      const error = caught as Error & { code: string, cause?: unknown }
+      expect(error.message).toBe(`Worker installation key: ${testCase.code}`)
+      for (const surface of [
+        error.message, String(error), error.stack ?? '', JSON.stringify(error), inspect(error, { depth: 8, showHidden: true }),
+        JSON.stringify(custody.view()), inspect(custody, { depth: 8, showHidden: true }), logs.join('\n'), JSON.stringify(fake.log()),
+      ]) assertNoKeyMaterial(surface, secretsOf(stored!))
+      expect(custody.view()).toMatchObject({ status: 'UNAVAILABLE', reason: testCase.code })
+    }
+
+    // refresh() over a stored item that is not an Ed25519 key: UNAVAILABLE, and the value is never echoed.
+    const logs: string[] = []
+    const { fake, scope, custody } = devCustody({ log: line => logs.push(line) })
+    const notEd25519 = (generateKeyPairSync('x25519').privateKey.export({ type: 'pkcs8', format: 'der' }) as Buffer).toString('base64')
+    fake.seed(scope.keychain.service, scope.keychain.account, notEd25519)
+    await expect(custody.refresh()).resolves.toMatchObject({ status: 'UNAVAILABLE', reason: 'KEYCHAIN_ITEM_MALFORMED' })
+    let enrolError: unknown
+    try {
+      await custody.enrol()
+    } catch (error) {
+      enrolError = error
+    }
+    expect(enrolError).toMatchObject({ code: 'WORKER_KEY_ALREADY_ENROLLED' })
+    const der = Buffer.from(notEd25519, 'base64')
+    for (const surface of [
+      JSON.stringify(custody.view()), logs.join('\n'), String(enrolError), inspect(enrolError, { depth: 8, showHidden: true }),
+    ]) {
+      expect(surface).not.toContain(notEd25519)
+      expect(surface).not.toContain(der.subarray(16).toString('base64url'))
+    }
+  })
+})
+
+describe('D-0b-F R-3: the test-environment tripwire normalises the security path', () => {
+  it('a non-canonical spelling of /usr/bin/security (or a link to it) is still refused under a test environment — nothing is spawned', () => {
+    const base = mkdtempSync(join(tmpdir(), 'd0bf-tripwire-'))
+    const alias = join(base, 'kc-tool')
+    symlinkSync('/usr/bin/security', alias)
+    for (const securityPath of ['/usr/bin//security', '/usr/bin/../bin/security', '/usr/bin/./security', '//usr/bin/security', alias]) {
+      // view() only: the constructor decides the refusal and never spawns.
+      const custody = createWorkerInstallationKeyCustody(devScope(), { securityPath })
+      expect(custody.view(), securityPath).toMatchObject({ status: 'UNAVAILABLE', scope: 'DEV', reason: 'SYSTEM_KEYCHAIN_REFUSED_IN_TEST' })
+    }
+    // A fake binary is still accepted under test.
+    const fake = makeFakeSecurity()
+    expect(createWorkerInstallationKeyCustody(devScope(), { securityPath: fake.path }).view()).toMatchObject({ reason: 'KEYCHAIN_NOT_YET_CONSULTED' })
     expect(trip.hits).toEqual([])
   })
 })

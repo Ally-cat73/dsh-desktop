@@ -14,6 +14,7 @@
  * gateway credentials.
  */
 
+import { join } from 'node:path'
 // Namespace import: see the note in `electron-reveal.ts`.
 import * as electron from 'electron'
 import type { Context } from '@deepseek-ai/cordis'
@@ -45,6 +46,7 @@ import {
 } from './aera-worker-route.ts'
 import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from './aera-worker-composition.ts'
 import { createWorkerInstallationKeyCustody, resolveInstallationKeyScope, type InstallationKeyScope } from './aera-worker-installation-key.ts'
+import { AERA_CODE_PRODUCT } from './product-brand.ts'
 import { WorkContextWindow } from './work-context-window.ts'
 
 /** Stable Cordis plugin name. */
@@ -260,8 +262,10 @@ export function apply(ctx: Context): void {
    */
   /*
    * D-0b: the Worker installation-key custody. PRODUCTION Keychain item only
-   * for the packaged bundle at the canonical install path; any other launch
-   * gets a DEV item scoped to its user-data dir (review M-2). Nothing is ever
+   * for the packaged bundle at the canonical install path on its default
+   * user-data dir; any other launch, including an isolated
+   * AERA_DESKTOP_USER_DATA_DIR profile, gets a DEV item scoped to its
+   * user-data dir (review M-2, D-0b review R-1). Nothing is ever
    * enrolled here: only the owner's ENROL_WORKER_KEY click does that.
    */
   let installationKeyScope: InstallationKeyScope
@@ -271,6 +275,9 @@ export function apply(ctx: Context): void {
       isPackaged: electron.app.isPackaged,
       execPath: process.execPath,
       userDataDir: electron.app.getPath('userData'),
+      // R-1: PRODUCTION only on the default profile, derived exactly as main.ts does.
+      defaultUserDataDir: join(electron.app.getPath('appData'), AERA_CODE_PRODUCT.userDataDirectoryName),
+      userDataOverride: process.env.AERA_DESKTOP_USER_DATA_DIR,
     })
   } catch {
     installationKeyScope = { kind: 'UNAVAILABLE', reason: 'ELECTRON_APP_UNAVAILABLE' }
