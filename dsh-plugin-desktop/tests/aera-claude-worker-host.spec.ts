@@ -7,7 +7,7 @@
  * model/runtime identity · usage handling · fail-closed guard · no orphans ·
  * binary pin. No network, no provider call.
  */
-import { existsSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -20,7 +20,25 @@ import {
   verifyClaudeWorkerBinary,
 } from '../src/aera-claude-worker-host.ts'
 import { DEFAULT_WORKER_EPOCH_LIMITS, type WorkerEpochHandle, type WorkerLiveEvent } from '../src/aera-worker-adapter.ts'
-import { FAKE_MODEL, FAKE_VERSION, POISONED_PARENT_ENV, makeFakeClaude, type FakeScript, testHotPath } from './aera-worker-fixtures.ts'
+import { FAKE_MODEL, FAKE_VERSION, POISONED_PARENT_ENV, TEST_ROUTER_KEY, makeFakeClaude, type FakeScript, testHotPath } from './aera-worker-fixtures.ts'
+
+/** PE-2 / F1 (2.1.280): the fixed suppression env; the bootstrap GET carried ANTHROPIC_CUSTOM_HEADERS to api.anthropic.com without it. */
+const SUPPRESSION_KEYS = ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER', 'DISABLE_ERROR_REPORTING', 'DISABLE_TELEMETRY']
+const EXPECTED_BASE_KEYS = ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER', 'DISABLE_ERROR_REPORTING', 'DISABLE_TELEMETRY', 'HOME', 'LOGNAME', 'PATH', 'USER']
+const EXPECTED_SPAWN_KEYS = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', ...EXPECTED_BASE_KEYS].sort()
+/** A parent that tries to switch the suppression off or add CLI config: none of it may reach the worker. */
+const SUPPRESSION_POISONED_PARENT_ENV: Readonly<Record<string, string>> = Object.freeze({
+  ...POISONED_PARENT_ENV,
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '',
+  DISABLE_TELEMETRY: '',
+  DISABLE_ERROR_REPORTING: '',
+  DISABLE_AUTOUPDATER: '0',
+  CLAUDE_CONFIG_DIR: '/should/never/leak',
+  CLAUDE_CODE_USE_BEDROCK: '1',
+  ANTHROPIC_UNIX_SOCKET: '/should/never/leak.sock',
+})
+/** macOS injects `__CF_USER_TEXT_ENCODING` into every process; nothing else may appear. */
+const names = (line: string | undefined): string[] => (line ?? '').split(',').filter(key => key !== '' && key !== '__CF_USER_TEXT_ENCODING').sort()
 
 const LIMITS = { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 10_000, epochTimeoutMs: 30_000, cancelGraceMs: 300 }
 
@@ -109,11 +127,36 @@ describe('pin resolution and verification (§7)', () => {
 })
 
 describe('clean environment and fixed argv (§7/§13)', () => {
-  it('builds the base env (preflight `--version`) from nothing: exactly HOME, PATH, USER, LOGNAME', () => {
-    const env = buildClaudeWorkerBaseEnv(POISONED_PARENT_ENV)
-    expect(Object.keys(env).sort()).toEqual([...CLAUDE_WORKER_BASE_ENV_KEYS].sort())
+  it('builds the base env (preflight `--version`) from nothing: exactly HOME, PATH, USER, LOGNAME plus the fixed suppression four', () => {
+    const env = buildClaudeWorkerBaseEnv(SUPPRESSION_POISONED_PARENT_ENV)
+    expect(Object.keys(env).sort()).toEqual(EXPECTED_BASE_KEYS)
+    expect([...CLAUDE_WORKER_BASE_ENV_KEYS].sort()).toEqual(EXPECTED_BASE_KEYS)
     expect(env.PATH).toBe('/usr/bin:/bin')
-    expect(JSON.stringify(env)).not.toMatch(/SHOULD-NEVER-LEAK|CLAUDE_CODE|ANTHROPIC|AERA_/u)
+    for (const key of SUPPRESSION_KEYS) expect(env[key], key).toBe('1')
+    expect(env.HOME).toBe(SUPPRESSION_POISONED_PARENT_ENV.HOME)
+    expect(JSON.stringify(env)).not.toMatch(/SHOULD-NEVER-LEAK|should\/never|CLAUDE_CODE_MESSAGING|CLAUDE_CONFIG_DIR|BEDROCK|ANTHROPIC|AERA_/u)
+  })
+
+  it('PE-2 / F1: the fake CLI receives exactly the suppression-bearing allow-list at preflight and at spawn; the Router key only in ANTHROPIC_CUSTOM_HEADERS', async () => {
+    const envLog = join(mkdtempSync(join(tmpdir(), 'aera-env-log-')), 'env-names.txt')
+    const { pin } = await makeFakeClaude({ envLog, envLogProbe: TEST_ROUTER_KEY, turns: [{ text: 'ok' }] })
+    const scratchRoot = mkdtempSync(join(tmpdir(), 'aera-host-scratch-'))
+    const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: SUPPRESSION_POISONED_PARENT_ENV, scratchRoot, hotPath: testHotPath() })
+    const handle = await adapter.startEpoch({
+      epochId: 'aera:worker-epoch:00000000-0000-4000-8000-000000000002', aeraSessionId: 's', workOrderId: 'w', codeWorkingLineId: 'l', systemPrompt: 'p', limits: LIMITS,
+    })
+    expect((await handle.runTurn('hello')).kind).toBe('TURN_COMPLETED')
+    await handle.endInput()
+    await handle.terminal()
+    const lines = readFileSync(envLog, 'utf8').trim().split('\n')
+    const phase = (prefix: string): string[] => lines.filter(line => line.startsWith(`${prefix}:`)).map(line => line.slice(prefix.length + 1))
+    expect(phase('preflight')).toHaveLength(1)
+    expect(phase('spawn')).toHaveLength(1)
+    expect(names(phase('preflight')[0])).toEqual(EXPECTED_BASE_KEYS)
+    expect(names(phase('spawn')[0])).toEqual(EXPECTED_SPAWN_KEYS)
+    expect(names(phase('preflight-probe')[0])).toEqual([])
+    expect(names(phase('spawn-probe')[0])).toEqual(['ANTHROPIC_CUSTOM_HEADERS'])
+    expect(lines.join('\n')).not.toContain(TEST_ROUTER_KEY)
   })
 
   it('argv removes every executor and never uses --bare / --resume / --mcp-config', () => {
@@ -127,13 +170,13 @@ describe('clean environment and fixed argv (§7/§13)', () => {
     for (const flag of ['--bare', '--resume', '--continue', '--mcp-config', '--add-dir', '--dangerously-skip-permissions']) expect(argv).not.toContain(flag)
   })
 
-  it('the running worker sees only the four base variables plus the H-1 hot-path pair, even with a poisoned parent', async () => {
+  it('the running worker sees only the base variables (four + suppression four) plus the H-1 hot-path pair, even with a poisoned parent', async () => {
     const { handle } = await start({ turns: [{ text: 'ENV=${ENV_KEYS}' }] })
     const turn = await handle.runTurn('hello')
     expect(turn.kind).toBe('TURN_COMPLETED')
     const keys = turn.kind === 'TURN_COMPLETED' ? /ENV=([^\n]*)/u.exec(turn.text)?.[1]?.split(',') ?? [] : []
     // `__CF_USER_TEXT_ENCODING` is injected by macOS itself into every process; nothing else may appear.
-    expect(keys.filter(key => key !== '__CF_USER_TEXT_ENCODING').sort()).toEqual(['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'HOME', 'LOGNAME', 'PATH', 'USER'])
+    expect(keys.filter(key => key !== '__CF_USER_TEXT_ENCODING').sort()).toEqual(EXPECTED_SPAWN_KEYS)
     await handle.endInput()
   })
 })
@@ -205,6 +248,13 @@ describe('fail-closed guard (§7/§11)', () => {
   it('refuses malformed output', () => refused({ malformed: true }, /protocol violation/u, 'MALFORMED_OUTPUT'))
   it('detects a native file write into the scratch cwd', () => refused({ writeFileInCwd: 'pwned.txt', text: 'x' }, /pwned\.txt/u, 'NATIVE_EFFECT_DETECTED'))
   it('reports NOT_LOGGED_IN honestly and never automates a login', () => refused({ authFail: true }, /not logged in/u, 'AUTH_UNAVAILABLE'))
+  it('PE-4: a Router Sentinel 403 (CLI authentication_failed) keeps the status but says governance refusal, not login', async () => {
+    await refused({ authFail: true, authFailText: 'API Error: 403 {"type":"error","error":{"type":"permission_error","message":"Sentinel blocked this request"}}' },
+      /^refused by Aera governance \(Sentinel\), not a login problem/u, 'AUTH_UNAVAILABLE')
+    const { handle } = await start({ turns: [{ authFail: true }] })
+    await handle.runTurn('go')
+    expect((await handle.terminal()).reason).not.toMatch(/Sentinel|governance/u)
+  })
 })
 
 describe('cancellation, crash, timeout, orphans (§7/§14)', () => {

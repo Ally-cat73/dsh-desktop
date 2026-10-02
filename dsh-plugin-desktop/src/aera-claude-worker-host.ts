@@ -11,10 +11,13 @@
  *   TeamIdentifier equals the pin. Phase A saw the binary replace itself
  *   despite `autoUpdates:false`; a moved binary is refused, not trusted.
  * - ENVIRONMENT BUILT FROM NOTHING. Exactly HOME, PATH=/usr/bin:/bin, USER,
- *   LOGNAME (the minimum for the CLI to find the owner's keychain login),
- *   plus the H-1 hot-path pair below. Nothing is filtered from the parent, so
- *   CLAUDE_CODE_MESSAGING_TOKEN, the parent's ANTHROPIC_*, AERA_* and every
- *   other variable are absent by construction.
+ *   LOGNAME (the minimum for the CLI to find the owner's keychain login), the
+ *   fixed suppression four (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
+ *   DISABLE_TELEMETRY, DISABLE_ERROR_REPORTING, DISABLE_AUTOUPDATER, all '1',
+ *   preflight included), plus the H-1 hot-path pair below. Nothing is filtered
+ *   from the parent, so CLAUDE_CODE_MESSAGING_TOKEN, the parent's ANTHROPIC_*,
+ *   CLAUDE_CONFIG_DIR, AERA_* and every other variable are absent by
+ *   construction, and a parent cannot unset or override the suppression.
  * - ROUTER HOT PATH (H-1, critical-path step 8). The CLI's model transport
  *   goes to the Aera Router hot path, never straight to Anthropic:
  *   `ANTHROPIC_BASE_URL` is the validated Router origin and
@@ -23,9 +26,21 @@
  *   `x-aera-session-id`: the governed Session is bootstrapped by the Router
  *   from the CLI's own `x-claude-code-session-id`. The worker key is read from
  *   the Keychain by the injected reader AT SPAWN TIME, in the main process, and
- *   exists only in that child's env object: never `process.env`, argv, a field,
- *   logs, evidence or the renderer. There is no adapter without a hot path and
- *   no spawn without a key: no fallback to direct Anthropic.
+ *   is handed only to that child's env object: never `process.env`, argv, a
+ *   field, logs, evidence or the renderer. There is no adapter without a hot
+ *   path and no spawn without a key: no fallback to direct Anthropic.
+ * - BOOTSTRAP LEAK, SUPPRESSED (PE-2 / F1, 2026-10-03). The env object is not
+ *   the end of the key's path: the 2.1.280 CLI also spreads
+ *   ANTHROPIC_CUSTOM_HEADERS into its start-up nonessential GET
+ *   `https://api.anthropic.com/api/claude_cli/bootstrap` (not the base URL), so
+ *   before this fix the Router worker key went straight to Anthropic at spawn
+ *   (code evidence, SENTINEL_BLOCK_FIX_INVESTIGATION §3; key disabled, PE-1).
+ *   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC skips that fetch ("[Bootstrap]
+ *   Skipped: Nonessential traffic disabled"); with it, the key's only consumer
+ *   is the Anthropic SDK client on ANTHROPIC_BASE_URL (the Router). The
+ *   companions stop telemetry/Datadog, error reporting and autoupdate. None
+ *   touches auth: HOME stays, no CLAUDE_CONFIG_DIR, OAuth refresh is essential.
+ *   This holds for the pinned 2.1.280 only; a new pin must be re-checked.
  * - NO EXECUTOR. `--tools "" --safe-mode --setting-sources "" --strict-mcp-config
  *   --disable-slash-commands`, verified on EVERY `system/init` by the
  *   fail-closed guard (`aera-claude-stream.ts`).
@@ -79,8 +94,20 @@ export const CLAUDE_CODE_WORKER_TYPE = 'CLAUDE_CODE'
 export const CLAUDE_CODE_TEAM_IDENTIFIER = 'Q6L2SF6YDW'
 /** The PATH the worker sees. The native binary needs nothing else. */
 export const CLAUDE_WORKER_PATH = '/usr/bin:/bin'
+/**
+ * PE-2 / F1: fixed suppression env for the pinned 2.1.280 (documented at
+ * code.claude.com/docs/en/env-vars). Stops the start-up bootstrap GET that
+ * carried ANTHROPIC_CUSTOM_HEADERS (the Router key) to api.anthropic.com, plus
+ * telemetry, error reporting, feature flags and autoupdate. Never auth-bearing.
+ */
+export const CLAUDE_WORKER_SUPPRESSION_ENV: Readonly<Record<string, string>> = Object.freeze({
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  DISABLE_TELEMETRY: '1',
+  DISABLE_ERROR_REPORTING: '1',
+  DISABLE_AUTOUPDATER: '1',
+})
 /** The base environment (also the preflight `--version` env): never a Router key. */
-export const CLAUDE_WORKER_BASE_ENV_KEYS: readonly string[] = Object.freeze(['HOME', 'PATH', 'USER', 'LOGNAME'])
+export const CLAUDE_WORKER_BASE_ENV_KEYS: readonly string[] = Object.freeze(['HOME', 'PATH', 'USER', 'LOGNAME', ...Object.keys(CLAUDE_WORKER_SUPPRESSION_ENV)])
 /** The only environment variables the worker process receives (H-1: base + the hot-path pair). */
 export const CLAUDE_WORKER_ENV_KEYS: readonly string[] = Object.freeze([...CLAUDE_WORKER_BASE_ENV_KEYS, 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'])
 /** The Router's key door (aera-router providerExecutionContainment `authenticateProviderRequest`). */
@@ -89,6 +116,8 @@ export const CLAUDE_WORKER_ROUTER_KEY_HEADER = 'x-aera-gateway-key'
 export const CLAUDE_WORKER_CONNECTION_HEADER = 'x-aera-connection-id'
 
 const MAX_STDERR_BYTES = 64 * 1024
+/** The Router's literal Sentinel block message (aera-router sentinelGatewayOutcome `sentinelBlockResponse`). */
+const ROUTER_SENTINEL_BLOCK_TEXT = 'Sentinel blocked this request'
 /** A header-safe key: printable ASCII, no whitespace or line break (no header injection). */
 const ROUTER_KEY = /^[\x21-\x7e]{16,512}$/u
 
@@ -98,7 +127,7 @@ const ROUTER_KEY = /^[\x21-\x7e]{16,512}$/u
  */
 export const CLAUDE_WORKER_STATIC_LIMITATIONS: readonly string[] = Object.freeze([
   'model transport goes through the Aera Router hot path (ANTHROPIC_BASE_URL, governed Connection) to Sentinel; never directly to Anthropic',
-  'declared direct exceptions until the live spike S-1 measures them: the CLI\'s own OAuth token refresh and telemetry@builtin reach Anthropic directly; not governed by Aera',
+  'nonessential traffic (bootstrap, telemetry, error reporting, feature flags, autoupdate) is disabled by env; remaining direct exceptions (essential class, not governed by Aera): the CLI\'s own OAuth token refresh and remote managed settings / policy limits, until the live spike S-1 / Phase E capture measures them',
   'the CLI injects the account email and an environment snapshot into model context; no flag removes them',
   'the CLI opens an inbound messaging socket (/tmp/cc-socks/<pid>.sock) for the Epoch lifetime',
   'the worker process runs as the owner with no OS sandbox; confinement is by executor removal, verified per init',
@@ -205,7 +234,7 @@ function checkHotPath(hotPath: unknown): ClaudeWorkerHotPath {
   return candidate as ClaudeWorkerHotPath
 }
 
-/** The base environment: built from nothing, four keys, no inheritance (also the preflight env). */
+/** The base environment: built from nothing, four keys + the fixed suppression four, no inheritance (also the preflight env). */
 export function buildClaudeWorkerBaseEnv(parent: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const home = parent.HOME
   const user = parent.USER ?? parent.LOGNAME
@@ -213,11 +242,11 @@ export function buildClaudeWorkerBaseEnv(parent: Readonly<Record<string, string 
   if (home === undefined || home === '' || user === undefined || logname === undefined) {
     throw new WorkerRefusal('WORKER_ENV_INCOMPLETE', 'HOME, USER and LOGNAME are required for the CLI to resolve the existing keychain login')
   }
-  return { HOME: home, PATH: CLAUDE_WORKER_PATH, USER: user, LOGNAME: logname }
+  return { HOME: home, PATH: CLAUDE_WORKER_PATH, USER: user, LOGNAME: logname, ...CLAUDE_WORKER_SUPPRESSION_ENV }
 }
 
 /**
- * The worker environment (H-1): the base four plus exactly ANTHROPIC_BASE_URL
+ * The worker environment (H-1): the base env plus exactly ANTHROPIC_BASE_URL
  * and ANTHROPIC_CUSTOM_HEADERS. Never an API key, auth token, apiKeyHelper or
  * `x-aera-session-id`; never writes `parent`. Refusals never echo a value.
  */
@@ -606,6 +635,11 @@ class ClaudeEpochProcess implements WorkerEpochHandle {
       return
     }
     if (this.authFailed) {
+      // PE-4: the CLI maps any 401/403 to authentication_failed; a Router Sentinel block is not a login problem.
+      if (`${pending.text}\n${typeof event.result === 'string' ? event.result : ''}`.includes(ROUTER_SENTINEL_BLOCK_TEXT)) {
+        this.fail('AUTH_UNAVAILABLE', 'refused by Aera governance (Sentinel), not a login problem: the Router returned a Sentinel block. Logging in again will not help.')
+        return
+      }
       this.fail('AUTH_UNAVAILABLE', 'Claude Code reports it is not logged in. The owner logs in with `claude` themselves; Aera never automates a login or holds a credential.')
       return
     }

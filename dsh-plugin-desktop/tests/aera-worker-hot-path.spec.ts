@@ -127,10 +127,16 @@ const codeOf = async (promise: Promise<unknown>): Promise<string> => {
 /* ------------------------------------------------------------------ the env */
 
 describe('H-1 env: the hot-path pair, built from nothing', () => {
-  it('adds exactly ANTHROPIC_BASE_URL and ANTHROPIC_CUSTOM_HEADERS (key + pinned Connection) to the four base keys', () => {
+  it('adds exactly ANTHROPIC_BASE_URL and ANTHROPIC_CUSTOM_HEADERS (key + pinned Connection) to the base keys (four + PE-2 suppression four)', () => {
     const parent = { ...POISONED_PARENT_ENV }
     const env = buildClaudeWorkerEnv(parent, { baseUrl: 'http://127.0.0.1:4646', connectionId: CONNECTION, routerKey: TEST_ROUTER_KEY })
-    expect(Object.keys(env).sort()).toEqual(['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'HOME', 'LOGNAME', 'PATH', 'USER'])
+    expect(Object.keys(env).sort()).toEqual([
+      'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER',
+      'DISABLE_ERROR_REPORTING', 'DISABLE_TELEMETRY', 'HOME', 'LOGNAME', 'PATH', 'USER',
+    ])
+    for (const key of ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER', 'DISABLE_ERROR_REPORTING', 'DISABLE_TELEMETRY']) expect(env[key], key).toBe('1')
+    // The Router key is in ANTHROPIC_CUSTOM_HEADERS and in no other variable.
+    expect(Object.keys(env).filter(key => env[key]?.includes(TEST_ROUTER_KEY))).toEqual(['ANTHROPIC_CUSTOM_HEADERS'])
     expect([...CLAUDE_WORKER_ENV_KEYS].sort()).toEqual(Object.keys(env).sort())
     expect(env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:4646')
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(`x-aera-gateway-key: ${TEST_ROUTER_KEY}\nx-aera-connection-id: ${CONNECTION}`)

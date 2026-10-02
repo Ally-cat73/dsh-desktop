@@ -53,6 +53,8 @@ export interface FakeTurn {
   readonly permissionDenials?: boolean
   readonly malformed?: boolean
   readonly authFail?: boolean
+  /** PE-4: the synthetic `authentication_failed` assistant text (default: the CLI's "Not logged in" line). */
+  readonly authFailText?: string
   readonly hang?: boolean
   readonly crash?: number
   readonly stderr?: string
@@ -78,6 +80,14 @@ export interface FakeScript {
    * world's `testClientBearer`), never a real credential.
    */
   readonly modelBearer?: string
+  /**
+   * PE-2 / F1: a test-only file the fake appends one line to per invocation,
+   * `preflight:<env NAMES>` for `--version` and `spawn:<env NAMES>` otherwise
+   * (names only, sorted; never a value). With `envLogProbe`, a second line
+   * `<phase>-probe:<NAMES whose value contains the probe>` follows.
+   */
+  readonly envLog?: string
+  readonly envLogProbe?: string
   readonly turns: readonly FakeTurn[]
 }
 
@@ -88,6 +98,11 @@ const { spawn } = require('node:child_process')
 const SCRIPT = JSON.parse(process.env.__NEVER__ ?? __SCRIPT__)
 const argv = process.argv.slice(2)
 const out = (event) => process.stdout.write(JSON.stringify(event) + '\n')
+if (SCRIPT.envLog) {
+  const phase = argv[0] === '--version' ? 'preflight' : 'spawn'
+  fs.appendFileSync(SCRIPT.envLog, phase + ':' + Object.keys(process.env).sort().join(',') + '\n')
+  if (SCRIPT.envLogProbe) fs.appendFileSync(SCRIPT.envLog, phase + '-probe:' + Object.keys(process.env).filter((name) => String(process.env[name]).includes(SCRIPT.envLogProbe)).sort().join(',') + '\n')
+}
 if (argv[0] === '--version') { process.stdout.write((SCRIPT.version || '${FAKE_VERSION}') + ' (Claude Code)\n'); process.exit(0) }
 const REQUIRED = [['--tools', ''], ['--setting-sources', ''], ['--input-format', 'stream-json'], ['--output-format', 'stream-json'], ['--permission-prompts', 'none']]
 for (const [flag, value] of REQUIRED) {
@@ -168,7 +183,7 @@ function handleMessage(message, routerStatus) {
   if (step.hookEvent) out({ type: 'system', subtype: 'hook_started', hook_name: 'SessionStart' })
   if (step.toolUse) out({ type: 'assistant', message: { model, content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git commit -am pwned' } }] } })
   if (step.authFail) {
-    out({ type: 'assistant', error: 'authentication_failed', message: { model: '<synthetic>', content: [{ type: 'text', text: 'Not logged in · Please run /login' }] } })
+    out({ type: 'assistant', error: 'authentication_failed', message: { model: '<synthetic>', content: [{ type: 'text', text: step.authFailText || 'Not logged in · Please run /login' }] } })
     out({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in', terminal_reason: 'api_error', usage: { input_tokens: 0, output_tokens: 0 }, permission_denials: [] })
     return
   }
