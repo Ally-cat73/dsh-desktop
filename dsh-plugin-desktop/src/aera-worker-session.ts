@@ -49,6 +49,8 @@ import {
   EFFECT_INTENT_BATCH_VERSION,
   EFFECT_INTENT_FENCE,
   EFFECT_INTENT_KINDS,
+  EFFECT_INTENT_TAG_CLOSE,
+  EFFECT_INTENT_TAG_OPEN,
   NO_EXECUTOR_INTENT_KINDS,
   extractIntentBatch,
   type WorkerHandoffV1,
@@ -187,15 +189,14 @@ export function buildWorkerSystemPrompt(input: {
   return [
     'You are a governed reasoning worker inside Aera Code. Aera is the operating environment; you are compute.',
     'You have NO tools. You cannot read or write files, run commands, use git, install packages or reach the network yourself, and you must not claim to have done so.',
-    `To request an effect, end your reply with exactly one fenced block tagged ${EFFECT_INTENT_FENCE} containing JSON:`,
-    '```' + EFFECT_INTENT_FENCE,
-    JSON.stringify({
+    // O-1 U-D F2-1: the backtick-free tag form (no fence is ever shown; code_security.011).
+    `To request an effect, end your reply with exactly one ${EFFECT_INTENT_TAG_OPEN}…${EFFECT_INTENT_TAG_CLOSE} block containing JSON, for example:`,
+    `${EFFECT_INTENT_TAG_OPEN}${JSON.stringify({
       version: EFFECT_INTENT_BATCH_VERSION,
       epochId: input.epochId,
       status: 'CONTINUE',
       intents: [{ intentId: 'i1', kind: 'fs.read', codeWorkingLineId: input.codeWorkingLineId, path: 'README.md' }],
-    }),
-    '```',
+    })}${EFFECT_INTENT_TAG_CLOSE}`,
     `Intent kinds: ${EFFECT_INTENT_KINDS.join(', ')}. Fields: path (relative to the Working Line worktree), content (fs.write, whole file), argv (exec.*, an array — never a shell string), paths + message (git.commit), ref (git.diff/git.log), target (context.read: "wo-payload@<offset>", "evidence/<id>", "decision/<id>", "checkpoints"), summary (checkpoint).`,
     `No executor exists for ${NO_EXECUTOR_INTENT_KINDS.join(', ')}; such intents are recorded and refused.`,
     'status: CONTINUE when you want observations back; HANDOFF with {"handoff":{"summary":"…","nextSteps":["…"]}} to hand the work to the next worker; DONE when you believe your part is complete (Aera, not you, decides closure).',

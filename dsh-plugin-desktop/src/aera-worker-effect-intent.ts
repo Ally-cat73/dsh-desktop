@@ -220,12 +220,20 @@ export function validateEffectIntent(value: unknown): { ok: true, intent: Effect
 
 const TICKS = '`'.repeat(3)
 const FENCE_PATTERN = new RegExp(`${TICKS}${EFFECT_INTENT_FENCE}[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n${TICKS}`, 'gu')
+/**
+ * O-1 U-D F2-1 (O1_PROVENANCE_SPEC_V2 §6.1): the backtick-free form the system
+ * prompt shows, `<aera-effect-intents>{json}</aera-effect-intents>`. The legacy
+ * fence is still PARSED from model output; it is never shown.
+ */
+export const EFFECT_INTENT_TAG_OPEN = `<${EFFECT_INTENT_FENCE}>`
+export const EFFECT_INTENT_TAG_CLOSE = `</${EFFECT_INTENT_FENCE}>`
+const TAG_PATTERN = new RegExp(`${EFFECT_INTENT_TAG_OPEN}([\\s\\S]*?)${EFFECT_INTENT_TAG_CLOSE}`, 'gu')
 
-/** Extract and validate the (at most one) intent block from a worker turn. */
+/** Extract and validate the (at most one) intent block — tag form or legacy fence — from a worker turn. */
 export function extractIntentBatch(text: string): IntentExtraction {
-  const matches = [...text.matchAll(FENCE_PATTERN)]
+  const matches = [...text.matchAll(TAG_PATTERN), ...text.matchAll(FENCE_PATTERN)]
   if (matches.length === 0) {
-    return text.includes(`\`\`\`${EFFECT_INTENT_FENCE}`)
+    return text.includes(`\`\`\`${EFFECT_INTENT_FENCE}`) || text.includes(EFFECT_INTENT_TAG_OPEN)
       ? { kind: 'MALFORMED', reason: 'unterminated intent block' }
       : { kind: 'NONE' }
   }

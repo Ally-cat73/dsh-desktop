@@ -28,6 +28,7 @@ import {
   workerAuthorityEnvelope,
 } from '../src/aera-worker-authority.ts'
 import { argvPolicyRefusal } from '../src/aera-worker-effect-broker.ts'
+import { buildWorkerSystemPrompt } from '../src/aera-worker-session.ts'
 
 const CLEAN_INIT = {
   type: 'system', subtype: 'init', cwd: '/scratch', tools: [], mcp_servers: [], skills: [], slash_commands: [],
@@ -127,6 +128,27 @@ describe('effect-intent translation (§9)', () => {
   ])('rejects %s as a MALFORMED proposal', (_label, text) => {
     expect(extractIntentBatch(text).kind).toBe('MALFORMED')
   })
+  // O-1 U-D F2-1 (O1_PROVENANCE_SPEC_V2 §6.1): the backtick-free tag form.
+  const tag = (batch: unknown): string => `thinking…\n<aera-effect-intents>${JSON.stringify(batch)}</aera-effect-intents>\n`
+  it('F2-1: extracts a batch in the tag form <aera-effect-intents>{json}</aera-effect-intents>', () => {
+    const extraction = extractIntentBatch(tag({ ...BATCH, intents: [{ intentId: 'i1', kind: 'fs.read', codeWorkingLineId: 'L', path: 'README.md' }] }))
+    expect(extraction.kind).toBe('BATCH')
+    if (extraction.kind === 'BATCH') expect(extraction.batch.intents[0]?.path).toBe('README.md')
+    // Whitespace/newlines around the JSON inside the tags are tolerated.
+    expect(extractIntentBatch(`<aera-effect-intents>\n${JSON.stringify(BATCH)}\n</aera-effect-intents>`).kind).toBe('BATCH')
+  })
+  it('F2-1: still accepts the legacy fence from model output (parsing only)', () => {
+    expect(extractIntentBatch(block(BATCH)).kind).toBe('BATCH')
+  })
+  it.each([
+    ['two tag blocks', tag(BATCH) + tag(BATCH)],
+    ['a tag block and a fence block', tag(BATCH) + block(BATCH)],
+    ['unterminated tag', `<aera-effect-intents>${JSON.stringify(BATCH)}`],
+    ['tag not JSON', '<aera-effect-intents>{nope}</aera-effect-intents>'],
+    ['tag wrong version', tag({ ...BATCH, version: 'V0' })],
+  ])('F2-1: rejects %s as a MALFORMED proposal', (_label, text) => {
+    expect(extractIntentBatch(text).kind).toBe('MALFORMED')
+  })
   it('maps every kind to an authority class; package/network/deploy/external have their own classes', () => {
     expect(effectClassOf('git.status')).toBe('git.read')
     expect(effectClassOf('git.push')).toBe('network')
@@ -223,5 +245,17 @@ describe('owner-decision authority (§10 CAS/authority leg)', () => {
   it('the envelope lists only active owner grants', () => {
     expect(workerAuthorityEnvelope({ decisions: [decision(), decision({ decisionId: 'aera:decision:d2' as never, status: 'REVOKED' })], ownerPrincipalId: OWNER, workOrderId: 'WO-1' }))
       .toHaveLength(1)
+  })
+})
+
+describe('O-1 U-D F2-1: the worker system prompt (O1_PROVENANCE_SPEC_V2 §6.1)', () => {
+  const prompt = buildWorkerSystemPrompt({ epochId: 'aera:worker-epoch:0b0c0d0e-1a2b-4c3d-8e9f-a0b1c2d3e4f5', codeWorkingLineId: 'aera:code_working_line:0a1b2c3d' })
+  it('carries no backtick at all (clears code_security.011), and shows the tag form', () => {
+    expect(prompt).not.toContain('`')
+    expect(prompt).toMatch(/<aera-effect-intents>\{"version":"AeraEffectIntentBatchV1",.*\}<\/aera-effect-intents>/u)
+  })
+  it('its own example parses as a batch', () => {
+    const example = /<aera-effect-intents>\{.*\}<\/aera-effect-intents>/u.exec(prompt)?.[0] ?? ''
+    expect(extractIntentBatch(example).kind).toBe('BATCH')
   })
 })
