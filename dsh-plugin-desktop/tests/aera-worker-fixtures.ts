@@ -88,6 +88,21 @@ export interface FakeScript {
    */
   readonly envLog?: string
   readonly envLogProbe?: string
+  /**
+   * O-1 U-D (spec §9.2, V2.1 NO-1): emit the CLI 2.1.280 attachment pipeline.
+   * Texts are rendered by the test from `fixtures/claude-cli-attachments.ts`
+   * (binary-extracted literals only); `__AERA_CWD__` becomes the fake's real
+   * cwd. `first` follows the turn-1 host blocks in the given order (any
+   * permutation); `later` follows every later turn's blocks. Default form is
+   * the real concatenated one (no seam); `seam` is the V6r variant. One JSON
+   * line per turn, `{turn, stdin, content}`, is appended to `capture`.
+   */
+  readonly cliPipeline?: {
+    readonly first: readonly string[]
+    readonly later?: readonly string[]
+    readonly seam?: boolean
+    readonly capture: string
+  }
   readonly turns: readonly FakeTurn[]
 }
 
@@ -133,11 +148,37 @@ process.stdin.on('data', (chunk) => {
   while ((index = buffer.indexOf('\n')) >= 0) {
     const line = buffer.slice(0, index)
     buffer = buffer.slice(index + 1)
-    if (line.trim() !== '') onMessage(JSON.parse(line))
+    if (line.trim() !== '') onMessage(JSON.parse(line), line)
   }
 })
+/* O-1 U-D: the host's text blocks, exactly as written (a string turn is one block). */
+function textBlocks(message) {
+  const content = message.message && message.message.content
+  if (Array.isArray(content)) return content.filter((block) => block && block.type === 'text' && typeof block.text === 'string').map((block) => block.text)
+  return [String(content)]
+}
+/*
+ * O-1 U-D (spec §2.1, V2.1 NO-1): the CLI request's last user message. The CLI
+ * appends its attachment messages after the turn's message and merges
+ * consecutive user messages keeping blocks separate: the real concatenated
+ * form (no seam) by default, or the V6r seam ("\n" appended to the last block
+ * of every message that precedes another one). Captured per turn.
+ */
+let pipelineTurn = 0
+function cliRequest(message, rawLine) {
+  const P = SCRIPT.cliPipeline
+  const host = textBlocks(message)
+  if (!P) return host
+  pipelineTurn += 1
+  const attachments = (pipelineTurn === 1 ? P.first : (P.later || [])).map((text) => text.split('__AERA_CWD__').join(process.cwd()))
+  const groups = [host].concat(attachments.map((text) => [text]))
+  const content = []
+  groups.forEach((group, gi) => group.forEach((text, bi) => content.push(P.seam && gi < groups.length - 1 && bi === group.length - 1 ? text + '\n' : text)))
+  fs.appendFileSync(P.capture, JSON.stringify({ turn: pipelineTurn, stdin: rawLine, content }) + '\n')
+  return content
+}
 process.stdin.on('end', () => { if (keepAlive === undefined) process.exit(0) })
-function routerCall(input) {
+function routerCall(content) {
   return new Promise((resolve) => {
     const base = process.env.ANTHROPIC_BASE_URL
     if (!base) { resolve('NO_BASE_URL'); return }
@@ -147,7 +188,7 @@ function routerCall(input) {
       const at = line.indexOf(':')
       if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim()
     }
-    const body = JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: input }] })
+    const body = JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content }] })
     let url
     try { url = new URL('/v1/messages', base) } catch { resolve('ERR:BAD_BASE_URL'); return }
     const request = require('node:http').request(url, { method: 'POST', headers: Object.assign(headers, { 'content-length': Buffer.byteLength(body) }) }, (response) => {
@@ -158,14 +199,18 @@ function routerCall(input) {
     request.end(body)
   })
 }
-function onMessage(message) {
+function onMessage(message, rawLine) {
+  const forwarded = cliRequest(message, rawLine)
   if (!SCRIPT.modelRequest) { handleMessage(message, ''); return }
-  routerCall(String(message.message && message.message.content)).then((status) => handleMessage(message, status))
+  const content = SCRIPT.cliPipeline || Array.isArray(message.message && message.message.content)
+    ? forwarded.map((text) => ({ type: 'text', text }))
+    : String(message.message && message.message.content)
+  routerCall(content).then((status) => handleMessage(message, status))
 }
 function handleMessage(message, routerStatus) {
   turn += 1
   const step = SCRIPT.turns[turn - 1] || SCRIPT.turns[SCRIPT.turns.length - 1]
-  const input = String(message.message && message.message.content)
+  const input = textBlocks(message).join('\n\n')
   out({
     type: 'system', subtype: 'init', cwd: step.initCwd || process.cwd(), session_id: SCRIPT.modelRequest ? SESSION_UUID : 'fake-session-' + turn,
     tools: step.initTools || [], mcp_servers: step.initMcp || [], skills: step.initSkills || [], slash_commands: [],
