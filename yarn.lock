@@ -78,14 +78,14 @@ __metadata:
 
 "@aera/local-effect-admission@file:./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.0
-  resolution: "@aera/local-effect-admission@file:./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz::hash=4c5030&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@aera/local-effect-admission@file:./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz#./dsh-plugin-desktop/vendor/aera/aera-local-effect-admission-0.1.0.tgz::hash=2319e7&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@aera/authority-client": "npm:0.1.0"
     "@aera/authority-contracts": "npm:0.1.0"
     "@aera/cis-contracts": "npm:0.1.0"
     "@aera/cis-issuer": "npm:0.1.0"
     "@aera/local-effect-authority": "npm:0.1.0"
-  checksum: 10c0/bd3a234061e08770eb55faefe8637ee6500d41f051111287eab8860b2c1945ee9689a6ea9e4b526ef1feab908662e349d949c3db7d53654aff663e20d31053bb
+  checksum: 10c0/165b5a801d8c558fa7e46176ae77cb56ea58cc749f60e94c6a7a749584abee329be1ca3c0c0da0dfbb84eb6cbd990368d5fece193c64871b28785bf5247c31c9
   languageName: node
   linkType: hard
 

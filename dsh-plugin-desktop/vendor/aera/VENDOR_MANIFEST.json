@@ -6,7 +6,7 @@
   "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
   "build": "git archive of sourceCommit; pnpm install --frozen-lockfile --offline --ignore-scripts (filtered); pnpm --filter <pkg> run build; pnpm pack. authority-contracts and sentinel-contracts: canonical LICENSE added (8686d2654c method; dist byte-identical).",
   "distTreeDigestAlgorithm": "sha256 over sorted lines '<sha256(file)>  <path relative to package/dist>\\n'",
-  "note": "Entries with sourceCommit null were vendored before D-0a and are not re-vendored by it; only their tarball sha256 is pinned here.",
+  "note": "Entries with sourceCommit null were vendored before D-0a and are not re-vendored by it; only their tarball sha256 is pinned here. O-1 U-D (2026-10-03): @aera/local-effect-admission re-vendored from aera-stack sentinel/o1-provenance at 3e868bd57c91fcf96630f70d8e5dcac00000ceba (G1-approved U-S: attest v2 + provenance manifest) with the same D-0a procedure; its five dependencies rebuilt at that commit reproduce their D-0a dist tree digests exactly and are not re-vendored.",
   "tarballs": [
     {
       "package": "@aera/authority-client",
@@ -75,10 +75,11 @@
     {
       "package": "@aera/local-effect-admission",
       "tarball": "aera-local-effect-admission-0.1.0.tgz",
-      "sha256": "f52a6f56addac2e355bece8a5a0a8e81269914440ab28b5abe99904503f2cc2b",
-      "distTreeDigest": "f3b2a22efc9e48961fe53d8d9ad6ba7befff2adaef01efebc27e1ada55b52274",
-      "sourceCommit": "25fadd1e399131cb3b2c57766a3a279518142ad3",
-      "licenseMember": true
+      "sha256": "c091fe16d5b7c5ee02f33042efc673a73a2dfa2730a49fdf8855610d0bb85123",
+      "distTreeDigest": "0d9b44fe92c4685338e1f6c66d0b313fa0cf0b009a37b2b4dca7f0e0263a56a9",
+      "sourceCommit": "3e868bd57c91fcf96630f70d8e5dcac00000ceba",
+      "licenseMember": true,
+      "sourceBranch": "sentinel/o1-provenance"
     },
     {
       "package": "@aera/local-effect-authority",

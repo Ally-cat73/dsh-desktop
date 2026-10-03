@@ -105,6 +105,16 @@ const MANIFEST_PATH = join(VENDOR_DIR, 'VENDOR_MANIFEST.json')
 const D0A_SOURCE_COMMIT = '25fadd1e399131cb3b2c57766a3a279518142ad3'
 const D0A_SOURCE_BRANCH = 'sentinel/cr40-cas-seam'
 
+/**
+ * O-1 U-D (O1_PROVENANCE_SPEC_V2 §8.2): @aera/local-effect-admission is
+ * re-vendored from the G1-approved U-S candidate (attest v2 + provenance
+ * manifest). Its dependencies are unchanged at that commit and stay at D-0a.
+ */
+const O1_SOURCE_COMMIT = '3e868bd57c91fcf96630f70d8e5dcac00000ceba'
+const O1_SOURCE_BRANCH = 'sentinel/o1-provenance'
+const O1_PACKAGES: readonly string[] = ['@aera/local-effect-admission']
+const expectedSourceCommit = (pkg: string): string => O1_PACKAGES.includes(pkg) ? O1_SOURCE_COMMIT : D0A_SOURCE_COMMIT
+
 /** The runtime closure of @aera/local-effect-admission and @aera/effect-broker. */
 const D0A_PACKAGES = [
   '@aera/authority-client',
@@ -133,6 +143,7 @@ interface ManifestEntry {
   readonly distTreeDigest: string | null
   readonly sourceCommit: string | null
   readonly licenseMember: boolean
+  readonly sourceBranch?: string
 }
 interface VendorManifest {
   readonly schema: string
@@ -200,6 +211,17 @@ const LE_CLOSURE_SYMBOLS: Readonly<Record<string, readonly (readonly [string, st
     ['MODEL_INVOCATION_ATTESTATION_SCHEMA', 'U8 attest schema'],
     ['MODEL_INVOCATION_ATTESTATION_KEYS', 'U8 parity vector'],
     ['modelInvocationEffectDigest', 'U8 parity vector'],
+    ['MODEL_INVOCATION_ATTESTATION_SCHEMA_V2', 'O-1 U-D attest v2'],
+    ['MODEL_INVOCATION_ATTESTATION_V2_KEYS', 'O-1 U-D attest v2 closed keys'],
+    ['MODEL_PROVENANCE_MANIFEST_SCHEMA', 'O-1 U-D provenance manifest'],
+    ['MODEL_PROVENANCE_CLASSES', 'O-1 U-D manifest classes'],
+    ['MODEL_PROVENANCE_RECORD_TOOL', 'O-1 U-D record tool'],
+    ['MODEL_PROVENANCE_OBSERVATION_TOOLS', 'O-1 U-D observation tools'],
+    ['MODEL_PROVENANCE_MAX_ENTRIES', 'O-1 U-D manifest bound'],
+    ['MODEL_PROVENANCE_MAX_TURN_SEQ', 'O-1 U-D turnSeq bound'],
+    ['isModelInvocationAttestationV2', 'O-1 U-D body self-check'],
+    ['isModelProvenanceManifest', 'O-1 U-D manifest self-check'],
+    ['modelProvenanceDigest', 'O-1 U-D effect-digest parity'],
   ],
   '@aera/effect-broker': [
     ['createPinnedRouterTransport', 'D-0c attest transport, D-0d2 attempts/outcomes'],
@@ -263,10 +285,11 @@ describe('D-0a: the vendored local-effect closure', () => {
     }
   })
 
-  it('records the CD-3 source commit for each D-0a package, and none for the untouched ones', () => {
+  it('records the source commit for each D-0a package (O-1 U-D for admission), and none for the untouched ones', () => {
     const byPackage = new Map(readManifest().tarballs.map((entry) => [entry.package, entry]))
     for (const pkg of D0A_PACKAGES) {
-      expect(byPackage.get(pkg)?.sourceCommit, pkg).toBe(D0A_SOURCE_COMMIT)
+      expect(byPackage.get(pkg)?.sourceCommit, pkg).toBe(expectedSourceCommit(pkg))
+      if (O1_PACKAGES.includes(pkg)) expect(byPackage.get(pkg)?.sourceBranch, pkg).toBe(O1_SOURCE_BRANCH)
       expect(byPackage.get(pkg)?.licenseMember, pkg).toBe(true)
       expect(byPackage.get(pkg)?.distTreeDigest, pkg).toMatch(/^[0-9a-f]{64}$/)
     }
