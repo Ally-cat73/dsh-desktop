@@ -72,7 +72,21 @@ import {
   type WorkerEffectBrokerDeps,
 } from './aera-worker-effect-broker.ts'
 import type { ModelInvocationAttestor } from './aera-worker-model-attest.ts'
-import { CLAUDE_CLI_PROVENANCE_PIN, type CliMetadataDigests } from './aera-worker-provenance.ts'
+import {
+  CLAUDE_CLI_PROVENANCE_PIN,
+  assertFixedHeaderSeparation,
+  boundHostTurn,
+  buildObservationBlocks,
+  buildOrientationBlocks,
+  hostManifestDigest,
+  planTurnProvenance,
+  turnAuditDescriptors,
+  type BriefingFacts,
+  type CliMetadataDigests,
+  type HostBlock,
+  type OrientationInput,
+  type TurnProvenancePlan,
+} from './aera-worker-provenance.ts'
 
 export const WORKER_HOST_ADAPTER_ID = 'aera-worker-host'
 export const WORKER_HOST_PRINCIPAL_NAME = 'Aera Code Worker Host'
@@ -88,7 +102,8 @@ const EPOCH_GATEWAY_SESSION = 'Worker Epoch Gateway Session: '
 const NATIVE_SESSION_ID = /^[A-Za-z0-9-]{1,64}$/u
 const WORKER_HANDOFF = 'Worker handoff: '
 const SESSION_ENVIRONMENT = 'Aera worker session environment: '
-const ORIENTATION_PAYLOAD_EXCERPT = 6 * 1024
+/** O-1 U-D §5.5: the companion of the Epoch-context record (per-block digests, host-only manifest digest). */
+const EPOCH_CONTEXT_PROVENANCE = 'Worker Epoch context provenance: '
 
 const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex')
 
@@ -403,15 +418,21 @@ export class AeraWorkerSessionManager {
   /**
    * Bounded institutional orientation for a fresh Epoch (§8/§13), rebuilt
    * from durable records only. It carries NO prior worker conversation.
+   *
+   * O-1 U-D (spec §5): the facts are routed by ORIGIN into the three blocks
+   * of `buildOrientationBlocks` — Aera-minted ids/digests/counts/enums
+   * (BRIEFING), records (RECORD), every owner- or human-originated field
+   * (HUMAN). F2-2: the Work Order payload is NOT inlined; only its length and
+   * sha256 and the `context.read` pointer are.
    */
-  buildOrientation(input: {
+  orientationFacts(input: {
     readonly workOrderId: string
     readonly codeWorkingLineId: string
     readonly aeraSessionId: string
     readonly epochId: string
     readonly sequence: number
     readonly task: string
-  }): string {
+  }): OrientationInput {
     const store = this.store
     const order = store.listWorkOrders().find(row => row.workOrderId === input.workOrderId)
     if (order === undefined) throw new WorkerRefusal('WORK_ORDER_NOT_FOUND', `${input.workOrderId} is not registered`)
@@ -419,7 +440,6 @@ export class AeraWorkerSessionManager {
     const line = store.listCodeWorkingLines(input.workOrderId).find(row => row.codeWorkingLineId === input.codeWorkingLineId)
     if (line === undefined) throw new WorkerRefusal('WORKING_LINE_NOT_FOUND', 'The Working Line is not recorded under this Work Order')
     const payload = order.exactPayload ?? ''
-    const excerpt = payload.slice(0, ORIENTATION_PAYLOAD_EXCERPT)
     const events = store.listEvents().filter(event => event.workOrderId === input.workOrderId)
     const repaired = new Set(events.filter(event => event.eventKind === 'REPAIR_RECORDED').map(event => event.repairsEventId))
     const blocker = events.filter(event => event.eventKind === 'BREAK_REPORTED' && !repaired.has(event.eventId)).at(-1)
@@ -427,8 +447,10 @@ export class AeraWorkerSessionManager {
     const evidence = store.listTypedEvidence(input.workOrderId)
       .filter(row => (row.links.codeWorkingLineIds ?? []).includes(line.codeWorkingLineId))
     const handoff = evidence.filter(row => row.subject.startsWith(WORKER_HANDOFF)).at(-1)
-    const performed = evidence.filter(row => row.evidenceClass === 'EXECUTION_EVIDENCE').slice(-20)
-    const denied = evidence.filter(row => row.evidenceClass === 'DECISION_EVIDENCE' && row.subject.startsWith('Worker effect denied')).slice(-10)
+    const performedAll = evidence.filter(row => row.evidenceClass === 'EXECUTION_EVIDENCE')
+    const deniedAll = evidence.filter(row => row.evidenceClass === 'DECISION_EVIDENCE' && row.subject.startsWith('Worker effect denied'))
+    const performed = performedAll.slice(-20)
+    const denied = deniedAll.slice(-10)
     const envelope = workerAuthorityEnvelope({
       decisions: store.listDecisions(input.workOrderId),
       ownerPrincipalId: order.owner?.principalId,
@@ -437,35 +459,74 @@ export class AeraWorkerSessionManager {
     })
     const bindings = store.listRepositoryBindings(input.workOrderId)
     const handoffBody = parseJson(handoff?.body)
-    return [
-      `AERA INSTITUTIONAL ORIENTATION — Worker Epoch ${String(input.sequence)} (${input.epochId}) of Aera Session ${input.aeraSessionId}`,
-      'Supplied by Aera from its durable record. CONTEXT IS CACHE, NOT AUTHORITY. No earlier worker conversation is included; continue from these records.',
-      '',
-      `Work Order: ${order.workOrderId} — ${order.title}`,
-      `Lifecycle: ${state?.lifecycleState ?? 'UNRECORDED'} (${state?.source ?? 'UNRECORDED'})`,
-      `Objective and acceptance (owner's order, first ${String(excerpt.length)} of ${String(payload.length)} characters, sha256 ${sha256(payload)}; request more with context.read target "wo-payload@${String(excerpt.length)}"):`,
-      excerpt === '' ? '(no payload recorded)' : redact(excerpt),
-      '',
-      `Current blocker: ${blocker === undefined ? 'none recorded' : blocker.summary}`,
-      `Working Line: ${line.codeWorkingLineId}; label ${line.label ?? '(none)'}; branch ${line.branchRef ?? '(no location)'}; repository ${line.repositoryId}; origin revision ${line.originRevision}; lifecycle ${line.lifecycle}`,
-      `Repository bindings: ${bindings.length === 0 ? 'none recorded' : bindings.map(row => `${row.repositoryId} (${row.role})`).join('; ')}`,
-      `Latest checkpoint: ${checkpoint === undefined ? 'none' : `#${String(checkpoint.lineSequence)} ${checkpoint.checkpointId} ${JSON.stringify(checkpoint.stateRef)} — ${checkpoint.summary ?? ''}`}`,
-      handoff === undefined
-        ? 'Latest worker handoff: none'
-        : `Latest worker handoff (ANALYTICAL — a previous worker's own account, not verified fact; ${handoff.evidenceId}): ${String(handoffBody?.summary ?? '')}${Array.isArray(handoffBody?.nextSteps) ? `\n  next steps: ${(handoffBody.nextSteps as unknown[]).map(String).join(' | ')}` : ''}`,
-      'Performed effects (EXECUTION evidence recorded by the Aera broker, oldest first):',
-      ...(performed.length === 0 ? ['  none'] : performed.map(row => `  - ${row.subject} [${row.outcome ?? 'RECORDED'}] ${row.evidenceId}`)),
-      'Recently denied effects:',
-      ...(denied.length === 0 ? ['  none'] : denied.map(row => `  - ${row.subject}`)),
-      ...(this.deps.effectPlane !== undefined
-        ? ['Authority: CAS decides every effect through the Router, against the owner\'s delegation (fs.read, fs.write and exec.test with a reviewed test command only). There are no local grants.']
-        : [
-            'Authority envelope (owner decisions, evaluated live on every intent; anything not listed is denied):',
-            ...(envelope.length === 0 ? ['  none — every effect will be denied'] : envelope.map(entry => `  - ${formatWorkerGrant(entry.grant)} (decision ${entry.decisionId})`)),
-          ]),
-      '',
-      `Task for this Epoch (from the owner): ${redact(input.task)}`,
-    ].join('\n')
+    return {
+      briefing: {
+        sequence: input.sequence,
+        epochId: input.epochId,
+        aeraSessionId: input.aeraSessionId,
+        lifecycleState: (state?.lifecycleState ?? 'UNRECORDED') as BriefingFacts['lifecycleState'],
+        stateSource: (state?.source ?? 'UNRECORDED') as BriefingFacts['stateSource'],
+        payloadLength: payload.length,
+        payloadSha256: sha256(payload),
+        codeWorkingLineId: line.codeWorkingLineId,
+        originRevision: line.originRevision,
+        lineLifecycle: line.lifecycle as BriefingFacts['lineLifecycle'],
+        ...(checkpoint === undefined ? {} : { checkpoint: { lineSequence: checkpoint.lineSequence, checkpointId: checkpoint.checkpointId } }),
+        ...(handoff === undefined ? {} : { handoffEvidenceId: handoff.evidenceId }),
+        performedCount: performedAll.length,
+        deniedCount: deniedAll.length,
+        bindingCount: bindings.length,
+      },
+      owner: {
+        workOrderId: order.workOrderId,
+        title: order.title,
+        ...(blocker === undefined ? {} : { blocker: blocker.summary }),
+        ...(line.label === undefined ? {} : { label: line.label }),
+        ...(line.branchRef === undefined ? {} : { branchRef: line.branchRef }),
+        repositoryId: line.repositoryId,
+        bindings: bindings.map(row => ({ repositoryId: row.repositoryId, role: row.role })),
+        task: redact(input.task),
+      },
+      records: {
+        ...(checkpoint === undefined ? {} : { checkpoint: { stateRef: checkpoint.stateRef, ...(checkpoint.summary === undefined ? {} : { summary: checkpoint.summary }) } }),
+        ...(handoff === undefined ? {} : {
+          handoff: {
+            summary: String(handoffBody?.summary ?? ''),
+            nextSteps: Array.isArray(handoffBody?.nextSteps) ? (handoffBody.nextSteps as unknown[]).map(String) : [],
+          },
+        }),
+        performed: performed.map(row => ({ subject: row.subject, ...(row.outcome === undefined ? {} : { outcome: row.outcome }), evidenceId: row.evidenceId })),
+        denied: denied.map(row => ({ subject: row.subject })),
+      },
+      authority: this.deps.effectPlane !== undefined
+        ? { kind: 'CAS' }
+        : { kind: 'LOCAL_ENVELOPE', grants: envelope.map(entry => ({ grant: formatWorkerGrant(entry.grant), decisionId: entry.decisionId })) },
+    }
+  }
+
+  /**
+   * One turn's blocks → the 45,000-char bound (N-14) → the NO-A layout check
+   * → the manifest plan (N-3, N-4). The CLI-note digests are offered only on
+   * the first turn of the CLI process and only in manifest mode.
+   */
+  private planTurn(blocks: readonly HostBlock[], firstTurn: boolean): TurnProvenancePlan {
+    const bounded = boundHostTurn(blocks)
+    assertFixedHeaderSeparation(bounded)
+    const cliDigests = firstTurn && this.deps.config.provenance?.manifest === true ? this.deps.config.provenance.cliMetadata : undefined
+    return planTurnProvenance({ blocks: bounded, firstTurn, ...(cliDigests === undefined ? {} : { cliDigests }) })
+  }
+
+  /** Record a turn's provenance notice (collisions N-4, not-well-formed N-3): counts only. */
+  private recordProvenanceNotice(session: ParticipationSession, workOrderId: string, codeWorkingLineId: string, epochId: string, turn: number, plan: TurnProvenancePlan): void {
+    if (plan.collisions === 0 && plan.notWellFormed === 0) return
+    this.recordEvidence(session, workOrderId, {
+      idempotencyKey: `${epochId}:turn${String(turn)}:provenance-notice`,
+      evidenceClass: 'OBSERVATIONAL_EVIDENCE',
+      subject: `Worker provenance notice (${epochId} turn ${String(turn)})`,
+      outcome: 'RECORDED',
+      body: JSON.stringify({ epochId, turn, collisions: plan.collisions, notWellFormed: plan.notWellFormed, cliMetadata: plan.cliState }),
+      links: { codeWorkingLineIds: [codeWorkingLineId as never] },
+    })
   }
 
   private recordEvidence(session: ParticipationSession, workOrderId: string, input: Omit<Parameters<ParticipationStore['recordTypedEvidence']>[0], 'sessionId' | 'authorisingWorkOrderId' | 'workOrderId'>): TypedEvidenceV1 {
@@ -563,8 +624,10 @@ export class AeraWorkerSessionManager {
     const sequence = this.epochs(workOrderId, session.sessionId).length + 1
     const limits: WorkerEpochLimits = { ...this.limits, ...input.limits }
     const systemPrompt = buildWorkerSystemPrompt({ epochId, codeWorkingLineId })
-    // Sanitised ONCE; the worker receives exactly the recorded text.
-    const orientation = boundObservation(this.buildOrientation({ workOrderId, codeWorkingLineId, aeraSessionId: session.sessionId, epochId, sequence, task: input.task }))
+    // Sanitised ONCE, per block; the worker receives exactly the recorded text (O-1 U-D §5.4 layout).
+    const orientationBuilt = buildOrientationBlocks(this.orientationFacts({ workOrderId, codeWorkingLineId, aeraSessionId: session.sessionId, epochId, sequence, task: input.task }))
+    const firstPlan = this.planTurn(orientationBuilt.blocks.map(block => ({ ...block, text: boundObservation(block.text) })), true)
+    const orientation = firstPlan.emitted.join('\n\n')
     const contextText = `SYSTEM PROMPT\n${systemPrompt}\n\nORIENTATION\n${orientation}`
     const contextSha256 = sha256(contextText)
     // §13: exactly what this Epoch receives, recorded BEFORE it receives it.
@@ -573,6 +636,20 @@ export class AeraWorkerSessionManager {
       evidenceClass: 'SOURCE_EVIDENCE',
       subject: `${EPOCH_CONTEXT}${epochId}`,
       body: contextText,
+      sourceRef: `sha256:${contextSha256}`,
+      links: { codeWorkingLineIds: [codeWorkingLineId as never] },
+    })
+    // O-1 U-D §5.5 (N-11): the ordered per-block digests and the host-only manifest digest (no CLI entry).
+    this.recordEvidence(session, workOrderId, {
+      idempotencyKey: `${epochId}:context-provenance`,
+      evidenceClass: 'SOURCE_EVIDENCE',
+      subject: `${EPOCH_CONTEXT_PROVENANCE}${epochId}`,
+      body: JSON.stringify({
+        contextSha256,
+        hostBlocks: firstPlan.blocks.map((block, index) => ({ class: block.class, sha256: `sha256:${sha256(firstPlan.emitted[index] ?? '')}` })),
+        hostManifestDigest: hostManifestDigest(firstPlan.entries),
+        demotedFields: orientationBuilt.demoted,
+      }),
       sourceRef: `sha256:${contextSha256}`,
       links: { codeWorkingLineIds: [codeWorkingLineId as never] },
     })
@@ -672,15 +749,25 @@ export class AeraWorkerSessionManager {
     let attemptTurn = 0
     let handoffEvidenceId: string | undefined
     let modelId: string | undefined
-    let nextInput = orientation
+    /** O-1 U-D: the host turns written in this desktop Epoch (turnSeq base = sequence * 1000 + writtenTurns). */
+    let writtenTurns = 0
+    let nextBlocks: readonly HostBlock[] | undefined
     let silentTurns = 0
     let terminal: WorkerEpochTerminal | undefined
     let ended = false
     try {
       while (!ended) {
+        writtenTurns += 1
+        // Blocks → bound → NO-A layout check → manifest plan (CLI digest on the first turn only).
+        const plan = nextBlocks === undefined ? firstPlan : this.planTurn(nextBlocks, false)
+        this.recordProvenanceNotice(session, workOrderId, codeWorkingLineId, epochId, writtenTurns, plan)
+        this.deps.log?.(`aera-worker-provenance: ${JSON.stringify({ epochId, turn: writtenTurns, ...turnAuditDescriptors(plan) })}`)
         if (modelAttest !== undefined) {
           // U8 D-2 (C-4): every stdin turn write needs a fresh attestation; otherwise no write, typed terminal.
-          const authority = await modelAttest.ensureFresh()
+          // O-1 U-D: with the manifest on, that attestation is this turn's own v2 attest carrying its manifest.
+          const authority = provenance !== undefined && plan.entries.length > 0 && modelAttest.attestTurn !== undefined
+            ? await modelAttest.attestTurn({ baseTurnSeq: sequence * 1000 + writtenTurns, entries: plan.entries })
+            : await modelAttest.ensureFresh()
           if (!authority.ok) {
             const reason = `${modelAuthorityRefusal(authority)}: no further turn was written to the worker.`
             terminal = { ...await handle.cancel(reason), status: 'MODEL_AUTHORITY_UNAVAILABLE', reason }
@@ -689,7 +776,8 @@ export class AeraWorkerSessionManager {
           modelAttest.noteTurnActivity()
         }
         liveEntry.state = 'RUNNING'
-        const outcome = await handle.runTurn(nextInput)
+        // Manifest on: one stream-json text block per host block (whole-block digests). Off: one string, as before.
+        const outcome = await handle.runTurn(provenance !== undefined ? plan.emitted : plan.emitted.join('\n\n'))
         modelAttest?.noteTurnActivity()
         if (outcome.kind === 'EPOCH_TERMINATED') {
           terminal = outcome.terminal
@@ -700,11 +788,13 @@ export class AeraWorkerSessionManager {
         modelId = outcome.modelReported ?? modelId
         this.recordTurn(session, workOrderId, codeWorkingLineId, epochId, sequence, outcome, principals.worker)
         const extraction = extractIntentBatch(outcome.text)
-        const observations: string[] = []
+        /** `kind`: the intent kind, or HOST_NOTICE for Aera's own notices (observation tool, spec §3.1). */
+        const observations: { kind: string, text: string }[] = []
+        const notice = (text: string): void => { observations.push({ kind: 'HOST_NOTICE', text }) }
         if (extraction.kind === 'NONE') {
           silentTurns += 1
           if (silentTurns >= 2) { ended = true; break }
-          observations.push(`No ${EFFECT_INTENT_FENCE} block was found. End your reply with one (status DONE if your part is complete).`)
+          notice(`No ${EFFECT_INTENT_FENCE} block was found. End your reply with one (status DONE if your part is complete).`)
         } else if (extraction.kind === 'MALFORMED') {
           silentTurns = 0
           this.recordEvidence(session, workOrderId, {
@@ -716,7 +806,7 @@ export class AeraWorkerSessionManager {
             analyticalProvenance: { producer: principals.worker, ...(modelId === undefined ? {} : { modelId }), inputs: [epochId], producedAt: this.store.nowIso() },
             links: { codeWorkingLineIds: [codeWorkingLineId as never] },
           })
-          observations.push(`Your ${EFFECT_INTENT_FENCE} block was REJECTED and nothing was performed: ${extraction.reason}`)
+          notice(`Your ${EFFECT_INTENT_FENCE} block was REJECTED and nothing was performed: ${extraction.reason}`)
         } else {
           silentTurns = 0
           const { batch } = extraction
@@ -733,15 +823,15 @@ export class AeraWorkerSessionManager {
               attempt: { turn: attemptTurn, ordinal: index + 1 },
             }, intent)
             outcomes.push(result)
-            observations.push(result.observation)
+            observations.push({ kind: result.kind, text: result.observation })
           }
           if (batch.handoff !== undefined) {
             handoffEvidenceId = this.recordHandoff(session, workOrderId, codeWorkingLineId, epochId, batch.handoff, principals.worker, modelId)
           }
           if (batch.status !== 'CONTINUE') { ended = true; break }
-          if (batch.intents.length === 0) observations.push('No intents were proposed. Propose intents, or set status HANDOFF / DONE.')
+          if (batch.intents.length === 0) notice('No intents were proposed. Propose intents, or set status HANDOFF / DONE.')
         }
-        nextInput = `AERA OBSERVATIONS (Epoch ${epochId})\n${observations.join('\n\n')}`
+        nextBlocks = buildObservationBlocks({ epochId, observations })
       }
       liveEntry.state = 'ENDING'
       terminal ??= await handle.endInput()

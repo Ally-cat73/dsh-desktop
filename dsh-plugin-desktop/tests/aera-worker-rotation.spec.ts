@@ -128,7 +128,9 @@ describe('§14 rotation: kill the worker mid-Epoch, continue from durable Aera s
     expect(orientation).toContain('Worker effect performed: fs.write (w)')
     expect(orientation).toContain('Worker effect performed: git.commit (c)')
     expect(orientation).toContain('aera-worker/v1:fs.write')
-    expect(orientation).toContain('OBJECTIVE: make README say hello.')
+    // O-1 U-D F2-2: the Work Order text is no longer inlined; only its digest and the context.read pointer.
+    expect(orientation).not.toContain('OBJECTIVE: make README say hello.')
+    expect(orientation).toContain('read it with context.read target "wo-payload@0".')
     // No chat replay: nothing Claude A merely SAID reaches Claude B.
     expect(orientation).not.toContain(CHAT_MARKER)
     const turn1 = store.listTypedEvidence(world.workOrderId).filter(row => row.subject.includes(`turn 1 output (${result2.epochId})`))[0]

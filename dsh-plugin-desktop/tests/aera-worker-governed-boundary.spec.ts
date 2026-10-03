@@ -107,7 +107,8 @@ describe('§10 governed effect boundary — authorised effect', () => {
     expect(turnText(0)).toContain(sha256(result.orientation))
     const context = store.listTypedEvidence(world.workOrderId).find(row => row.subject.startsWith('Worker Epoch context supplied'))
     expect(context?.body).toContain(result.orientation)
-    const observationInput = `AERA OBSERVATIONS (Epoch ${result.epochId})\n${result.outcomes.map(outcome => outcome.observation).join('\n\n')}`
+    // O-1 U-D §5.4: [header, one fixed-prefix block per observation], joined by a blank line with the manifest off.
+    const observationInput = [`AERA OBSERVATIONS (Epoch ${result.epochId})`, ...result.outcomes.map(outcome => `AERA_OBSERVATION host frame v1\n${outcome.observation}`)].join('\n\n')
     expect(turnText(1)).toContain(sha256(observationInput))
     const bodies = performed.map(row => row.body)
     for (const outcome of result.outcomes) expect(bodies).toContain(outcome.observation)

@@ -152,8 +152,12 @@ export interface WorkerEpochHandle {
   readonly pid: number | undefined
   /** Absolute path of the Epoch's Aera-owned scratch cwd (empty by contract). */
   readonly scratchDir: string | undefined
-  /** Hand the worker bounded input and wait for its turn to complete. */
-  runTurn(input: string): Promise<WorkerTurnOutcome>
+  /**
+   * Hand the worker bounded input and wait for its turn to complete. O-1 U-D:
+   * an array is written as one content block per element (whole-block
+   * provenance digests); a string is written as one string, as before.
+   */
+  runTurn(input: string | readonly string[]): Promise<WorkerTurnOutcome>
   /** Orderly completion: no further input. */
   endInput(): Promise<WorkerEpochTerminal>
   /** SIGINT → SIGTERM → SIGKILL on the process group. */

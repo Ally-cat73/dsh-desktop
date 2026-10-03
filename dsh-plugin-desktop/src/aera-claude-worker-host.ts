@@ -638,7 +638,7 @@ class ClaudeEpochProcess implements WorkerEpochHandle {
     return this.terminalPromise
   }
 
-  async runTurn(input: string): Promise<WorkerTurnOutcome> {
+  async runTurn(input: string | readonly string[]): Promise<WorkerTurnOutcome> {
     if (this.exited || this.failure !== undefined || this.cancelRequested !== undefined || this.endRequested) {
       return { kind: 'EPOCH_TERMINATED', terminal: await this.terminalPromise }
     }
@@ -660,7 +660,9 @@ class ClaudeEpochProcess implements WorkerEpochHandle {
         this.fail('TIMED_OUT', `turn ${String(turn)} exceeded ${String(this.spec.limits.turnTimeoutMs)} ms`)
       }, this.spec.limits.turnTimeoutMs),
     }
-    this.child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: input } })}\n`)
+    // O-1 U-D: blocks are written byte-for-byte as separate text blocks (the manifest digests are over these strings).
+    const content = typeof input === 'string' ? input : input.map(text => ({ type: 'text', text }))
+    this.child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`)
     return await outcome
   }
 

@@ -12,6 +12,7 @@
  * Only `.invalid` addresses appear here.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -223,5 +224,241 @@ describe('(g) NO-2 / A61: manifest mode only for the reviewed model and CLI pin'
     const surface = `${JSON.stringify(aeraWorkerStatus(runtime, world.workOrderId))}\n${logs.join('\n')}`
     for (const needle of [DUMMY, digests.d0.slice(7), digests.d1.slice(7)]) expect(surface).not.toContain(needle)
     if (runtime.kind === 'AVAILABLE') runtime.modelAttest?.dispose()
+  })
+})
+
+/* -------------------------------------------- session: blocks → manifest → write */
+
+type AttestOutcome = { ok: true, workerEpochId: string, casReceiptId: string, notAfter: string, attestedAtMs: number } | { ok: false, state: 'MODEL_AUTHORITY_REFUSED' | 'MODEL_AUTHORITY_UNAVAILABLE', code: string }
+const FRESH: AttestOutcome = { ok: true, workerEpochId: EPOCH_A, casReceiptId: 'cas-1', notAfter: '2099-01-01T00:00:00.000Z', attestedAtMs: 0 }
+type TurnInput = string | readonly string[]
+
+function gateStub(order: string[], turnResults: AttestOutcome[] = []) {
+  const turns: { baseTurnSeq: number, entries: readonly { digest: string, class: string, tool?: string }[] }[] = []
+  return {
+    turns,
+    async ensureFresh() { order.push('fresh'); return FRESH },
+    async attestTurn(input: { baseTurnSeq: number, entries: readonly { digest: string, class: string, tool?: string }[] }) {
+      order.push('attestTurn')
+      turns.push({ baseTurnSeq: input.baseTurnSeq, entries: input.entries.map(entry => ({ ...entry })) })
+      return turnResults.shift() ?? FRESH
+    },
+    noteTurnActivity() {},
+    setTurnPossible() {},
+    stop() {},
+  }
+}
+
+/** A scripted handle: turn 1 proposes one fs.read (denied: no grant), turn 2 says DONE. */
+function scriptedAdapter(order: string[], replies?: (turn: number, spec: { epochId: string, codeWorkingLineId: string }) => string) {
+  const inputs: TurnInput[] = []
+  const adapter = {
+    adapterId: 'scripted-adapter',
+    workerType: 'CLAUDE_CODE',
+    inputs,
+    async preflight() { return { workerType: 'CLAUDE_CODE', adapterId: 'scripted-adapter' } },
+    async startEpoch(spec: { epochId: string, codeWorkingLineId: string }) {
+      order.push('spawn')
+      let turn = 0
+      const terminal = { status: 'COMPLETED' as const, reason: 'done', exitCode: 0, signal: null, turns: 0, usage: { reported: false }, orphanReaped: false, limitations: [], scratchResidue: [] }
+      return {
+        epochId: spec.epochId,
+        runtime: { workerType: 'CLAUDE_CODE', adapterId: 'scripted-adapter' },
+        pid: undefined,
+        scratchDir: undefined,
+        async runTurn(input: TurnInput) {
+          if (turn >= 4) return { kind: 'EPOCH_TERMINATED' as const, terminal: { ...terminal, turns: turn } }
+          turn += 1
+          inputs.push(input)
+          order.push('turn')
+          const batch = (status: string, intents: unknown[]) => `<aera-effect-intents>${JSON.stringify({ version: 'AeraEffectIntentBatchV1', epochId: spec.epochId, status, intents })}</aera-effect-intents>`
+          const text = replies?.(turn, spec) ?? (turn === 1
+            ? `reading\n${batch('CONTINUE', [{ intentId: 'r1', kind: 'fs.read', codeWorkingLineId: spec.codeWorkingLineId, path: 'README.md' }])}`
+            : `done\n${batch('DONE', [])}`)
+          return { kind: 'TURN_COMPLETED' as const, turn, text, usage: { reported: false }, authClass: 'SUBSCRIPTION_OAUTH' as const, isError: false }
+        },
+        async endInput() { order.push('end'); return { ...terminal, turns: turn } },
+        async cancel(reason: string) { order.push('cancel'); return { ...terminal, status: 'CANCELLED' as const, reason, turns: turn } },
+        async terminal() { return terminal },
+      }
+    },
+  }
+  return adapter
+}
+
+const { AeraWorkerSessionManager } = await import('../src/aera-worker-session.ts')
+const { LocalExecutionPolicyGate } = await import('../src/aera-worker-effect-broker.ts')
+const P = await import('../src/aera-worker-provenance.ts')
+const sha = (text: string): string => `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`
+
+function sessionManager(world: ReturnType<typeof makeWorkerWorld>, adapter: unknown, gate: unknown, options: { manifest?: boolean, cli?: boolean, log?: string[] } = {}) {
+  return new AeraWorkerSessionManager({
+    store: world.store,
+    adapter: adapter as never,
+    gate: new LocalExecutionPolicyGate(),
+    config: {
+      humanPrincipalId: world.owner,
+      delegationId: world.delegationId,
+      environmentId: 'AERA_DEV',
+      ...(options.manifest === false ? {} : { provenance: { manifest: true, model: 'claude-opus-4-6', cliVersion: '2.1.280', ...(options.cli === false ? {} : { cliMetadata: cliMetadataDigests(DUMMY) }) } }),
+    },
+    modelAttest: gate as never,
+    ...(options.log === undefined ? {} : { log: (line: string) => { options.log?.push(line) } }),
+  })
+}
+
+const run = (m: InstanceType<typeof AeraWorkerSessionManager>, world: ReturnType<typeof makeWorkerWorld>, task = 'TEST task: make the README say hello') =>
+  m.runEpoch({ workOrderId: world.workOrderId, codeWorkingLineId: world.line.codeWorkingLineId, task })
+
+describe('session: orientation and observation turns as provenance blocks (§5.4, F2-2)', () => {
+  it('F2-2: turn 1 carries no Work Order payload text — only its length, sha256 and the context.read pointer', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const result = await run(sessionManager(world, scriptedAdapter(order), gateStub(order)), world)
+    const payload = world.store.listWorkOrders()[0]!.exactPayload ?? ''
+    expect(result.orientation).not.toContain('OBJECTIVE: make README say hello.')
+    expect(result.orientation).toContain(`the owner's order is ${String(payload.length)} characters, sha256 ${createHash('sha256').update(payload).digest('hex')}; read it with context.read target "wo-payload@0".`)
+    expect(readFileSync(join(HERE, '../src/aera-worker-session.ts'), 'utf8')).not.toContain('ORIENTATION_PAYLOAD_EXCERPT')
+  })
+
+  it('manifest on: turn 1 = [BRIEFING, RECORD, HUMAN] written as blocks only after attestTurn; HUMAN never committed; one CLI digest on turn 1 only', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order)
+    const gate = gateStub(order)
+    const result = await run(sessionManager(world, adapter, gate), world)
+    expect(result.terminal.status).toBe('COMPLETED')
+    expect(order.filter(step => ['fresh', 'attestTurn', 'spawn', 'turn'].includes(step))).toEqual(['fresh', 'spawn', 'attestTurn', 'turn', 'attestTurn', 'turn'])
+    const first = adapter.inputs[0] as readonly string[]
+    expect(Array.isArray(first)).toBe(true)
+    expect(first).toHaveLength(3)
+    expect(first[0]!.startsWith(P.ORIENTATION_BRIEFING_HEADER)).toBe(true)
+    expect(first[1]!.startsWith(P.RECORD_BLOCK_HEADER)).toBe(true)
+    expect(first[2]!.startsWith(P.HUMAN_BLOCK_HEADER)).toBe(true)
+    expect(first[2]).toContain('Task for this Epoch (from the owner): TEST task: make the README say hello')
+    expect(result.orientation).toBe(first.join('\n\n'))
+    const t1 = gate.turns[0]!
+    expect(t1.baseTurnSeq).toBe(1001)
+    expect(t1.entries).toEqual([
+      { digest: sha(first[0]!), class: 'AERA_BRIEFING' },
+      { digest: sha(first[1]!), class: 'AERA_RECORD', tool: 'aera_record_context' },
+      { digest: cliMetadataDigests(DUMMY).d0, class: 'CLI_METADATA' },
+    ])
+    expect(t1.entries.map(entry => entry.digest)).not.toContain(sha(first[2]!))
+  })
+
+  it('manifest on: an observation turn = [BRIEFING header, OBSERVATION…], every observation behind the fixed prefix, tool by intent kind; no CLI entry', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order)
+    const gate = gateStub(order)
+    const result = await run(sessionManager(world, adapter, gate), world)
+    const second = adapter.inputs[1] as readonly string[]
+    expect(second).toEqual([`${P.OBSERVATIONS_BRIEFING_HEADER}${result.epochId})`, `${P.OBSERVATION_BLOCK_PREFIX}${result.outcomes[0]!.observation}`])
+    expect(gate.turns[1]).toEqual({ baseTurnSeq: 1002, entries: [{ digest: sha(second[0]!), class: 'AERA_BRIEFING' }, { digest: sha(second[1]!), class: 'AERA_OBSERVATION', tool: 'aera_fs_read' }] })
+    expect(() => P.assertFixedHeaderSeparation([{ class: 'AERA_BRIEFING', text: second[0]! }, { class: 'AERA_OBSERVATION', tool: 'aera_fs_read', text: second[1]! }])).not.toThrow()
+  })
+
+  it('a host notice is its own observation (aera_host_notice)', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order, (turn, spec) => turn === 1 ? 'no block at all' : `<aera-effect-intents>${JSON.stringify({ version: 'AeraEffectIntentBatchV1', epochId: spec.epochId, status: 'DONE', intents: [] })}</aera-effect-intents>`)
+    const gate = gateStub(order)
+    await run(sessionManager(world, adapter, gate), world)
+    const second = adapter.inputs[1] as readonly string[]
+    expect(second).toHaveLength(2)
+    expect(second[1]!.startsWith(P.OBSERVATION_BLOCK_PREFIX)).toBe(true)
+    expect(gate.turns[1]!.entries[1]).toMatchObject({ class: 'AERA_OBSERVATION', tool: 'aera_host_notice' })
+  })
+
+  it('A52 (session): manifest on and the turn attest refused → that turn is NOT written; typed terminal MODEL_AUTHORITY_UNAVAILABLE', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order)
+    const gate = gateStub(order, [{ ok: false, state: 'MODEL_AUTHORITY_REFUSED', code: 'MALFORMED_ATTEMPT' }])
+    const result = await run(sessionManager(world, adapter, gate), world)
+    expect(adapter.inputs).toHaveLength(0)
+    expect(result.terminal.status).toBe('MODEL_AUTHORITY_UNAVAILABLE')
+    expect(result.terminal.reason).toContain('MODEL_AUTHORITY_REFUSED:MALFORMED_ATTEMPT')
+    const terminal = world.store.listTypedEvidence(world.workOrderId).find(row => row.subject.startsWith('Worker Epoch terminal: '))
+    expect(terminal?.subject).toContain('MODEL_AUTHORITY_UNAVAILABLE')
+  })
+
+  it('manifest off: v1 gate before every turn, turns written as one string (blocks joined by a blank line), no v2', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order)
+    const gate = gateStub(order)
+    const result = await run(sessionManager(world, adapter, gate, { manifest: false }), world)
+    expect(order.filter(step => ['fresh', 'attestTurn', 'spawn', 'turn'].includes(step))).toEqual(['fresh', 'spawn', 'fresh', 'turn', 'fresh', 'turn'])
+    expect(typeof adapter.inputs[0]).toBe('string')
+    expect(adapter.inputs[0]).toBe(result.orientation)
+    expect(adapter.inputs[1]).toBe(`${P.OBSERVATIONS_BRIEFING_HEADER}${result.epochId})\n\n${P.OBSERVATION_BLOCK_PREFIX}${result.outcomes[0]!.observation}`)
+    expect(gate.turns).toHaveLength(0)
+  })
+
+  it('evidence (§5.5, N-11): contextText kept; a companion row binds the per-block sha256 list and the host-only manifest digest; no address or CLI digest in the store', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order)
+    const gate = gateStub(order)
+    const result = await run(sessionManager(world, adapter, gate), world)
+    const rows = world.store.listTypedEvidence(world.workOrderId)
+    const context = rows.find(row => row.subject === `Worker Epoch context supplied: ${result.epochId}`)
+    expect(context?.body).toContain(`\n\nORIENTATION\n${result.orientation}`)
+    const companion = rows.find(row => row.subject === `Worker Epoch context provenance: ${result.epochId}`)
+    expect(companion?.evidenceClass).toBe('SOURCE_EVIDENCE')
+    const body = JSON.parse(companion?.body ?? '{}') as Record<string, unknown>
+    const first = adapter.inputs[0] as readonly string[]
+    expect(body).toEqual({
+      contextSha256: createHash('sha256').update(context?.body ?? '').digest('hex'),
+      hostBlocks: [{ class: 'AERA_BRIEFING', sha256: sha(first[0]!) }, { class: 'AERA_RECORD', sha256: sha(first[1]!) }, { class: 'HUMAN', sha256: sha(first[2]!) }],
+      hostManifestDigest: P.hostManifestDigest(gate.turns[0]!.entries as never),
+      demotedFields: expect.any(Array),
+    })
+    const digests = cliMetadataDigests(DUMMY)
+    const storeBytes = JSON.stringify(rows)
+    for (const needle of [DUMMY, digests.d0.slice(7), digests.d1.slice(7)]) expect(storeBytes).not.toContain(needle)
+  })
+
+  it('NO-11 absent address: no CLI entry is ever committed; the descriptor says not_offered; the log line is content-free', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order)
+    const gate = gateStub(order)
+    const log: string[] = []
+    await run(sessionManager(world, adapter, gate, { cli: false, log }), world)
+    expect(gate.turns.flatMap(turn => turn.entries).some(entry => entry.class === 'CLI_METADATA')).toBe(false)
+    const lines = log.filter(line => line.startsWith('aera-worker-provenance: '))
+    expect(lines).toHaveLength(2)
+    const first = JSON.parse(lines[0]!.slice('aera-worker-provenance: '.length)) as { turn: number, cliMetadata: string, blocks: { class: string, digestPrefix: string, proof: string }[] }
+    expect(first).toMatchObject({ turn: 1, cliMetadata: 'not_offered' })
+    expect(first.blocks.map(row => [row.class, row.proof])).toEqual([['AERA_BRIEFING', 'committed'], ['AERA_RECORD', 'committed'], ['HUMAN', 'human']])
+    expect(first.blocks[2]!.digestPrefix).toBe('withheld')
+    const text = log.join('\n')
+    expect(text).not.toContain('TEST task')
+    expect(text).not.toContain(P.ORIENTATION_BRIEFING_HEADER)
+  })
+
+  it('NO-11 with an address: the descriptor says committed, and neither the address nor a CLI digest reaches the log', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const log: string[] = []
+    await run(sessionManager(world, scriptedAdapter(order), gateStub(order), { log }), world)
+    const text = log.join('\n')
+    expect(text).toContain('"cliMetadata":"committed"')
+    const digests = cliMetadataDigests(DUMMY)
+    for (const needle of [DUMMY, digests.d0.slice(7, 19), digests.d1.slice(7, 19)]) expect(text).not.toContain(needle)
+  })
+
+  it('N-3: a task that is not well-formed UTF-16 is replaced before writing and a provenance notice is recorded', async () => {
+    const world = makeWorkerWorld()
+    const order: string[] = []
+    const adapter = scriptedAdapter(order)
+    const result = await run(sessionManager(world, adapter, gateStub(order)), world, 'TEST task \uD800 lone')
+    const first = adapter.inputs[0] as readonly string[]
+    expect(first.every(text => text.isWellFormed())).toBe(true)
+    const notice = world.store.listTypedEvidence(world.workOrderId).find(row => row.subject.startsWith(`Worker provenance notice (${result.epochId} turn 1)`))
+    expect(JSON.parse(notice?.body ?? '{}')).toMatchObject({ turn: 1, notWellFormed: 1, collisions: 0 })
   })
 })
