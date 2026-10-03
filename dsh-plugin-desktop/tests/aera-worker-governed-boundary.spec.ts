@@ -20,7 +20,7 @@ import {
 } from '../src/aera-worker-effect-broker.ts'
 import { AeraWorkerSessionManager } from '../src/aera-worker-session.ts'
 import type { WorkerGrant } from '../src/aera-worker-authority.ts'
-import { POISONED_PARENT_ENV, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld, testHotPath } from './aera-worker-fixtures.ts'
+import { POISONED_PARENT_ENV, TEST_ONLY_SCRATCH_PATH_GUARD, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld, testHotPath } from './aera-worker-fixtures.ts'
 
 const LIMITS = { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 15_000, epochTimeoutMs: 60_000, cancelGraceMs: 300 }
 /** The fake echoes digests in 8-char groups so secret masking of worker text cannot hide them. */
@@ -34,7 +34,7 @@ async function managerFor(world: WorkerWorld, script: FakeScript, options: {
   const { pin } = await makeFakeClaude(script)
   return new AeraWorkerSessionManager({
     store: new ParticipationStore(world.storeDir),
-    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, hotPath: testHotPath() }),
+    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: testHotPath() }),
     gate: options.gate ?? new LocalExecutionPolicyGate(),
     config: {
       humanPrincipalId: options.humanPrincipalId ?? world.owner,

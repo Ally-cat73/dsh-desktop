@@ -47,6 +47,17 @@
  * - AERA-OWNED EMPTY CWD. A fresh 0700 scratch dir per Epoch — never the
  *   repository, never HOME — asserted empty after every turn. Anything that
  *   appears there is a native effect and ends the Epoch.
+ * - READABLE SCRATCH PATH (O-1 U-D F2-3, O1_PROVENANCE_SPEC_V2 §6.3, V2.1
+ *   NO-6). The CLI's `environment` attachment shows the cwd to the model, so
+ *   it is `<userData>/workerScratch/epoch-NNNN` (exclusive mkdir, counter),
+ *   never `$TMPDIR` (its random per-user segment tripped PPS
+ *   `encoded_secret_base64`). Before spawn the host proves: realpath equals
+ *   the path; not under `$TMPDIR`, not HOME, no `.git`, `CLAUDE.md` or
+ *   `CLAUDE.local.md` in any ancestor and no project `.claude` below HOME;
+ *   every component readable (READABLE_PATH_PART); empty. Otherwise
+ *   WORKER_SCRATCH_PATH_NONCONFORMING and no process. Side effect, stated:
+ *   the macOS username now reaches model context (a non-readable username
+ *   refuses the spawn).
  * - NO CREDENTIAL CUSTODY. The CLI reads the keychain in-process. This module
  *   never reads, copies, hashes or stores a credential, never passes an API
  *   key, and never uses `--bare` (which would force API-key auth, §16).
@@ -57,9 +68,9 @@
 
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream, lstatSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { chmodSync, createReadStream, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmdirSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, isAbsolute, join } from 'node:path'
 import { isGatewayConnectionId } from '@aera/local-effect-authority'
 import {
   NO_USAGE,
@@ -131,6 +142,8 @@ export const CLAUDE_WORKER_STATIC_LIMITATIONS: readonly string[] = Object.freeze
   'the CLI injects the account email and an environment snapshot into model context; no flag removes them',
   'the CLI opens an inbound messaging socket (/tmp/cc-socks/<pid>.sock) for the Epoch lifetime',
   'the worker process runs as the owner with no OS sandbox; confinement is by executor removal, verified per init',
+  'the worker cwd (<userData>/workerScratch/epoch-NNNN, so the macOS username) is shown to the model by the CLI environment note',
+  'with the provenance manifest on: an account note the CLI re-announces after an auto-compaction is not pre-committed, so it stays human-class and that turn is blocked (fail-safe, not relaxed)',
 ])
 
 /** The pinned runtime. */
@@ -319,11 +332,128 @@ async function reportedVersion(binaryPath: string, env: Record<string, string>):
   })
 }
 
+/* --------------------------------------------- F2-3: the readable scratch root */
+
+/** The Aera-owned scratch root under userData (composition: `<userData>/workerScratch`). */
+export const WORKER_SCRATCH_ROOT_NAME = 'workerScratch'
+const SCRATCH_EPOCH_MAX = 9_999
+/**
+ * V2.1 NO-6 exact regex for every path part (components split on ` `, `-`,
+ * `_`, `.`): lowercase or camelCase word, Titlecase word, acronym, word plus
+ * 1–4 digits, or 1–4 digits. It admits the production capitalised folders.
+ */
+export const READABLE_PATH_PART = /^(?:[a-z]+(?:[A-Z][a-z]+)*|[A-Z][a-z]+(?:[A-Z][a-z]+)*|[A-Z]{2,8}|[A-Za-z]+[0-9]{1,4}|[0-9]{1,4})$/u
+
+const scratchRefusal = (detail: string): WorkerRefusal =>
+  new WorkerRefusal('WORKER_SCRATCH_PATH_NONCONFORMING', `The worker scratch path is refused (${detail}); the worker is not started.`)
+
+/** What the invariant reads from the filesystem (injectable for the production-shaped pure test). */
+export interface WorkerScratchPathEnvironment {
+  readonly tmpRoots: readonly string[]
+  readonly home: string
+  readonly realpath: (path: string) => string
+  readonly exists: (path: string) => boolean
+  readonly isEmptyDir: (path: string) => boolean
+}
+
+function defaultScratchEnvironment(): WorkerScratchPathEnvironment {
+  const tmp = tmpdir()
+  const roots = [tmp]
+  try { roots.push(realpathSync(tmp)) } catch { /* tmpdir unresolvable: the literal stays */ }
+  return {
+    tmpRoots: roots,
+    home: homedir(),
+    realpath: path => realpathSync(path),
+    exists: path => existsSync(path),
+    isEmptyDir: path => readdirSync(path).length === 0,
+  }
+}
+
+const within = (path: string, root: string): boolean => root !== '' && (path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`))
+
+/**
+ * The §6.3 host invariant (a)–(d) plus NO-6. Returns the refusal detail (never
+ * a secret; paths are Aera-owned) or undefined when the path conforms.
+ */
+export function workerScratchPathRefusal(dir: string, env: WorkerScratchPathEnvironment = defaultScratchEnvironment()): string | undefined {
+  if (!isAbsolute(dir)) return 'not an absolute path'
+  let real: string
+  try { real = env.realpath(dir) } catch { return 'it does not exist' }
+  if (real !== dir) return 'its realpath differs (symlinked)'
+  if (env.tmpRoots.some(root => within(dir, root))) return 'it is under $TMPDIR'
+  if (dir === env.home || dir === '/') return 'it is HOME'
+  for (const component of dir.split('/').slice(1)) {
+    const parts = component.split(/[ \-_.]/u)
+    if (component === '' || !parts.every(part => READABLE_PATH_PART.test(part))) return 'a path component is not readable (READABLE_PATH_PART)'
+  }
+  for (let ancestor = dir; ; ancestor = dirname(ancestor)) {
+    if (env.exists(join(ancestor, '.git'))) return 'it is inside a git work tree'
+    if (env.exists(join(ancestor, 'CLAUDE.md')) || env.exists(join(ancestor, 'CLAUDE.local.md'))) return 'an ancestor folder holds CLAUDE.md'
+    // HOME's own .claude is the CLI's login configuration; any other .claude is project configuration.
+    if (ancestor !== env.home && env.exists(join(ancestor, '.claude'))) return 'an ancestor folder holds a project .claude'
+    if (ancestor === dirname(ancestor)) break
+  }
+  try {
+    if (!env.isEmptyDir(dir)) return 'it is not empty'
+  } catch {
+    return 'it cannot be listed'
+  }
+  return undefined
+}
+
+/** Throws WORKER_SCRATCH_PATH_NONCONFORMING unless the §6.3 invariant holds. */
+export function assertConformingWorkerScratchPath(dir: string): void {
+  const refusal = workerScratchPathRefusal(dir)
+  if (refusal !== undefined) throw scratchRefusal(refusal)
+}
+
+/**
+ * The root (created 0700, chmod-verified, owner uid, not a symlink) and a
+ * fresh `epoch-NNNN` (exclusive mkdir 0700; EEXIST → the next number).
+ */
+export function allocateWorkerScratchDir(root: string, options: { readonly maxIndex?: number } = {}): string {
+  if (!isAbsolute(root)) throw scratchRefusal('the scratch root is not absolute')
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 })
+    const before = lstatSync(root)
+    if (before.isSymbolicLink() || !before.isDirectory()) throw scratchRefusal('the scratch root is not a plain directory')
+    chmodSync(root, 0o700)
+    const stat = lstatSync(root)
+    if ((stat.mode & 0o777) !== 0o700) throw scratchRefusal('the scratch root is not 0700')
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw scratchRefusal('the scratch root is not owned by this user')
+  } catch (cause) {
+    if (cause instanceof WorkerRefusal) throw cause
+    throw scratchRefusal('the scratch root cannot be created')
+  }
+  const max = options.maxIndex ?? SCRATCH_EPOCH_MAX
+  for (let index = 1; index <= max; index += 1) {
+    const dir = join(root, `epoch-${String(index).padStart(4, '0')}`)
+    try {
+      mkdirSync(dir, { mode: 0o700 })
+    } catch (cause) {
+      if ((cause as { code?: unknown }).code === 'EEXIST') continue
+      throw scratchRefusal('an Epoch scratch dir cannot be created')
+    }
+    if ((lstatSync(dir).mode & 0o777) !== 0o700) {
+      try { rmdirSync(dir) } catch { /* left empty; refused below */ }
+      throw scratchRefusal('the Epoch scratch dir is not 0700')
+    }
+    return dir
+  }
+  throw new WorkerRefusal('WORKER_SCRATCH_EXHAUSTED', `Every Epoch scratch number under the scratch root is taken (${String(max)}); the worker is not started.`)
+}
+
 export interface ClaudeWorkerHostDeps {
   /** The parent environment the four base keys are copied from. */
   readonly parentEnv?: Readonly<Record<string, string | undefined>>
-  /** Where Epoch scratch dirs are created. */
+  /** F2-3: the Aera-owned scratch root (production: `<userData>/workerScratch`). Required to spawn. */
   readonly scratchRoot?: string
+  /**
+   * F2-3: the pre-spawn path invariant. Production NEVER sets this (a static
+   * test pins composition); tests whose scratch root sits in the sandbox's
+   * random tmp path inject a test-only guard.
+   */
+  readonly scratchPathGuard?: (dir: string) => void
   /** Signer verifier (injectable; darwin default uses codesign). */
   readonly signerTeamIdentifier?: (path: string) => Promise<string | undefined>
 }
@@ -395,7 +525,15 @@ export class ClaudeCodeWorkerAdapter implements WorkerAdapter {
       throw new WorkerRefusal('WORKER_ROUTER_KEY_UNAVAILABLE', `The Router worker key could not be read (${/^[A-Z0-9_]{1,64}$/u.test(code) ? code : 'UNTYPED'}); the worker is not started.`)
     }
     const env = buildClaudeWorkerEnv(this.deps.parentEnv ?? process.env, { baseUrl: hotPath.baseUrl, connectionId: hotPath.connectionId, routerKey })
-    const scratchDir = mkdtempSync(join(this.deps.scratchRoot ?? tmpdir(), 'aera-worker-epoch-'))
+    // F2-3: a readable Aera-owned cwd, proven before any process exists; never $TMPDIR.
+    if (this.deps.scratchRoot === undefined) throw scratchRefusal(`no Aera-owned scratch root (<userData>/${WORKER_SCRATCH_ROOT_NAME}) is configured`)
+    const scratchDir = allocateWorkerScratchDir(this.deps.scratchRoot)
+    try {
+      (this.deps.scratchPathGuard ?? assertConformingWorkerScratchPath)(scratchDir)
+    } catch (cause) {
+      try { rmdirSync(scratchDir) } catch { /* empty by construction; recorded by the refusal */ }
+      throw cause
+    }
     return ClaudeEpochProcess.launch({
       pin: this.pin,
       runtime,

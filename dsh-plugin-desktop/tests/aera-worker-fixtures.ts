@@ -15,7 +15,7 @@
  * recorded location is a real git worktree on its own branch.
  */
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ParticipationStore } from '@aera/participation-runtime'
@@ -336,4 +336,15 @@ export function testHotPath(overrides: Partial<ClaudeWorkerHotPath> = {}): Claud
     readRouterKey: async () => TEST_ROUTER_KEY,
     ...overrides,
   }
+}
+
+/**
+ * O-1 U-D F2-3: the production scratch invariant refuses the sandbox's random
+ * tmp paths (non-readable names, under $TMPDIR, inside the checkout). Host
+ * lifecycle tests inject this test-only guard (empty dir only); the invariant
+ * itself is tested in aera-worker-scratch.spec.ts, and composition never sets
+ * a guard (static test).
+ */
+export const TEST_ONLY_SCRATCH_PATH_GUARD = (dir: string): void => {
+  if (readdirSync(dir).length !== 0) throw new Error('test scratch dir is not empty')
 }

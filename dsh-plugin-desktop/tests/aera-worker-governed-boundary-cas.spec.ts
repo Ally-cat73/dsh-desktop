@@ -30,7 +30,7 @@ import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from '..
 import { parseWorkerStatus } from '../src/client/aera-worker-api.ts'
 import { AeraWorkerStatus } from '../src/client/AeraWorkerStatus.tsx'
 import { en } from '../src/client/aera-collab-locales.ts'
-import { POISONED_PARENT_ENV, TEST_ROUTER_KEY, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld, testHotPath } from './aera-worker-fixtures.ts'
+import { POISONED_PARENT_ENV, TEST_ONLY_SCRATCH_PATH_GUARD, TEST_ROUTER_KEY, git, makeFakeClaude, makeWorkerWorld, type FakeScript, type WorkerWorld, testHotPath } from './aera-worker-fixtures.ts'
 import {
   CIS_ISSUER, EFFECT_ROUTES, RELAY, ROUTER_SAN, generatePki, operatorWriteEpoch, operatorWritePending, startFakeRouter, testCustody, testEffectCatalogEnv, testModelRoutingEnv,
   type FakeRouter, type Pki, type TestCustody,
@@ -146,7 +146,7 @@ async function manager(world: WorkerWorld, plane: GovernedEffectPlane, script: F
   const { pin } = await makeFakeClaude(script)
   return new AeraWorkerSessionManager({
     store: new ParticipationStore(world.storeDir),
-    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, hotPath: testHotPath() }),
+    adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: testHotPath() }),
     // A permissive local gate: governed mode must never consult it.
     gate: new LocalExecutionPolicyGate(),
     config: { humanPrincipalId: world.owner, delegationId: world.delegationId, environmentId: 'AERA_DEV', limits: LIMITS },

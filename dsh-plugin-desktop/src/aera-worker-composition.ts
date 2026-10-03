@@ -69,6 +69,12 @@ export interface AeraWorkerCompositionOptions {
   readonly effectPlane?: GovernedEffectPlane
   /** H-1: the Router hot path (config origin + Keychain key reader), built by the host from the loaded config. */
   readonly routerHotPath?: ClaudeWorkerHotPathSource
+  /**
+   * O-1 U-D F2-3: the Aera-owned worker scratch root, `<userData>/workerScratch`
+   * (set by the host). Without it the adapter refuses every spawn
+   * (WORKER_SCRATCH_PATH_NONCONFORMING): the worker never runs in $TMPDIR.
+   */
+  readonly scratchRoot?: string
   /** Ids and codes only (the attestor never logs a body, nonce or token). */
   readonly log?: (line: string) => void
 }
@@ -159,7 +165,7 @@ function composeWorkerRuntime(
     kind: 'AVAILABLE',
     manager: new AeraWorkerSessionManager({
       store: new ParticipationStore(storeDir),
-      adapter: new ClaudeCodeWorkerAdapter(pin.pin, { parentEnv: env, hotPath: routing.hotPath }),
+      adapter: new ClaudeCodeWorkerAdapter(pin.pin, { parentEnv: env, hotPath: routing.hotPath, ...(options.scratchRoot === undefined ? {} : { scratchRoot: options.scratchRoot }) }),
       gate: NO_LOCAL_AUTHORITY_GATE,
       config: { humanPrincipalId: principalId, delegationId, environmentId },
       broker: { parentEnv: env },

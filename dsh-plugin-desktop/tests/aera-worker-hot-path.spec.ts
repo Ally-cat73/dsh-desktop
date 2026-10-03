@@ -67,7 +67,7 @@ const {
 const { AERA_CODE_PRODUCT } = await import('../src/product-brand.ts')
 const { bootstrapAeraGatewayCredential } = await import('../src/aera-gateway-keychain.ts')
 const { AGC_CANARY_SYDNEY_ROUTER_ORIGIN, AGC_GOVERNED_ROUTER_ORIGIN } = await import('../src/aera-gateway-agc-binding.ts')
-const { POISONED_PARENT_ENV, TEST_ROUTER_KEY, makeFakeClaude, makeWorkerWorld, testHotPath } = await import('./aera-worker-fixtures.ts')
+const { POISONED_PARENT_ENV, TEST_ONLY_SCRATCH_PATH_GUARD, TEST_ROUTER_KEY, makeFakeClaude, makeWorkerWorld, testHotPath } = await import('./aera-worker-fixtures.ts')
 const { CIS_ISSUER, ROUTER_SAN, generatePki, testCustody, testEffectCatalogEnv, testModelRoutingEnv } = await import('./aera-worker-le-fixtures.ts')
 
 const SRC = join(import.meta.dirname, '..', 'src')
@@ -190,6 +190,7 @@ describe('H-1 spawn: the key is read in the main process at spawn time, into tha
     const adapter = new ClaudeCodeWorkerAdapter(pin, {
       parentEnv: POISONED_PARENT_ENV,
       scratchRoot,
+      scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD,
       hotPath: testHotPath({ baseUrl: router.origin, connectionId: CONNECTION, readRouterKey: async () => { reads += 1; return TEST_ROUTER_KEY } }),
     })
     // Composing the adapter reads nothing: the key is read at spawn.
@@ -239,7 +240,7 @@ describe('H-1 spawn: the key is read in the main process at spawn time, into tha
     for (const { hotPath, code } of cases) {
       const scratchRoot = mkdtempSync(join(tmpdir(), 'h1-refused-'))
       const events: { kind: string }[] = []
-      const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, hotPath: hotPath as never })
+      const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: hotPath as never })
       let caught: unknown
       try {
         await adapter.startEpoch(spec(undefined, events))
@@ -490,8 +491,12 @@ describe('H-1 static: no governed spawn path can omit the base URL; the key has 
   it('the product composes the adapter only in composition, always with the hot path; the host wires config origin + key reader', () => {
     const constructing = srcFiles().filter(name => read(name).includes('new ClaudeCodeWorkerAdapter('))
     expect(constructing).toEqual(['aera-worker-composition.ts'])
-    expect(read('aera-worker-composition.ts')).toMatch(/new ClaudeCodeWorkerAdapter\(pin\.pin, \{ parentEnv: env, hotPath: routing\.hotPath \}\)/u)
     const collab = read('aera-collab.ts')
+    // O-1 U-D F2-3: the Aera-owned scratch root is composed; a scratch-path guard never is (the production invariant always runs).
+    expect(read('aera-worker-composition.ts')).toMatch(/new ClaudeCodeWorkerAdapter\(pin\.pin, \{ parentEnv: env, hotPath: routing\.hotPath, \.\.\.\(options\.scratchRoot === undefined \? \{\} : \{ scratchRoot: options\.scratchRoot \}\) \}\)/u)
+    for (const name of srcFiles().filter(file => file !== 'aera-claude-worker-host.ts')) expect(read(name), name).not.toMatch(/scratchPathGuard/u)
+    expect(collab).toMatch(/const scratchRoot = userDataDir === undefined \? undefined : join\(userDataDir, WORKER_SCRATCH_ROOT_NAME\)/u)
+    expect(collab).toMatch(/const worker = composeAeraWorker\(.*\{ scratchRoot \}/u)
     expect(collab).toMatch(/baseUrl: localEffectConfig\.config\.modelRouterOrigin/u)
     expect(collab).toMatch(/readRouterKey: createClaudeWorkerRouterKeyReader\(installationKeyScope\)/u)
     expect(collab).toMatch(/const worker = composeAeraWorker\(.*routerHotPath/u)
@@ -535,7 +540,7 @@ describe('H-1 Gateway Session (CD-4 / m-13): the native session id is recorded',
     const { pin } = await makeFakeClaude({ modelRequest: true, turns: [{ text: 'a', status: 'CONTINUE' }, { text: 'b', status: 'DONE' }] })
     const manager = new AeraWorkerSessionManager({
       store: new ParticipationStore(world.storeDir),
-      adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, hotPath: testHotPath({ baseUrl: router.origin, connectionId: CONNECTION }) }),
+      adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot: world.scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: testHotPath({ baseUrl: router.origin, connectionId: CONNECTION }) }),
       gate: new LocalExecutionPolicyGate(),
       config: { humanPrincipalId: world.owner, delegationId: world.delegationId, environmentId: 'AERA_DEV', limits: LIMITS },
       broker: { parentEnv: POISONED_PARENT_ENV },

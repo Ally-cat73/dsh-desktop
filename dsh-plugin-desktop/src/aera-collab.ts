@@ -45,6 +45,7 @@ import {
   handleAeraWorkerStatusRequest,
 } from './aera-worker-route.ts'
 import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction } from './aera-worker-composition.ts'
+import { WORKER_SCRATCH_ROOT_NAME } from './aera-claude-worker-host.ts'
 import { createClaudeWorkerRouterKeyReader, createWorkerInstallationKeyCustody, resolveInstallationKeyScope, type InstallationKeyScope } from './aera-worker-installation-key.ts'
 import { loadWorkerLocalEffectConfig } from './aera-worker-le-config.ts'
 import { createWorkerLocalEffectSession } from './aera-worker-le-session.ts'
@@ -334,7 +335,9 @@ export function apply(ctx: Context): void {
         baseUrl: localEffectConfig.config.modelRouterOrigin,
         readRouterKey: createClaudeWorkerRouterKeyReader(installationKeyScope),
       }
-  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), ...(effectPlane === undefined ? {} : { effectPlane }), ...(routerHotPath === undefined ? {} : { routerHotPath }), log: line => { ctx.logger.info(line) } })
+  // O-1 U-D F2-3: the readable, Aera-owned scratch root for every Epoch cwd (never $TMPDIR).
+  const scratchRoot = userDataDir === undefined ? undefined : join(userDataDir, WORKER_SCRATCH_ROOT_NAME)
+  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), ...(effectPlane === undefined ? {} : { effectPlane }), ...(routerHotPath === undefined ? {} : { routerHotPath }), ...(scratchRoot === undefined ? {} : { scratchRoot }), log: line => { ctx.logger.info(line) } })
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',

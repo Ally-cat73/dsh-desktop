@@ -20,7 +20,7 @@ import {
   verifyClaudeWorkerBinary,
 } from '../src/aera-claude-worker-host.ts'
 import { DEFAULT_WORKER_EPOCH_LIMITS, type WorkerEpochHandle, type WorkerLiveEvent } from '../src/aera-worker-adapter.ts'
-import { FAKE_MODEL, FAKE_VERSION, POISONED_PARENT_ENV, TEST_ROUTER_KEY, makeFakeClaude, type FakeScript, testHotPath } from './aera-worker-fixtures.ts'
+import { FAKE_MODEL, FAKE_VERSION, POISONED_PARENT_ENV, TEST_ONLY_SCRATCH_PATH_GUARD, TEST_ROUTER_KEY, makeFakeClaude, type FakeScript, testHotPath } from './aera-worker-fixtures.ts'
 
 /** PE-2 / F1 (2.1.280): the fixed suppression env; the bootstrap GET carried ANTHROPIC_CUSTOM_HEADERS to api.anthropic.com without it. */
 const SUPPRESSION_KEYS = ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER', 'DISABLE_ERROR_REPORTING', 'DISABLE_TELEMETRY']
@@ -45,7 +45,7 @@ const LIMITS = { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 10_000, epochTim
 async function start(script: FakeScript, overrides: { limits?: Partial<typeof LIMITS>, events?: WorkerLiveEvent[] } = {}): Promise<{ handle: WorkerEpochHandle, scratchRoot: string }> {
   const { pin } = await makeFakeClaude(script)
   const scratchRoot = mkdtempSync(join(tmpdir(), 'aera-host-scratch-'))
-  const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, hotPath: testHotPath() })
+  const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: testHotPath() })
   const handle = await adapter.startEpoch({
     epochId: 'aera:worker-epoch:00000000-0000-4000-8000-000000000001',
     aeraSessionId: 'psession-test',
@@ -141,7 +141,7 @@ describe('clean environment and fixed argv (§7/§13)', () => {
     const envLog = join(mkdtempSync(join(tmpdir(), 'aera-env-log-')), 'env-names.txt')
     const { pin } = await makeFakeClaude({ envLog, envLogProbe: TEST_ROUTER_KEY, turns: [{ text: 'ok' }] })
     const scratchRoot = mkdtempSync(join(tmpdir(), 'aera-host-scratch-'))
-    const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: SUPPRESSION_POISONED_PARENT_ENV, scratchRoot, hotPath: testHotPath() })
+    const adapter = new ClaudeCodeWorkerAdapter(pin, { parentEnv: SUPPRESSION_POISONED_PARENT_ENV, scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: testHotPath() })
     const handle = await adapter.startEpoch({
       epochId: 'aera:worker-epoch:00000000-0000-4000-8000-000000000002', aeraSessionId: 's', workOrderId: 'w', codeWorkingLineId: 'l', systemPrompt: 'p', limits: LIMITS,
     })

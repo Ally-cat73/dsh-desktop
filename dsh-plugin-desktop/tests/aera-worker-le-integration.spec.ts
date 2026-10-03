@@ -51,7 +51,7 @@ import { AERA_CLAUDE_WORKER_CONFIG_FILENAME, loadWorkerLocalEffectConfig } from 
 import { WORKER_EPOCH_PUBLIC_FILENAME, createWorkerLocalEffectSession, type WorkerLocalEffectSession } from '../src/aera-worker-le-session.ts'
 import { installationKeyThumbprint } from '../src/aera-worker-installation-key.ts'
 import { aeraWorkerStatus, composeAeraWorker, performAeraWorkerAction, resolveClaudeWorkerHotPath, type AeraWorkerRuntime } from '../src/aera-worker-composition.ts'
-import { POISONED_PARENT_ENV, git, makeFakeClaude, type FakeScript } from './aera-worker-fixtures.ts'
+import { POISONED_PARENT_ENV, TEST_ONLY_SCRATCH_PATH_GUARD, git, makeFakeClaude, type FakeScript } from './aera-worker-fixtures.ts'
 
 const HOLD_REPO = process.env.AERA_LE_REHEARSAL_HOLD_WORLD
 const PARENT = process.env.AERA_LE_REHEARSAL_PARENT
@@ -497,7 +497,7 @@ describe.skipIf(!ENABLED)('INT-1 desktop ↔ rehearsal world (fresh world per ru
     if (routing.kind !== 'ROUTED') throw new Error(routing.reason)
     manager = new AeraWorkerSessionManager({
       store: new ParticipationStore(storeDir),
-      adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, hotPath: routing.hotPath }),
+      adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: routing.hotPath }),
       gate: NO_LOCAL_AUTHORITY_GATE,
       config: { humanPrincipalId: owner as never, delegationId: DELEGATION_ID, environmentId: ENVIRONMENT_ID, limits: { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 30_000, epochTimeoutMs: 90_000, cancelGraceMs: 500 } },
       broker: { parentEnv: POISONED_PARENT_ENV },
@@ -625,7 +625,7 @@ describe.skipIf(!ENABLED)('INT-1 desktop ↔ rehearsal world (fresh world per ru
     if (routing.kind !== 'ROUTED') throw new Error(routing.reason)
     const restartedManager = new AeraWorkerSessionManager({
       store: new ParticipationStore(storeDir),
-      adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, hotPath: routing.hotPath }),
+      adapter: new ClaudeCodeWorkerAdapter(pin, { parentEnv: POISONED_PARENT_ENV, scratchRoot, scratchPathGuard: TEST_ONLY_SCRATCH_PATH_GUARD, hotPath: routing.hotPath }),
       gate: NO_LOCAL_AUTHORITY_GATE,
       config: { humanPrincipalId: owner as never, delegationId: DELEGATION_ID, environmentId: ENVIRONMENT_ID, limits: { ...DEFAULT_WORKER_EPOCH_LIMITS, turnTimeoutMs: 30_000, epochTimeoutMs: 90_000, cancelGraceMs: 500 } },
       broker: { parentEnv: POISONED_PARENT_ENV },
