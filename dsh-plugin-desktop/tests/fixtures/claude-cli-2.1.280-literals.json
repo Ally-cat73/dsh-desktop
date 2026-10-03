@@ -1,0 +1,171 @@
+{
+  "schema": "aera.claude-cli-literals.v1",
+  "cliVersion": "2.1.280",
+  "binarySha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d",
+  "binaryBytes": 217254576,
+  "window": 4096,
+  "literals": [
+    {
+      "id": "EH",
+      "offset": 170349530,
+      "literal": "<system-reminder>",
+      "sha256": "0a90886aa758dcb2d5c9aca37354766a7e6212c1fefce567ecf032300e4e0348"
+    },
+    {
+      "id": "GEE",
+      "offset": 170349554,
+      "literal": "</system-reminder>",
+      "sha256": "8e9092375c38aaf318292b4a5443698395ba6430d02de9b7359d446c58917b32"
+    },
+    {
+      "id": "UA",
+      "offset": 181020661,
+      "literal": "function Ua(e){return`${EH}\n${e}\n${GEe}`}",
+      "sha256": "050969c8490e51384fe705ad7069dd16a64483d7d837614e7c0f1e49c8643681"
+    },
+    {
+      "id": "KEYS",
+      "offset": 177360878,
+      "literal": "$6t=[\"userEmail\",\"attachedProject\",\"gitStatus\",\"perforceMode\"]",
+      "sha256": "8e7d74a0145427f164351f3c656e0f0610212c7b7816c2707336871afa7183cd"
+    },
+    {
+      "id": "EWE_KEYLINE",
+      "offset": 177361081,
+      "literal": "[`# ${h}\n${e[h]}`]",
+      "sha256": "c29420f7b60bcb09c831c7891ea2b5aaa624510bb7964a657827d79036c13898"
+    },
+    {
+      "id": "HDR",
+      "offset": 177361434,
+      "literal": "As you answer the user's questions, you can use the following context:",
+      "sha256": "3418261b0b773fa5c0278f172125ec4a5e48eea69cfa2a741dd293cf50f27998"
+    },
+    {
+      "id": "EWE_JOIN",
+      "offset": 177361507,
+      "literal": "${s.join(`\n`)}",
+      "sha256": "a4a9d1cfe6551c49773d2d891fb482544bb1a84708f3d26c4083e449b093caf3"
+    },
+    {
+      "id": "IMP",
+      "offset": 177361523,
+      "literal": "IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.",
+      "sha256": "0337d96b7aee7ee5119b65b6e1391ea8b0c315f8d6c4a93659b192744f902d14"
+    },
+    {
+      "id": "SENT_PRE",
+      "offset": 177936332,
+      "literal": "The user's email address is ",
+      "sha256": "8377528f7f1ff7a2ae3de2c0c7008f35a2a2d06e33dc6876a14a02373977ad26"
+    },
+    {
+      "id": "SENT_POST",
+      "offset": 177936364,
+      "literal": ". Use it only to identify the user, such as for authorship, attribution, or filtering their own work. Never send it to an unrelated service, such as in a request header, URL, or payload, unless the user explicitly asks.",
+      "sha256": "3cc2659a1db0385af6367acc82cdf0d79af545eb4fcba55af88bf1f2784bb190"
+    },
+    {
+      "id": "DATE",
+      "offset": 177361832,
+      "literal": "Today's date is ${e.date}.",
+      "sha256": "f85feafa0825695b228d2c1d7cacfea41348dfb12de64b6ad8c3a05d760e24ac"
+    },
+    {
+      "id": "DATE_CHANGED",
+      "offset": 177361706,
+      "literal": "The date has changed. Today's date is now ${e.date}. No need to announce the new date \\u2014 the user's own clock shows it.",
+      "sha256": "dce987a44644a6e404f7e21ba5aa8bfbac8bee345f58ef56668f3658d8e084af"
+    },
+    {
+      "id": "ENV_H1",
+      "offset": 177351481,
+      "literal": "# Environment",
+      "sha256": "31a5545a3645cdbe92ebe6bc3307ab2ed9595df1a5f171f5cdb8fd9d9555e0d7"
+    },
+    {
+      "id": "ENV_H2",
+      "offset": 177351501,
+      "literal": "You have been invoked in the following environment: ",
+      "sha256": "faba11c0d742e231282688aca92fd43dd4df99be2f5217f77de43428d18d9b61"
+    },
+    {
+      "id": "ENV_PWD",
+      "offset": 177354025,
+      "literal": "Primary working directory: ${n(e.workingDirectory)}",
+      "sha256": "2c6e34c5627c9a2929c781b7ca5e3470fddbb7d11ec59bbff6bdca2ad1a069f9"
+    },
+    {
+      "id": "ENV_GIT",
+      "offset": 177354123,
+      "literal": "Is a git repository: ${e.isGitRepo}",
+      "sha256": "1437b119044184a0cc90b508e27f7588758526d947f1f251f4b848d1f2e8bd05"
+    },
+    {
+      "id": "ENV_PLATFORM",
+      "offset": 177354323,
+      "literal": "Platform: ${n(e.platform)}",
+      "sha256": "5eb6610c30caf23760d05524398abec93f185f761559c751396e62fde3d6f838"
+    },
+    {
+      "id": "ENV_SHELL",
+      "offset": 177354352,
+      "literal": "Shell: ${n(e.shell)}",
+      "sha256": "8a0bd046a8caa3f2039368ae26887f0b2db2c5d9ea3ee2d73c588559d751b452"
+    },
+    {
+      "id": "ENV_OS",
+      "offset": 177354375,
+      "literal": "OS Version: ${n(e.osVersion)}",
+      "sha256": "0b9a63732d1d508d7acb98935b530eb7ef586f95e52308b0c3b5958ff559b4cf"
+    },
+    {
+      "id": "ENV_LP",
+      "offset": 177351296,
+      "literal": "function lp(e){return e.flatMap((n)=>Array.isArray(n)?n.map((r)=>`  - ${r}`):[` - ${n}`])}",
+      "sha256": "3e862c79b8b15737909159213d1c9544b55b6a74577907b08e580f1a2b87f27c"
+    },
+    {
+      "id": "ENV_DJE",
+      "offset": 177354524,
+      "literal": "function Dje(e){return[bde,F7t,G7t(e)].join(`\n`)}",
+      "sha256": "e58ad1dffb2672ce64c09993c08f2f642d3ed690e8e55a46f83d8d917a42744c"
+    },
+    {
+      "id": "MODEL_NAMED",
+      "offset": 177357582,
+      "literal": "You are powered by the model named ${e.marketingName}. The exact model ID is ${e.modelId}.",
+      "sha256": "c8e68d82763c8994828f99c729b1d7923111d45b7d883e961ee3b8594f345198"
+    },
+    {
+      "id": "MODEL_CUTOFF",
+      "offset": 177357761,
+      "literal": "Assistant knowledge cutoff is ${e.knowledgeCutoff}.",
+      "sha256": "e9d129094d4c54c0b6bc433ea878faf46b57d1d740ad5c8d57edcd23ab425a17"
+    },
+    {
+      "id": "MODEL_JOIN",
+      "offset": 177357819,
+      "literal": "function zje(e){return[rQt(e),oQt(e)].filter((n)=>n!==null).join(\" \")}",
+      "sha256": "364cda59f52caf82045e6c1c792d72379ae2f47d614bc9a157a36fec7d763ae0"
+    },
+    {
+      "id": "V6R",
+      "offset": 181008482,
+      "literal": "function V6r(e,n){let r=e.at(-1),s=n[0];if(r?.type===\"text\"&&s?.type===\"text\")return[...e.slice(0,-1),{...r,text:r.text+`\n`},...n];return[...e,...n]}",
+      "sha256": "5df618a9586ad64ba592fbf146431061721f22b97d04bb0d25ecc5e894229259"
+    },
+    {
+      "id": "KYT",
+      "offset": 181004262,
+      "literal": "function kYt(e,n,r){let s=tae(e.message.content),g=tae(n.message.content);return{...e,...(e.ephemeral||n.ephemeral)&&{ephemeral:!0},message:{...e.message,content:ZYt(e6t(s,g,r))}}}",
+      "sha256": "834f96fb6567eab2496038a16987c3659f0a36addc909937ab172a81d6b18969"
+    },
+    {
+      "id": "E6T_HEAD",
+      "offset": 181009303,
+      "literal": "function e6t(e,n,r){let s=xD(e);if(s?.type!==\"tool_result\"){",
+      "sha256": "355a6ef730a01da85e038c99921f06615a29aada54da200da123bf06a7964636"
+    }
+  ]
+}
