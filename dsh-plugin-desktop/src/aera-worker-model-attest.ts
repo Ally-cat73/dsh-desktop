@@ -28,10 +28,25 @@
  * fresh attempt when it holds no fresh receipt, so a refusal recovers without
  * a restart (C-5) and nothing runs unless that attempt succeeds.
  *
- * Logs and status carry ids and codes only — never a body, nonce or token.
+ * O-1 U-D (O1_PROVENANCE_SPEC_V2 §4.1, §8.2): with the provenance manifest
+ * on, every turn write is gated by `attestTurn` instead — one fresh v2
+ * attempt whose body adds the turn's manifest (no receipt reuse). The v1
+ * heartbeat above is unchanged.
+ *
+ * Logs and status carry ids and codes only — never a body, nonce, token or
+ * manifest digest.
  */
 import { randomBytes } from 'node:crypto'
-import { MODEL_INVOCATION_ATTEST_ROUTE, MODEL_INVOCATION_ATTESTATION_SCHEMA } from '@aera/local-effect-admission'
+import {
+  isModelProvenanceManifest,
+  MODEL_INVOCATION_ATTEST_ROUTE,
+  MODEL_INVOCATION_ATTESTATION_SCHEMA,
+  MODEL_INVOCATION_ATTESTATION_SCHEMA_V2,
+  MODEL_PROVENANCE_MANIFEST_SCHEMA,
+  MODEL_PROVENANCE_MAX_TURN_SEQ,
+  type ModelProvenanceEntry,
+  type ModelProvenanceManifest,
+} from '@aera/local-effect-admission'
 import { isGatewayConnectionId } from '@aera/local-effect-authority'
 import { WorkerLocalEffectError, type WorkerLocalEffectSession } from './aera-worker-le-session.ts'
 
@@ -69,6 +84,15 @@ export interface ModelInvocationAttestor {
   ensureFresh(maxAgeMs?: number): Promise<ModelAttestResult>
   /** One attempt now (coalesced with any attempt in flight). */
   attestNow(): Promise<ModelAttestResult>
+  /**
+   * O-1 U-D (spec §4.1, §8.2): one FRESH v2 attempt for one turn, carrying
+   * its provenance manifest — never a reused receipt. `turnSeq` is
+   * `max(baseTurnSeq, last + 1)` within the current CIS Epoch (the store-
+   * durable desktop Epoch `sequence * 1000 + turn` keeps it monotonic across
+   * restarts). Refused locally, with no call, above 1,000,000 or when the
+   * Router's own closed guard would refuse the manifest.
+   */
+  attestTurn(input: { readonly baseTurnSeq: number, readonly entries: readonly ModelProvenanceEntry[] }): Promise<ModelAttestResult>
   /** Turn start / end (keeps the heartbeat alive for 120 s). */
   noteTurnActivity(): void
   /** A worker Epoch is running, so a turn may start at any moment. */
@@ -133,6 +157,15 @@ export function createModelInvocationAttestor(options: ModelAttestorOptions): Mo
     issuedAt: new Date().toISOString(),
     nonce: randomBytes(32).toString('base64url'),
   })
+  /** O-1 U-D: the v2 body = the v1 closed key set plus `provenance` (fresh nonce/issuedAt per D-0c attempt). */
+  const buildV2 = (provenance: ModelProvenanceManifest) => (): Readonly<Record<string, unknown>> => ({
+    ...build(),
+    schema: MODEL_INVOCATION_ATTESTATION_SCHEMA_V2,
+    provenance,
+  })
+  /** The last turnSeq sent for the CIS Epoch it was sent under (reset on an Epoch change). */
+  let lastTurnSeq = 0
+  let lastTurnSeqEpoch: string | undefined
 
   const interpret = (answer: { status: number, body: Record<string, unknown> }, epochId: string | undefined): Outcome => {
     const body = answer.body
@@ -151,7 +184,7 @@ export function createModelInvocationAttestor(options: ModelAttestorOptions): Mo
     return { result: { ok: false, state: 'MODEL_AUTHORITY_REFUSED', code: refusal ?? 'UNTYPED' }, halt: true }
   }
 
-  const attempt = async (): Promise<ModelAttestResult> => {
+  const attempt = async (body: () => Readonly<Record<string, unknown>> = build): Promise<ModelAttestResult> => {
     const mine = generation
     let outcome: Outcome
     if (typeof session.aeraSessionId !== 'string' || session.aeraSessionId === '') {
@@ -162,7 +195,7 @@ export function createModelInvocationAttestor(options: ModelAttestorOptions): Mo
       const epochId = session.workerEpochId()
       try {
         // Exactly one D-0c call per attempt: D-0c owns the 409 / horizon / session retries.
-        outcome = interpret(await session.postSigned(MODEL_INVOCATION_ATTEST_ROUTE, build), epochId)
+        outcome = interpret(await session.postSigned(MODEL_INVOCATION_ATTEST_ROUTE, body), epochId)
       } catch (cause) {
         const thrown = cause instanceof WorkerLocalEffectError ? typed(cause.code) ?? 'UNTYPED' : 'TRANSPORT_ERROR'
         outcome = { result: { ok: false, state: 'MODEL_AUTHORITY_UNAVAILABLE', code: thrown }, halt: HALTING_THROWS.has(thrown) }
@@ -236,6 +269,27 @@ export function createModelInvocationAttestor(options: ModelAttestorOptions): Mo
       return await attestNow()
     },
     attestNow,
+    async attestTurn(input) {
+      const local = (refusal: string): ModelAttestResult => {
+        log(`aera-worker-model-attest: MODEL_AUTHORITY_UNAVAILABLE code=${refusal} (local, nothing sent)`)
+        return { ok: false, state: 'MODEL_AUTHORITY_UNAVAILABLE', code: refusal }
+      }
+      // A v1 attempt in flight finishes first; this turn then makes its own attempt (no receipt reuse).
+      while (inFlight !== undefined) await inFlight
+      const epochId = session.workerEpochId()
+      const last = epochId !== undefined && epochId === lastTurnSeqEpoch ? lastTurnSeq : 0
+      const base = Number.isSafeInteger(input.baseTurnSeq) ? input.baseTurnSeq : 0
+      const turnSeq = Math.max(base, last + 1)
+      if (turnSeq > MODEL_PROVENANCE_MAX_TURN_SEQ) return local('PROVENANCE_TURN_SEQ_EXHAUSTED')
+      const provenance = { schema: MODEL_PROVENANCE_MANIFEST_SCHEMA, turnSeq, entries: input.entries.map(entry => ({ ...entry })) }
+      // Self-check with the Router's own closed guard before anything is signed or sent.
+      if (!isModelProvenanceManifest(provenance)) return local('PROVENANCE_MANIFEST_MALFORMED')
+      lastTurnSeq = turnSeq
+      lastTurnSeqEpoch = epochId
+      const mine: Promise<ModelAttestResult> = attempt(buildV2(provenance)).finally(() => { if (inFlight === mine) inFlight = undefined })
+      inFlight = mine
+      return await mine
+    },
     noteTurnActivity() {
       lastActivityMs = Date.now()
       wake()

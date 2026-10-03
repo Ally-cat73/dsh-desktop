@@ -337,7 +337,9 @@ export function apply(ctx: Context): void {
       }
   // O-1 U-D F2-3: the readable, Aera-owned scratch root for every Epoch cwd (never $TMPDIR).
   const scratchRoot = userDataDir === undefined ? undefined : join(userDataDir, WORKER_SCRATCH_ROOT_NAME)
-  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), ...(effectPlane === undefined ? {} : { effectPlane }), ...(routerHotPath === undefined ? {} : { routerHotPath }), ...(scratchRoot === undefined ? {} : { scratchRoot }), log: line => { ctx.logger.info(line) } })
+  // O-1 U-D (§7): the manifest flag and the CLI-note digests only (the address was reduced at load).
+  const provenance = localEffectConfig?.status !== 'loaded' ? undefined : { provenance: localEffectConfig.config.provenance }
+  const worker = composeAeraWorker(process.env, { installationKey, ...(localEffect === undefined ? {} : { localEffect }), ...(effectPlane === undefined ? {} : { effectPlane }), ...(routerHotPath === undefined ? {} : { routerHotPath }), ...(scratchRoot === undefined ? {} : { scratchRoot }), ...provenance, log: line => { ctx.logger.info(line) } })
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'exact',

@@ -28,7 +28,7 @@ import {
   type AgentCredentialProofPayload,
   type AgentSenderProofClaims,
 } from '@aera/cis-contracts'
-import { attemptBodyDigest, createAgentSenderProof, sha256Ref, MODEL_INVOCATION_ATTEST_ROUTE } from '@aera/local-effect-admission'
+import { attemptBodyDigest, createAgentSenderProof, isModelInvocationAttestationV2, sha256Ref, MODEL_INVOCATION_ATTEST_ROUTE, MODEL_INVOCATION_ATTESTATION_SCHEMA_V2 } from '@aera/local-effect-admission'
 /* Literal copies of sentinel-contracts brokerCarry.ts:102-110 (the vendored barrel's extensionless re-exports are not typable here). */
 const LOCAL_EFFECT_CHANNEL_BINDING_HEADER = 'aera-local-effect-channel-binding'
 const localEffectChannelBinding = (socket: TLSSocket): string =>
@@ -186,6 +186,8 @@ export interface FakeRouterState {
   readonly attempts: Record<string, unknown>[]
   readonly attemptClaims: Record<string, unknown>[]
   readonly outcomes: Record<string, unknown>[]
+  /** O-1 U-S: `AERA_ROUTER_GOVERNED_PROVENANCE`. Off, a v2 attest is 403 MALFORMED_ATTEMPT exactly as before. */
+  provenanceEnabled: boolean
 }
 
 export interface FakeRouter { readonly url: string, readonly state: FakeRouterState, close(): void }
@@ -213,6 +215,7 @@ export async function startFakeRouter(material: { cert: Buffer, key: Buffer }, i
     casOutcome: 'ALLOW',
     attemptHang: false,
     outcomeUnavailable: 0,
+    provenanceEnabled: false,
     attempts: [],
     attemptClaims: [],
     outcomes: [],
@@ -355,6 +358,7 @@ export async function startFakeRouter(material: { cert: Buffer, key: Buffer }, i
       }
       case MODEL_INVOCATION_ATTEST_ROUTE: {
         state.attestBodies.push(body)
+        if (body.schema === MODEL_INVOCATION_ATTESTATION_SCHEMA_V2 && (!state.provenanceEnabled || !isModelInvocationAttestationV2(body))) return json(403, { error: 'MALFORMED_ATTEMPT' })
         const token = String(body.agentSessionToken)
         const session = state.sessions.get(token)
         if (session === undefined || session.expiresAtMs <= Date.now() || state.forceSessionInvalid > 0) {

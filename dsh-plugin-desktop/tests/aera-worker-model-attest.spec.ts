@@ -24,9 +24,12 @@ import { issueAeraPrincipalId } from '@aera/cis-contracts'
 import { caFingerprintSha256 } from '@aera/effect-broker'
 import {
   isModelInvocationAttestation,
+  isModelInvocationAttestationV2,
   MODEL_INVOCATION_ATTEST_ROUTE,
   MODEL_INVOCATION_ATTESTATION_KEYS,
   MODEL_INVOCATION_ATTESTATION_SCHEMA,
+  MODEL_INVOCATION_ATTESTATION_SCHEMA_V2,
+  MODEL_PROVENANCE_MANIFEST_SCHEMA,
   modelInvocationEffectDigest,
 } from '@aera/local-effect-admission'
 import {
@@ -442,6 +445,107 @@ describe('U8 D-1: replies and the heartbeat (fake timers)', () => {
   })
 })
 
+/* ------------------------------------ O-1 U-D: attestTurn, the v2 manifest attest */
+
+const ENTRY_A = { digest: `sha256:${'a'.repeat(64)}`, class: 'AERA_BRIEFING' as const }
+const ENTRY_B = { digest: `sha256:${'b'.repeat(64)}`, class: 'AERA_OBSERVATION' as const, tool: 'aera_fs_read' as const }
+
+describe('O-1 U-D attestTurn: one fresh v2 attest per turn (spec §4.1, §8.2)', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('sends the v1 key set plus provenance {schema, turnSeq, entries}; the Router guard accepts it with credentials', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    const a = attestor(port)
+    const result = await a.attestTurn({ baseTurnSeq: 2001, entries: [ENTRY_A, ENTRY_B] })
+    expect(result).toMatchObject({ ok: true, workerEpochId: EPOCH_A })
+    expect(port.posts).toHaveLength(1)
+    expect(port.posts[0]!.route).toBe(MODEL_INVOCATION_ATTEST_ROUTE)
+    const body = port.posts[0]!.bodies[0]!
+    expect(Object.keys(body)).toEqual(['schema', 'aeraSessionId', 'workerEpochId', 'connectionId', 'issuedAt', 'nonce', 'provenance'])
+    expect(body.schema).toBe(MODEL_INVOCATION_ATTESTATION_SCHEMA_V2)
+    expect(body.provenance).toEqual({ schema: MODEL_PROVENANCE_MANIFEST_SCHEMA, turnSeq: 2001, entries: [ENTRY_A, ENTRY_B] })
+    expect(isModelInvocationAttestationV2({ ...body, agentSessionToken: 'tok', senderProof: 'a.b.c' })).toBe(true)
+    a.dispose()
+  })
+
+  it('no receipt reuse: every turn is its own attempt, even while a v1 receipt is fresh', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    const a = attestor(port)
+    await a.ensureFresh()
+    await a.attestTurn({ baseTurnSeq: 1001, entries: [ENTRY_A] })
+    await a.attestTurn({ baseTurnSeq: 1002, entries: [ENTRY_A] })
+    expect(port.posts.map(post => post.bodies[0]!.schema)).toEqual([MODEL_INVOCATION_ATTESTATION_SCHEMA, MODEL_INVOCATION_ATTESTATION_SCHEMA_V2, MODEL_INVOCATION_ATTESTATION_SCHEMA_V2])
+    a.dispose()
+  })
+
+  it('turnSeq = max(base, last + 1) within one CIS Epoch; reset on an Epoch change; a D-0c rebuild keeps the same turnSeq', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    const a = attestor(port)
+    const seq = (): number => (port.posts.at(-1)!.bodies.at(-1)!.provenance as { turnSeq: number }).turnSeq
+    await a.attestTurn({ baseTurnSeq: 1003, entries: [ENTRY_A] })
+    expect(seq()).toBe(1003)
+    await a.attestTurn({ baseTurnSeq: 1001, entries: [ENTRY_A] })
+    expect(seq()).toBe(1004)
+    port.internalRebuild = true
+    await a.attestTurn({ baseTurnSeq: 1005, entries: [ENTRY_A] })
+    expect(port.posts.at(-1)!.bodies.map(body => (body.provenance as { turnSeq: number }).turnSeq)).toEqual([1005, 1005])
+    port.internalRebuild = false
+    port.setEpoch(EPOCH_B)
+    await a.attestTurn({ baseTurnSeq: 1001, entries: [ENTRY_A] })
+    expect(seq()).toBe(1001)
+    a.dispose()
+  })
+
+  it('refuses locally, with no network call, above 1,000,000 or on a manifest the Router guard would refuse', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    const a = attestor(port)
+    expect(await a.attestTurn({ baseTurnSeq: 1_000_001, entries: [ENTRY_A] })).toEqual({ ok: false, state: 'MODEL_AUTHORITY_UNAVAILABLE', code: 'PROVENANCE_TURN_SEQ_EXHAUSTED' })
+    for (const entries of [[], [ENTRY_A, ENTRY_A], [{ ...ENTRY_A, tool: 'aera_fs_read' }], Array.from({ length: 65 }, (_, i) => ({ digest: `sha256:${i.toString(16).padStart(64, '0')}`, class: 'AERA_RECORD', tool: 'aera_record_context' }))]) {
+      expect(await a.attestTurn({ baseTurnSeq: 1001, entries: entries as never })).toEqual({ ok: false, state: 'MODEL_AUTHORITY_UNAVAILABLE', code: 'PROVENANCE_MANIFEST_MALFORMED' })
+    }
+    expect(port.posts).toHaveLength(0)
+    a.dispose()
+  })
+
+  it('waits for a v1 attempt in flight, then makes its own attempt', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    let release: () => void = () => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const post = port.postSigned.bind(port)
+    let first = true
+    port.postSigned = async (route, build) => {
+      if (first) { first = false; await held }
+      return await post(route, build)
+    }
+    const a = attestor(port)
+    const v1 = a.attestNow()
+    const v2 = a.attestTurn({ baseTurnSeq: 1001, entries: [ENTRY_A] })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(port.posts).toHaveLength(0)
+    release()
+    expect(await v1).toMatchObject({ ok: true })
+    expect(await v2).toMatchObject({ ok: true })
+    expect(port.posts.map(entry => entry.bodies[0]!.schema)).toEqual([MODEL_INVOCATION_ATTESTATION_SCHEMA, MODEL_INVOCATION_ATTESTATION_SCHEMA_V2])
+    a.dispose()
+  })
+
+  it('A52 (attestor): a Router with the provenance flag off answers 403 MALFORMED_ATTEMPT → typed MODEL_AUTHORITY_REFUSED', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const port = fakePort()
+    port.replies.push({ status: 403, body: { error: 'MALFORMED_ATTEMPT' } })
+    const a = attestor(port)
+    expect(await a.attestTurn({ baseTurnSeq: 1001, entries: [ENTRY_A] })).toEqual({ ok: false, state: 'MODEL_AUTHORITY_REFUSED', code: 'MALFORMED_ATTEMPT' })
+    expect(a.status()).toMatchObject({ state: 'MODEL_AUTHORITY_REFUSED', code: 'MALFORMED_ATTEMPT' })
+    expect(logs.join('\n')).not.toContain(ENTRY_A.digest)
+    a.dispose()
+  })
+})
+
 /* ------------------------------------------------------- D-2: the turn gate */
 
 interface GateStub {
@@ -790,5 +894,25 @@ describe('U8 over the real D-0c session and the fake Router (builder accepted; 4
     const tokens = [...router.state.sessions.keys()]
     const surface = `${leLogs.join('\n')}\n${JSON.stringify(a.status())}`
     for (const token of tokens) expect(surface).not.toContain(token)
+  })
+
+  it('O-1 U-D: D-0c postSigned carries the v2 body; Router flag off → 403 MALFORMED_ATTEMPT (A52), flag on → ATTESTED with the v2 guard holding', async () => {
+    const leLogs: string[] = []
+    operatorWritePending(router.state, PRINCIPAL)
+    const s = session(leLogs)
+    const a = createModelInvocationAttestor({ session: s, log: (line: string) => { leLogs.push(line) } })
+    const { workerEpochId } = await s.beginEpoch()
+    operatorWriteEpoch(router.state, PRINCIPAL, workerEpochId)
+    router.state.attestBodies.length = 0
+    router.state.provenanceEnabled = false
+    expect(await a.attestTurn({ baseTurnSeq: 1001, entries: [ENTRY_A] })).toEqual({ ok: false, state: 'MODEL_AUTHORITY_REFUSED', code: 'MALFORMED_ATTEMPT' })
+    router.state.provenanceEnabled = true
+    expect(await a.attestTurn({ baseTurnSeq: 1002, entries: [ENTRY_A, ENTRY_B] })).toMatchObject({ ok: true, workerEpochId })
+    const [refused, accepted] = router.state.attestBodies
+    expect(refused!.schema).toBe(MODEL_INVOCATION_ATTESTATION_SCHEMA_V2)
+    expect(isModelInvocationAttestationV2(accepted)).toBe(true)
+    expect(accepted!.provenance).toEqual({ schema: MODEL_PROVENANCE_MANIFEST_SCHEMA, turnSeq: 1002, entries: [ENTRY_A, ENTRY_B] })
+    router.state.provenanceEnabled = false
+    a.dispose()
   })
 })

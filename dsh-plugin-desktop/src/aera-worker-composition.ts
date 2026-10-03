@@ -50,6 +50,7 @@ import { isGatewayConnectionId } from '@aera/local-effect-authority'
 import type { AeraWorkerActionRequest } from './aera-worker-route.ts'
 import type { WorkerInstallationKeyCustody } from './aera-worker-installation-key.ts'
 import type { WorkerLocalEffectSession } from './aera-worker-le-session.ts'
+import type { WorkerProvenanceSettings } from './aera-worker-le-config.ts'
 
 /**
  * The installation-key custody (D-0b) is carried on BOTH runtime kinds: the
@@ -75,6 +76,12 @@ export interface AeraWorkerCompositionOptions {
    * (WORKER_SCRATCH_PATH_NONCONFORMING): the worker never runs in $TMPDIR.
    */
   readonly scratchRoot?: string
+  /**
+   * O-1 U-D (§7): the loaded manifest flag and the CLI-note digests (never the
+   * address). Composition adds the pinned model and CLI version, so the
+   * session refuses manifest mode outside the reviewed pin (V2.1 NO-2).
+   */
+  readonly provenance?: WorkerProvenanceSettings
   /** Ids and codes only (the attestor never logs a body, nonce or token). */
   readonly log?: (line: string) => void
 }
@@ -161,16 +168,20 @@ function composeWorkerRuntime(
   const routing = resolveClaudeWorkerHotPath({ environmentId, connectionId: localEffect.connectionId, source: options.routerHotPath })
   if (routing.kind === 'UNAVAILABLE') return { kind: 'UNAVAILABLE', reason: routing.reason }
   const modelAttest = createModelInvocationAttestor({ session: localEffect, ...(log === undefined ? {} : { log }) })
+  const provenance = options.provenance?.manifest === true
+    ? { manifest: true, model: pin.pin.model, cliVersion: pin.pin.version, ...(options.provenance.cliMetadata === undefined ? {} : { cliMetadata: options.provenance.cliMetadata }) }
+    : undefined
   return {
     kind: 'AVAILABLE',
     manager: new AeraWorkerSessionManager({
       store: new ParticipationStore(storeDir),
       adapter: new ClaudeCodeWorkerAdapter(pin.pin, { parentEnv: env, hotPath: routing.hotPath, ...(options.scratchRoot === undefined ? {} : { scratchRoot: options.scratchRoot }) }),
       gate: NO_LOCAL_AUTHORITY_GATE,
-      config: { humanPrincipalId: principalId, delegationId, environmentId },
+      config: { humanPrincipalId: principalId, delegationId, environmentId, ...(provenance === undefined ? {} : { provenance }) },
       broker: { parentEnv: env },
       modelAttest,
       effectPlane,
+      ...(log === undefined ? {} : { log }),
     }),
     modelAttest,
   }

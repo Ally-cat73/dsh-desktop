@@ -72,6 +72,7 @@ import {
   type WorkerEffectBrokerDeps,
 } from './aera-worker-effect-broker.ts'
 import type { ModelInvocationAttestor } from './aera-worker-model-attest.ts'
+import { CLAUDE_CLI_PROVENANCE_PIN, type CliMetadataDigests } from './aera-worker-provenance.ts'
 
 export const WORKER_HOST_ADAPTER_ID = 'aera-worker-host'
 export const WORKER_HOST_PRINCIPAL_NAME = 'Aera Code Worker Host'
@@ -99,6 +100,16 @@ export interface AeraWorkerManagerConfig {
   /** The environment Aera Code is bound to (AERA_DEV | CANARY). */
   readonly environmentId: string
   readonly limits?: WorkerEpochLimits
+  /** O-1 U-D: present only when the provenance manifest is on (§7, V2.1 NO-2). */
+  readonly provenance?: WorkerProvenanceConfig
+}
+
+/** O-1 U-D manifest mode: the pinned model and CLI version it is checked against, and the CLI-note digests. */
+export interface WorkerProvenanceConfig {
+  readonly manifest: boolean
+  readonly model: string
+  readonly cliVersion: string
+  readonly cliMetadata?: CliMetadataDigests
 }
 
 export interface AeraWorkerManagerDeps {
@@ -115,10 +126,12 @@ export interface AeraWorkerManagerDeps {
   readonly modelAttest?: ModelAttestGate
   /** D-0d2: governed effects (AUTHORITY = CAS through the Router). The product always composes it. */
   readonly effectPlane?: GovernedEffectPlane
+  /** O-1 U-D: content-free per-turn provenance descriptors (no text, no address, no unproven digest). */
+  readonly log?: (line: string) => void
 }
 
 /** The part of the U8 attestor the session manager drives. */
-export type ModelAttestGate = Pick<ModelInvocationAttestor, 'ensureFresh' | 'noteTurnActivity' | 'setTurnPossible' | 'stop'>
+export type ModelAttestGate = Pick<ModelInvocationAttestor, 'ensureFresh' | 'noteTurnActivity' | 'setTurnPossible' | 'stop'> & Partial<Pick<ModelInvocationAttestor, 'attestTurn'>>
 
 const modelAuthorityRefusal = (result: Exclude<Awaited<ReturnType<ModelAttestGate['ensureFresh']>>, { ok: true }>): string =>
   result.state === 'MODEL_AUTHORITY_UNAVAILABLE'
@@ -500,6 +513,19 @@ export class AeraWorkerSessionManager {
     const liveKey = workOrderId
     if (this.live.get(liveKey)?.handle !== undefined || this.gating.has(liveKey)) {
       throw new WorkerRefusal('EPOCH_ALREADY_RUNNING', 'A Worker Epoch is already running for this Work Order in this Aera Code process')
+    }
+    const provenance = this.deps.config.provenance?.manifest === true ? this.deps.config.provenance : undefined
+    if (provenance !== undefined) {
+      // V2.1 NO-2 / A61: manifest mode only on the reviewed pin — before any attest, record or spawn.
+      if (!CLAUDE_CLI_PROVENANCE_PIN.models.includes(provenance.model)) {
+        throw new WorkerRefusal('PROVENANCE_MODEL_NOT_REVIEWED', `The provenance manifest is reviewed only for ${CLAUDE_CLI_PROVENANCE_PIN.models.join(', ')}; the pinned model is not in that set. The worker process was not started.`)
+      }
+      if (provenance.cliVersion !== CLAUDE_CLI_PROVENANCE_PIN.cliVersion) {
+        throw new WorkerRefusal('PROVENANCE_CLI_NOT_REVIEWED', `The provenance manifest is reviewed only for Claude CLI ${CLAUDE_CLI_PROVENANCE_PIN.cliVersion}; a re-pin needs a fresh review. The worker process was not started.`)
+      }
+      if (this.deps.modelAttest?.attestTurn === undefined) {
+        throw new WorkerRefusal('PROVENANCE_ATTEST_UNAVAILABLE', 'The provenance manifest needs the model-invocation attestor; the worker process was not started.')
+      }
     }
     const modelAttest = this.deps.modelAttest
     if (modelAttest !== undefined) {

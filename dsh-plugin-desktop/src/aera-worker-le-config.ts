@@ -4,9 +4,20 @@
  * `<profile>/aera-claude-worker.json`, written by the operator after the
  * sitting. Same rules as `aera-collab-runtime-config.ts` — regular file,
  * `{version: 1, environment: {...}}`, closed key allowlist, every key
- * required — except that it never touches `process.env`: it returns a typed
- * value. Any defect is `not-configured` with a reason naming a key, never a
- * value.
+ * required except the two O-1 provenance keys below — and it never touches
+ * `process.env`: it returns a typed value. Any defect is `not-configured`
+ * with a reason naming a key, never a value.
+ *
+ * O-1 U-D (O1_PROVENANCE_SPEC_V2 §7, V2.1 NO-11), the only OPTIONAL keys:
+ *   AERA_CLAUDE_WORKER_CLI_ACCOUNT_EMAIL     the address of the claude.ai
+ *       account the worker CLI is signed into (§4.4 EMAIL grammar). It is
+ *       reduced HERE, at load, to the two digests of the CLI's own
+ *       `session_context` note (`cliMetadataDigests`); the address itself is
+ *       kept in no object, never logged, never echoed in a reason. Absent: no
+ *       CLI digest is ever committed, so that note stays HUMAN (fail-closed).
+ *   AERA_CLAUDE_WORKER_PROVENANCE_MANIFEST   `on` | `off` (default `off`):
+ *       `on` sends the per-turn provenance manifest in the v2 attest and
+ *       writes turns as content blocks; `off` is v1 attests and string turns.
  *
  * The CA pin is checked HERE, at load (review §1.1 / m-7): the CA file must
  * hold exactly one certificate, a CA, whose SHA-256 DER fingerprint equals
@@ -31,6 +42,7 @@ import { isAeraPrincipalId } from '@aera/cis-contracts'
 import { caFingerprintSha256 } from '@aera/effect-broker'
 import { loadGovernedEffectCatalog, type PinnedGovernedCatalog } from './aera-worker-governed-effects.ts'
 import { isClaudeWorkerRouterOrigin } from './aera-claude-worker-host.ts'
+import { cliMetadataDigests, isCliAccountEmail, type CliMetadataDigests } from './aera-worker-provenance.ts'
 
 export const AERA_CLAUDE_WORKER_CONFIG_FILENAME = 'aera-claude-worker.json'
 
@@ -61,6 +73,21 @@ const VALIDATORS = {
 } as const
 type ConfigKey = keyof typeof VALIDATORS
 
+/** O-1 U-D: the only optional keys (§7). */
+const OPTIONAL_VALIDATORS = {
+  AERA_CLAUDE_WORKER_CLI_ACCOUNT_EMAIL: (v: string) => isCliAccountEmail(v),
+  AERA_CLAUDE_WORKER_PROVENANCE_MANIFEST: (v: string) => v === 'on' || v === 'off',
+} as const
+type OptionalConfigKey = keyof typeof OPTIONAL_VALIDATORS
+const validatorFor = (key: string): ((v: string) => boolean) | undefined =>
+  key in VALIDATORS ? VALIDATORS[key as ConfigKey] : key in OPTIONAL_VALIDATORS ? OPTIONAL_VALIDATORS[key as OptionalConfigKey] : undefined
+
+/** O-1 U-D provenance settings: the flag, and only the digests of the CLI note (never the address). */
+export interface WorkerProvenanceSettings {
+  readonly manifest: boolean
+  readonly cliMetadata?: CliMetadataDigests
+}
+
 export interface WorkerLocalEffectConfig {
   readonly routerUrl: string
   readonly caPem: Buffer
@@ -78,6 +105,8 @@ export interface WorkerLocalEffectConfig {
   readonly effectCatalog: PinnedGovernedCatalog
   /** H-1: the Router hot-path origin for the CLI's ANTHROPIC_BASE_URL (exact-set checked at composition). */
   readonly modelRouterOrigin: string
+  /** O-1 U-D: the manifest flag and the CLI-note digests (§7; the address is not kept). */
+  readonly provenance: WorkerProvenanceSettings
 }
 
 export type WorkerLocalEffectConfigResult =
@@ -105,13 +134,20 @@ export function loadWorkerLocalEffectConfig(profileDir: string): WorkerLocalEffe
   if (top.version !== 1) return notConfigured('CONFIG_VERSION')
   const env = top.environment
   if (env === null || typeof env !== 'object' || Array.isArray(env)) return notConfigured('CONFIG_UNSUPPORTED_FIELDS')
-  const values: Partial<Record<ConfigKey, string>> = {}
+  const values: Partial<Record<ConfigKey | OptionalConfigKey, string>> = {}
   for (const [key, raw] of Object.entries(env as Record<string, unknown>)) {
-    if (!(key in VALIDATORS)) return notConfigured(/^[A-Z0-9_]{1,80}$/u.test(key) ? `CONFIG_UNKNOWN_KEY:${key}` : 'CONFIG_UNKNOWN_KEY')
+    const validator = validatorFor(key)
+    if (validator === undefined) return notConfigured(/^[A-Z0-9_]{1,80}$/u.test(key) ? `CONFIG_UNKNOWN_KEY:${key}` : 'CONFIG_UNKNOWN_KEY')
     const value = typeof raw === 'string' ? raw.trim() : ''
-    if (value === '' || !VALIDATORS[key as ConfigKey](value)) return notConfigured(`CONFIG_INVALID:${key}`)
-    values[key as ConfigKey] = value
+    if (value === '' || !validator(value)) return notConfigured(`CONFIG_INVALID:${key}`)
+    values[key as ConfigKey | OptionalConfigKey] = value
   }
+  const email = values.AERA_CLAUDE_WORKER_CLI_ACCOUNT_EMAIL
+  const provenance: WorkerProvenanceSettings = Object.freeze({
+    manifest: values.AERA_CLAUDE_WORKER_PROVENANCE_MANIFEST === 'on',
+    ...(email === undefined ? {} : { cliMetadata: cliMetadataDigests(email) }),
+  })
+  delete values.AERA_CLAUDE_WORKER_CLI_ACCOUNT_EMAIL
   for (const key of Object.keys(VALIDATORS) as ConfigKey[]) if (values[key] === undefined) return notConfigured(`CONFIG_MISSING_KEY:${key}`)
   const v = values as Record<ConfigKey, string>
 
@@ -150,6 +186,7 @@ export function loadWorkerLocalEffectConfig(profileDir: string): WorkerLocalEffe
       workingLineId: v.AERA_CLAUDE_WORKER_WORKING_LINE_ID,
       effectCatalog: catalog.pinned,
       modelRouterOrigin: v.AERA_CLAUDE_WORKER_MODEL_ROUTER_ORIGIN,
+      provenance,
     }),
   }
 }
