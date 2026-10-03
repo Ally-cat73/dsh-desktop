@@ -294,3 +294,97 @@ describe('§21 — an oversized comparison degrades that section, never the pane
     expect(() => parseCollabSurface(broken)).toThrow(/changed files/)
   })
 })
+
+/**
+ * WO-AERA-CODE-CLAUDE-CODE-GOVERNED-WORKER-INTEGRATION-001 GW2.1.
+ *
+ * ROOT CAUSE, MEASURED ON THE INSTALLED PRODUCT: both the Collaborate and the
+ * Record tab showed "invalid body in Aera Collab response". A typed evidence
+ * record written by a governed worker turn carries a 9,657-character body.
+ * The evidence-card parser tested the body for presence with `optionalText`,
+ * which applies the 4,096 plain-text bound, so the card threw before the
+ * 262,144 technical bound it was meant to have was ever consulted, and the
+ * whole surface went with it. The same presence-check shape guarded every
+ * other technical-bound optional field, so they are held here too.
+ */
+describe('GW2.1 — a long technical field parses to its technical bound, never the plain one', () => {
+  const LONG = 'x'.repeat(10_000)
+  const surfaceWith = (patch: Record<string, unknown>): Record<string, unknown> => ({
+    workOrderId: 'WO-TEST-LONG-TEXT-001',
+    repositories: [],
+    authorityMode: 'RECORDED_NOT_ENFORCED',
+    authorityModeNote: 'recorded, not enforced',
+    assembledAt: '2026-10-03T00:00:00.000Z',
+    participants: [], lines: [], rail: [], activity: [], checkpoints: [],
+    evidence: [], evidenceCards: [], activityBlocks: [], decisions: [], discussions: [],
+    threads: [], coordinationDeliveryNote: 'note', discussionNote: 'note',
+    archivedCount: 0, projectedAt: '2026-10-03T00:00:00.000Z',
+    ...patch,
+  })
+  const card = (body: string): Record<string, unknown> => ({
+    classWord: 'Test', subject: 'Phase E turn', actor: 'worker', when: '2026-10-03T00:00:00.000Z',
+    body, technical: ['evidence id'],
+  })
+  const parsed = (patch: Record<string, unknown>) => {
+    const surface = parseCollabSurface(surfaceWith(patch))
+    if (!('workOrderId' in surface)) throw new Error('surface did not parse')
+    return surface
+  }
+
+  it('an evidence card with a ~10,000-character body parses, body intact', () => {
+    const surface = parsed({ evidenceCards: [card(LONG)] })
+    expect(surface.evidenceCards).toHaveLength(1)
+    expect(surface.evidenceCards[0]?.body).toBe(LONG)
+  })
+
+  it('an evidence card body at exactly the technical bound parses; one over it is refused', () => {
+    expect(parsed({ evidenceCards: [card('x'.repeat(262_144))] }).evidenceCards[0]?.body)
+      .toHaveLength(262_144)
+    expect(() => parseCollabSurface(surfaceWith({ evidenceCards: [card('x'.repeat(262_145))] })))
+      .toThrow(/invalid body/)
+  })
+
+  it('a non-string evidence card body is still refused', () => {
+    expect(() => parseCollabSurface(surfaceWith({ evidenceCards: [card(42 as unknown as string)] })))
+      .toThrow(/invalid body/)
+  })
+
+  it('a plain-text card field keeps its plain bound', () => {
+    expect(() => parseCollabSurface(surfaceWith({
+      evidenceCards: [{ ...card('short'), subject: 'x'.repeat(4_097) }],
+    }))).toThrow(/invalid subject/)
+  })
+
+  it('every other technical-bound optional field accepts a ~10,000-character value', () => {
+    const line = {
+      label: 'L', participant: 'P', topologySentence: 'T', topologyState: 'S', provenance: 'V',
+      attributionNote: LONG, attributionOriginalClaim: LONG, technical: [],
+    }
+    const checkpoint = {
+      name: 'A1', origin: 'Named checkpoint', who: 'W', when: 'now', technical: 't',
+      verifiabilityNote: LONG, summary: LONG, attributionNote: LONG, attributionOriginalClaim: LONG,
+    }
+    const block = { title: 'B', from: 'f', to: 't', legacyNote: LONG, members: [], technical: [] }
+    const decision = {
+      subject: 'D', decidedBy: 'o', recordedBy: 'r', when: 'now', selectedOption: 'A',
+      statusWord: 'Open', notAFactNote: 'n', rationale: LONG,
+    }
+    const discussion = { subject: 'S', latestEntry: LONG }
+    const surface = parsed({
+      lines: [line], checkpoints: [checkpoint], activityBlocks: [block],
+      decisions: [decision], discussions: [discussion],
+      discussionsDecisionsEmptyReason: LONG, threadsEmptyReason: LONG,
+    })
+    expect(surface.lines[0]?.attributionNote).toBe(LONG)
+    expect(surface.lines[0]?.attributionOriginalClaim).toBe(LONG)
+    expect(surface.checkpoints[0]?.verifiabilityNote).toBe(LONG)
+    expect(surface.checkpoints[0]?.summary).toBe(LONG)
+    expect(surface.checkpoints[0]?.attributionNote).toBe(LONG)
+    expect(surface.checkpoints[0]?.attributionOriginalClaim).toBe(LONG)
+    expect(surface.activityBlocks[0]?.legacyNote).toBe(LONG)
+    expect(surface.decisions[0]?.rationale).toBe(LONG)
+    expect(surface.discussions[0]?.latestEntry).toBe(LONG)
+    expect(surface.discussionsDecisionsEmptyReason).toBe(LONG)
+    expect(surface.threadsEmptyReason).toBe(LONG)
+  })
+})

@@ -663,9 +663,11 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           ? {} : { latestCheckpoint: text(row.latestCheckpoint, 'checkpoint') }),
         ...(optionalText(row.lifecycleWord, 'lifecycle') === undefined
           ? {} : { lifecycleWord: text(row.lifecycleWord, 'lifecycle') }),
-        ...(optionalText(row.attributionNote, 'attribution') === undefined
+        // GW2.1: technical-bound optionals are tested for presence only, then
+        // bounded once; `optionalText` would apply the 4,096 plain bound first.
+        ...(row.attributionNote === undefined
           ? {} : { attributionNote: technicalText(row.attributionNote, 'attribution') }),
-        ...(optionalText(row.attributionOriginalClaim, 'attribution') === undefined
+        ...(row.attributionOriginalClaim === undefined
           ? {} : { attributionOriginalClaim: technicalText(row.attributionOriginalClaim, 'attribution') }),
         technical: technicalList(row.technical ?? [], 'technical'),
       })
@@ -735,13 +737,13 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
         origin: text(row.origin, 'origin'),
         who: text(row.who, 'who'),
         when: text(row.when, 'when'),
-        ...(optionalText(row.verifiabilityNote, 'note') === undefined
+        ...(row.verifiabilityNote === undefined
           ? {} : { verifiabilityNote: technicalText(row.verifiabilityNote, 'note') }),
-        ...(optionalText(row.summary, 'summary') === undefined
+        ...(row.summary === undefined
           ? {} : { summary: technicalText(row.summary, 'summary') }),
-        ...(optionalText(row.attributionNote, 'attribution') === undefined
+        ...(row.attributionNote === undefined
           ? {} : { attributionNote: technicalText(row.attributionNote, 'attribution') }),
-        ...(optionalText(row.attributionOriginalClaim, 'attribution') === undefined
+        ...(row.attributionOriginalClaim === undefined
           ? {} : { attributionOriginalClaim: technicalText(row.attributionOriginalClaim, 'attribution') }),
         technical: technicalText(row.technical, 'technical'),
       })
@@ -768,7 +770,9 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           ? {} : { analyticalNote: text(row.analyticalNote, 'note') }),
         ...(optionalText(row.factualNote, 'note') === undefined
           ? {} : { factualNote: text(row.factualNote, 'note') }),
-        ...(optionalText(row.body, 'body') === undefined ? {} : { body: technicalText(row.body, 'body') }),
+        // GW2.1: a governed worker turn records bodies far over 4,096
+        // characters; presence only, then the technical bound.
+        ...(row.body === undefined ? {} : { body: technicalText(row.body, 'body') }),
         technical: technicalList(row.technical ?? [], 'technical'),
       })
     })),
@@ -780,7 +784,7 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
         to: text(row.to, 'to'),
         participants: textList(row.participants ?? [], 'participants'),
         counts: textList(row.counts ?? [], 'counts'),
-        ...(optionalText(row.legacyNote, 'note') === undefined
+        ...(row.legacyNote === undefined
           ? {} : { legacyNote: technicalText(row.legacyNote, 'note') }),
         members: Object.freeze(list(row.members ?? [], 'members').map((member): CollabActivityRow => {
           if (!isObject(member)) throw new Error('dsh-plugin-desktop: invalid block member')
@@ -810,7 +814,7 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
           ? {} : { verifiedBy: text(row.verifiedBy, 'verified by') }),
         when: text(row.when, 'when'),
         selectedOption: text(row.selectedOption, 'selected'),
-        ...(optionalText(row.rationale, 'rationale') === undefined
+        ...(row.rationale === undefined
           ? {} : { rationale: technicalText(row.rationale, 'rationale') }),
         alternatives: textList(row.alternatives ?? [], 'alternatives'),
         evidence: textList(row.evidence ?? [], 'evidence'),
@@ -834,15 +838,15 @@ export function parseCollabSurface(value: unknown): CollabSurfaceResult {
         updatedAt: optionalText(row.updatedAt, 'updatedAt') === undefined
           ? ''
           : text(row.updatedAt, 'updatedAt'),
-        ...(optionalText(row.latestEntry, 'entry') === undefined
+        ...(row.latestEntry === undefined
           ? {} : { latestEntry: technicalText(row.latestEntry, 'entry') }),
         technical: technicalList(row.technical ?? [], 'technical'),
       })
     })),
-    ...(optionalText(value.discussionsDecisionsEmptyReason, 'reason') === undefined
+    ...(value.discussionsDecisionsEmptyReason === undefined
       ? {} : { discussionsDecisionsEmptyReason: technicalText(value.discussionsDecisionsEmptyReason, 'reason') }),
     threads: Object.freeze(list(value.threads ?? [], 'threads').map(parseThreadRow)),
-    ...(optionalText(value.threadsEmptyReason, 'reason') === undefined
+    ...(value.threadsEmptyReason === undefined
       ? {} : { threadsEmptyReason: technicalText(value.threadsEmptyReason, 'reason') }),
     coordinationDeliveryNote: technicalText(value.coordinationDeliveryNote, 'delivery note'),
     ...(isObject(value.liveProviderState)
