@@ -40,9 +40,11 @@ import {
   ParticipationCollaborationClient,
   ParticipationStore,
   ParticipationStoreError,
+  AgentContextCompileError,
   SESSIONS_FILE,
   WORK_ORDERS_FILE,
   buildParticipationProjection,
+  compileAgentInstitutionalContext,
   mergeProjections,
   resolveRepositoryReference,
   resolveWorkContext,
@@ -50,6 +52,8 @@ import {
   deriveCodeCompareSummary,
   deriveCodeTopology,
   projectCodeCollabSurface,
+  type AgentContextCompileErrorCode,
+  type AgentContextReviewInputV1,
   type CodeCollabSurfaceV1,
   type RepositoryReferenceResolution,
 } from '@aera/participation-runtime'
@@ -78,12 +82,19 @@ import {
   type CollabLiveProviderStateView,
 } from './aera-collab-code-view.ts'
 import {
+  INSTITUTIONAL_FACT_CLASSES,
   assessPacketState,
+  isAgentContextRole,
+  isAgentInstitutionalContextV1,
+  type AgentContextRole,
+  type AgentInstitutionalContextV1,
   type CodeCompareSummaryV1,
   type CodeTopologyV1,
   type CollabThreadAnchorV1,
   type CoordinationIntent,
+  type InstitutionalFactClass,
   type PacketStateAssessmentV1,
+  type ReviewCandidateV1,
 } from '@aera/participation-contracts'
 import { buildProjection } from '@aera/evidentiary-work-graph'
 import type { EngineeringWorkGraphProjectionV1 } from '@aera/evidentiary-work-graph-contracts'
@@ -179,6 +190,14 @@ export function resolveCollabConfig(
  */
 export interface CollabWorkspaceHooks {
   readonly runProvider?: (args: readonly string[]) => string
+  /** Clock for `compiledAt` of the institutional context packet; tests pin it. */
+  readonly now?: () => string
+  /**
+   * Composition seam for the BASE graph projection (tests supply a validated
+   * fixture projection). When absent, the base projection is rebuilt from
+   * AERA_COLLAB_CORPUS_ROOT / AERA_COLLAB_STACK_ROOT as before.
+   */
+  readonly baseProjection?: () => EngineeringWorkGraphProjectionV1
 }
 
 /** Default read-only provider runner: the host's `gh` CLI, bounded by a timeout. */
@@ -243,7 +262,11 @@ export class CollabHonestError extends Error {
       | 'SOURCE_ACCESS_REFUSED'
       /* Coordination threads (§21, §20). */
       | 'COMPARE_UNAVAILABLE'
-      | 'PACKET_NOT_FOUND',
+      | 'PACKET_NOT_FOUND'
+      /* Role-shaped institutional context (WO-AERA-AUTONOMOUS-FACTORY-CONTEXT-CONVERGENCE-002). */
+      | 'ROLE_NOT_PERMITTED'
+      | 'RECORD_NOT_IN_CONTEXT'
+      | AgentContextCompileErrorCode,
     reason: string,
   ) {
     super(reason)
@@ -415,7 +438,7 @@ export class CollabWorkspaceService {
     const record = this.requireStore().listWorkOrders()
       .find(order => order.workOrderId === this.agentWorkOrderId)
     if (record === undefined) return undefined
-    const packet = await this.agentContextPacket()
+    const countsLine = this.institutionalCountsLine(record.workOrderId)
     const { repositories } = resolveWorkOrderRepositories(this.requireStore(), record.workOrderId)
     const repositoryLines = repositories.length === 0
       ? ['Repository bindings: none recorded for this Work Order. Do not infer a repository from the workspace; ask for a bounded resolution.']
@@ -424,17 +447,96 @@ export class CollabWorkspaceService {
             `${row.repositoryId} (${row.role}${row.providerIdentity === undefined ? '; no verified provider remote' : `; ${row.providerIdentity}`}${row.canonicalBranch === undefined ? '' : `; branch ${row.canonicalBranch}`})`).join('; ')}`,
           'Resolve any PR, commit or branch through aera_collab_repository_resource using these stable RepositoryIds; never infer a repository from the workspace path or name.',
         ]
+    // CD-12 (D11): the current state is the EFFECTIVE state from the
+    // append-only state series, never the immutable admission status, and an
+    // authority class is printed only when one is recorded.
+    const effective = this.requireStore().effectiveWorkOrderState(record.workOrderId)
+    const authorityClass = effective === undefined || effective.authorityClass === 'UNRECORDED'
+      ? undefined
+      : effective.authorityClass
+    const effectiveStatus = effective === undefined
+      ? 'UNRECORDED (source UNRECORDED)'
+      : `${effective.lifecycleState} (source ${effective.source}${effective.stateSequence === undefined ? '' : `; state sequence ${effective.stateSequence}`})`
+    const recorder = this.effectiveStateRecorder(record.workOrderId, effective?.source, record.owner?.principalId)
     return [
       `Current canonical Work Order: ${record.workOrderId}`,
       `Title: ${record.title}`,
-      `Authority: ${record.authorityClass ?? 'RECORDED'}`,
-      `Status: ${record.lifecycleStatus ?? 'RECORDED'}; revision ${record.revision ?? 1}`,
+      ...(authorityClass === undefined ? [] : [`Authority: ${authorityClass}`]),
+      `Status: ${effectiveStatus}; revision ${record.revision ?? 1}${recorder === undefined ? '' : `; ${recorder}`}`,
       `Recorded progress events: ${this.requireStore().listEvents().filter(event =>
         !isUnattributedChange(event.attribution)
         && event.attribution.workOrderId === record.workOrderId).length}`,
-      `Context: ${packet.currentCanonicalState.length} current-state item(s), ${packet.governingDecisions.length} governing decision(s), ${packet.knownResiduals.length} unresolved item(s).`,
+      ...(countsLine === undefined ? [] : [countsLine]),
       ...repositoryLines,
+      'Institutional records (decisions incl. superseded, typed evidence, Working Lines, checkpoints, receipts): call aera_collab_institutional_context with your role.',
     ].join('\n')
+  }
+
+  /**
+   * PA-7: who recorded the effective state, so a reader never takes an
+   * agent's own completion claim for an unattributed fact. For a state record,
+   * its `recordedByPrincipalId`; for the admission, the admission's owner;
+   * otherwise nothing (no state was recorded). The principal kind is read from
+   * the store's participant registry, never inferred.
+   */
+  private effectiveStateRecorder(workOrderId: string, source: string | undefined, admissionOwner: string | undefined): string | undefined {
+    const store = this.requireStore()
+    const kindOf = (principalId: string): string =>
+      store.listParticipants().find(participant => participant.principalId === principalId)?.principalKind ?? 'kind not recorded'
+    if (source === 'STATE_RECORD') {
+      const latest = store.listWorkOrderStates()
+        .filter(row => row.workOrderId === workOrderId)
+        .sort((left, right) => left.stateSequence - right.stateSequence)
+        .at(-1)
+      if (latest === undefined) return undefined
+      const principalId = latest.authority.recordedByPrincipalId
+      return `state recorded by ${principalId} (${kindOf(principalId)})`
+    }
+    if (source === 'ADMISSION' && admissionOwner !== undefined) {
+      return `state recorded by ${admissionOwner} (${kindOf(admissionOwner)}) at admission`
+    }
+    return undefined
+  }
+
+  /**
+   * CD-14: the snapshot's count line, derived from the role's
+   * `compileAgentInstitutionalContext` packet (never the legacy
+   * `agentContextPacket`, whose governing list includes superseded decisions
+   * and whose residuals omit open breaks). The role is the configured agent
+   * role when it is an agent-context role, else IMPLEMENTER. Counted:
+   * CURRENT_DECISION items; GOVERNING_DOCUMENT items not marked
+   * `current: false`; SUPERSEDED_DECISION records (included + capped); open
+   * BREAK_REPAIR items for roles entitled to them; stated absences.
+   * `undefined` — the line is omitted — when the compile fails.
+   */
+  private institutionalCountsLine(workOrderId: string): string | undefined {
+    const configured = this.config.agentRole
+    const role: AgentContextRole = configured !== undefined && isAgentContextRole(configured) ? configured : 'IMPLEMENTER'
+    let packet: AgentInstitutionalContextV1
+    try {
+      packet = compileAgentInstitutionalContext({
+        store: this.requireStore(),
+        workOrderId,
+        role,
+        navigator: this.mergedNavigator(),
+        ...(this.hooks.now === undefined ? {} : { now: this.hooks.now }),
+      })
+    } catch {
+      return undefined
+    }
+    const count = (factClass: InstitutionalFactClass, keep: (item: AgentInstitutionalContextV1['items'][number]) => boolean = () => true): number =>
+      packet.items.filter(item => item.factClass === factClass && keep(item)).length
+    const supersededBound = packet.bounds.find(bound => bound.factClass === 'SUPERSEDED_DECISION')
+    const superseded = supersededBound === undefined ? count('SUPERSEDED_DECISION') : supersededBound.included + supersededBound.omitted
+    const breakEntitled = role === 'IMPLEMENTER' || role === 'INCIDENT_RESPONDER'
+    const parts = [
+      `${count('CURRENT_DECISION')} current decision(s)`,
+      `${count('GOVERNING_DOCUMENT', item => item.current !== false)} current governing document(s)`,
+      `${superseded} superseded or revoked decision(s)`,
+      ...(breakEntitled ? [`${count('BREAK_REPAIR')} open break(s)`] : []),
+      `${packet.absences.length} stated absence(s)`,
+    ]
+    return `Counts from aera_collab_institutional_context (role ${role}): ${parts.join(', ')}.`
   }
 
   /**
@@ -917,6 +1019,10 @@ export class CollabWorkspaceService {
 
   private requireBaseProjection(): EngineeringWorkGraphProjectionV1 {
     if (this.baseProjection !== null) return this.baseProjection
+    if (this.hooks.baseProjection !== undefined) {
+      this.baseProjection = this.hooks.baseProjection()
+      return this.baseProjection
+    }
     const { corpusRoot, stackRoot } = this.config
     if (corpusRoot === undefined || stackRoot === undefined) {
       throw new CollabHonestError(
@@ -2390,6 +2496,93 @@ export class CollabWorkspaceService {
       evidence: decorate(packet.evidence),
       knownResiduals: decorate(packet.knownResiduals),
     }
+  }
+
+  /** The configured agent role (`AERA_COLLAB_AGENT_ROLE`), verbatim; `undefined` when unset. */
+  configuredAgentRole(): string | undefined {
+    return this.config.agentRole
+  }
+
+  /**
+   * Role-shaped institutional context for the joined Work Order —
+   * WO-AERA-AUTONOMOUS-FACTORY-CONTEXT-CONVERGENCE-002, seam proposal §5.3.
+   *
+   * The packet is exactly `compileAgentInstitutionalContext` over the durable
+   * store and the merged navigator: typed records, with live facts carried as
+   * pointers and an authority stamp that grants nothing. A REVIEWER-configured
+   * agent may request the REVIEWER role only, so it cannot widen its own input
+   * by asking for an IMPLEMENTER packet. For REVIEWER, the reviewing principal
+   * is the joined session's principal (never a tool argument), and the
+   * implementer set is derived by the compiler from the store; caller ids only
+   * add to it (CD-16 PA-1, PA-5). With `recordId`, the packet keeps only
+   * the items whose owning record is that id, compiled without per-class caps
+   * so a capped item is still retrievable. Compiler refusals keep their code.
+   */
+  async agentInstitutionalContextPacket(input: {
+    readonly role: string
+    readonly review?: {
+      readonly pass: string
+      readonly candidate: { readonly repositoryId: string, readonly candidateRevision: string, readonly baseRevision: string, readonly codeWorkingLineId?: string }
+      /** Optional additions to the derived implementer set. */
+      readonly implementerPrincipalIds?: readonly string[]
+      readonly passAFindingsEvidenceId?: string
+      readonly implementerClaimEvidenceIds?: readonly string[]
+    }
+    readonly recordId?: string
+  }): Promise<AgentInstitutionalContextV1> {
+    if (this.config.agentRole === 'REVIEWER' && input.role !== 'REVIEWER') {
+      throw new CollabHonestError(
+        'ROLE_NOT_PERMITTED',
+        `This agent is configured as REVIEWER and may request only the REVIEWER role, not ${input.role}.`,
+      )
+    }
+    const { workOrderId, session } = this.requireAgentJoined()
+    const store = this.requireStore()
+    const navigator = this.mergedNavigator()
+    const uncapped = input.recordId === undefined
+      ? undefined
+      : Object.fromEntries(INSTITUTIONAL_FACT_CLASSES.map(factClass => [factClass, -1])) as Partial<Record<InstitutionalFactClass, number>>
+    // The compiler validates every member below and refuses with its own code.
+    const review = input.review === undefined
+      ? undefined
+      : {
+          pass: input.review.pass,
+          candidate: input.review.candidate as ReviewCandidateV1,
+          reviewerPrincipalId: session.principalId,
+          ...(input.review.implementerPrincipalIds === undefined || input.review.implementerPrincipalIds.length === 0
+            ? {}
+            : { implementerPrincipalIds: input.review.implementerPrincipalIds }),
+          ...(input.review.passAFindingsEvidenceId === undefined ? {} : { passAFindingsEvidenceId: input.review.passAFindingsEvidenceId }),
+          ...(input.review.implementerClaimEvidenceIds === undefined ? {} : { implementerClaimEvidenceIds: input.review.implementerClaimEvidenceIds }),
+        } as AgentContextReviewInputV1
+    let packet: AgentInstitutionalContextV1
+    try {
+      packet = compileAgentInstitutionalContext({
+        store,
+        workOrderId,
+        role: input.role as AgentContextRole,
+        navigator,
+        ...(review === undefined ? {} : { review }),
+        ...(uncapped === undefined ? {} : { bounds: uncapped }),
+        ...(this.hooks.now === undefined ? {} : { now: this.hooks.now }),
+      })
+    } catch (error) {
+      if (error instanceof AgentContextCompileError) throw new CollabHonestError(error.code, error.message)
+      throw error
+    }
+    if (!isAgentInstitutionalContextV1(packet)) {
+      throw new CollabHonestError('PROJECTION_UNAVAILABLE', 'The compiled institutional context failed its own contract guard; refusing to present it.')
+    }
+    if (input.recordId === undefined) return packet
+    const recordId = input.recordId
+    const items = packet.items.filter(item => item.source.recordId === recordId)
+    if (items.length === 0) {
+      throw new CollabHonestError(
+        'RECORD_NOT_IN_CONTEXT',
+        `No ${input.role} context item of ${workOrderId} is owned by record ${recordId}.`,
+      )
+    }
+    return { ...packet, items }
   }
 
   /**
