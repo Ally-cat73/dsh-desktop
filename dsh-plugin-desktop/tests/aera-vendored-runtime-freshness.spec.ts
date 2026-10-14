@@ -31,6 +31,7 @@ const RUNTIME_SYMBOLS: readonly (readonly [string, string])[] = [
   ['collabMessagePostedSummaryPrefix', 'R7-3 exact-match event summaries'],
   ['projectCodeCollabSurface', 'the Collaborate projection'],
   ['projectInstitutionalMemory', 'the Record projection'],
+  ['compileAgentInstitutionalContext', 'WO-AERA-AUTONOMOUS-FACTORY-CONTEXT-CONVERGENCE-002 role-shaped context'],
 ]
 
 const CONTRACTS_SYMBOLS: readonly (readonly [string, string])[] = [
@@ -39,6 +40,7 @@ const CONTRACTS_SYMBOLS: readonly (readonly [string, string])[] = [
   ['executionCommitmentSubject', 'shared subject format'],
   ['projectThreadForAgent', '§45 bounded agent projection'],
   ['DELIVERY_ATTACH_POINTS', 'owner Option A attach points'],
+  ['isAgentInstitutionalContextV1', 'WO-AERA-AUTONOMOUS-FACTORY-CONTEXT-CONVERGENCE-002 role-shaped context'],
 ]
 
 describe('the vendored participation packages', () => {

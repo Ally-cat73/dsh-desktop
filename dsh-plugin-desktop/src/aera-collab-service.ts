@@ -40,9 +40,11 @@ import {
   ParticipationCollaborationClient,
   ParticipationStore,
   ParticipationStoreError,
+  AgentContextCompileError,
   SESSIONS_FILE,
   WORK_ORDERS_FILE,
   buildParticipationProjection,
+  compileAgentInstitutionalContext,
   mergeProjections,
   resolveRepositoryReference,
   resolveWorkContext,
@@ -50,6 +52,8 @@ import {
   deriveCodeCompareSummary,
   deriveCodeTopology,
   projectCodeCollabSurface,
+  type AgentContextCompileErrorCode,
+  type AgentContextReviewInputV1,
   type CodeCollabSurfaceV1,
   type RepositoryReferenceResolution,
 } from '@aera/participation-runtime'
@@ -78,12 +82,18 @@ import {
   type CollabLiveProviderStateView,
 } from './aera-collab-code-view.ts'
 import {
+  INSTITUTIONAL_FACT_CLASSES,
   assessPacketState,
+  isAgentInstitutionalContextV1,
+  type AgentContextRole,
+  type AgentInstitutionalContextV1,
   type CodeCompareSummaryV1,
   type CodeTopologyV1,
   type CollabThreadAnchorV1,
   type CoordinationIntent,
+  type InstitutionalFactClass,
   type PacketStateAssessmentV1,
+  type ReviewCandidateV1,
 } from '@aera/participation-contracts'
 import { buildProjection } from '@aera/evidentiary-work-graph'
 import type { EngineeringWorkGraphProjectionV1 } from '@aera/evidentiary-work-graph-contracts'
@@ -179,6 +189,8 @@ export function resolveCollabConfig(
  */
 export interface CollabWorkspaceHooks {
   readonly runProvider?: (args: readonly string[]) => string
+  /** Clock for `compiledAt` of the institutional context packet; tests pin it. */
+  readonly now?: () => string
 }
 
 /** Default read-only provider runner: the host's `gh` CLI, bounded by a timeout. */
@@ -243,7 +255,11 @@ export class CollabHonestError extends Error {
       | 'SOURCE_ACCESS_REFUSED'
       /* Coordination threads (§21, §20). */
       | 'COMPARE_UNAVAILABLE'
-      | 'PACKET_NOT_FOUND',
+      | 'PACKET_NOT_FOUND'
+      /* Role-shaped institutional context (WO-AERA-AUTONOMOUS-FACTORY-CONTEXT-CONVERGENCE-002). */
+      | 'ROLE_NOT_PERMITTED'
+      | 'RECORD_NOT_IN_CONTEXT'
+      | AgentContextCompileErrorCode,
     reason: string,
   ) {
     super(reason)
@@ -434,6 +450,7 @@ export class CollabWorkspaceService {
         && event.attribution.workOrderId === record.workOrderId).length}`,
       `Context: ${packet.currentCanonicalState.length} current-state item(s), ${packet.governingDecisions.length} governing decision(s), ${packet.knownResiduals.length} unresolved item(s).`,
       ...repositoryLines,
+      'Institutional records (decisions incl. superseded, typed evidence, Working Lines, checkpoints, receipts): call aera_collab_institutional_context with your role.',
     ].join('\n')
   }
 
@@ -2390,6 +2407,86 @@ export class CollabWorkspaceService {
       evidence: decorate(packet.evidence),
       knownResiduals: decorate(packet.knownResiduals),
     }
+  }
+
+  /** The configured agent role (`AERA_COLLAB_AGENT_ROLE`), verbatim; `undefined` when unset. */
+  configuredAgentRole(): string | undefined {
+    return this.config.agentRole
+  }
+
+  /**
+   * Role-shaped institutional context for the joined Work Order —
+   * WO-AERA-AUTONOMOUS-FACTORY-CONTEXT-CONVERGENCE-002, seam proposal §5.3.
+   *
+   * The packet is exactly `compileAgentInstitutionalContext` over the durable
+   * store and the merged navigator: typed records, with live facts carried as
+   * pointers and an authority stamp that grants nothing. A REVIEWER-configured
+   * agent may request the REVIEWER role only, so it cannot widen its own input
+   * by asking for an IMPLEMENTER packet. With `recordId`, the packet keeps only
+   * the items whose owning record is that id, compiled without per-class caps
+   * so a capped item is still retrievable. Compiler refusals keep their code.
+   */
+  async agentInstitutionalContextPacket(input: {
+    readonly role: string
+    readonly review?: {
+      readonly pass: string
+      readonly candidate: { readonly repositoryId: string, readonly candidateRevision: string, readonly baseRevision: string, readonly codeWorkingLineId?: string }
+      readonly implementerPrincipalIds: readonly string[]
+      readonly passAFindingsEvidenceId?: string
+      readonly implementerClaimEvidenceIds?: readonly string[]
+    }
+    readonly recordId?: string
+  }): Promise<AgentInstitutionalContextV1> {
+    if (this.config.agentRole === 'REVIEWER' && input.role !== 'REVIEWER') {
+      throw new CollabHonestError(
+        'ROLE_NOT_PERMITTED',
+        `This agent is configured as REVIEWER and may request only the REVIEWER role, not ${input.role}.`,
+      )
+    }
+    const { workOrderId } = this.requireAgentJoined()
+    const store = this.requireStore()
+    const navigator = this.mergedNavigator()
+    const uncapped = input.recordId === undefined
+      ? undefined
+      : Object.fromEntries(INSTITUTIONAL_FACT_CLASSES.map(factClass => [factClass, -1])) as Partial<Record<InstitutionalFactClass, number>>
+    // The compiler validates every member below and refuses with its own code.
+    const review = input.review === undefined
+      ? undefined
+      : {
+          pass: input.review.pass,
+          candidate: input.review.candidate as ReviewCandidateV1,
+          implementerPrincipalIds: input.review.implementerPrincipalIds,
+          ...(input.review.passAFindingsEvidenceId === undefined ? {} : { passAFindingsEvidenceId: input.review.passAFindingsEvidenceId }),
+          ...(input.review.implementerClaimEvidenceIds === undefined ? {} : { implementerClaimEvidenceIds: input.review.implementerClaimEvidenceIds }),
+        } as AgentContextReviewInputV1
+    let packet: AgentInstitutionalContextV1
+    try {
+      packet = compileAgentInstitutionalContext({
+        store,
+        workOrderId,
+        role: input.role as AgentContextRole,
+        navigator,
+        ...(review === undefined ? {} : { review }),
+        ...(uncapped === undefined ? {} : { bounds: uncapped }),
+        ...(this.hooks.now === undefined ? {} : { now: this.hooks.now }),
+      })
+    } catch (error) {
+      if (error instanceof AgentContextCompileError) throw new CollabHonestError(error.code, error.message)
+      throw error
+    }
+    if (!isAgentInstitutionalContextV1(packet)) {
+      throw new CollabHonestError('PROJECTION_UNAVAILABLE', 'The compiled institutional context failed its own contract guard; refusing to present it.')
+    }
+    if (input.recordId === undefined) return packet
+    const recordId = input.recordId
+    const items = packet.items.filter(item => item.source.recordId === recordId)
+    if (items.length === 0) {
+      throw new CollabHonestError(
+        'RECORD_NOT_IN_CONTEXT',
+        `No ${input.role} context item of ${workOrderId} is owned by record ${recordId}.`,
+      )
+    }
+    return { ...packet, items }
   }
 
   /**

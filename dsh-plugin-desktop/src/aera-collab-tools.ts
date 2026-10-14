@@ -15,6 +15,11 @@
  *   4. evidence and unresolved findings             → `aera_collab_find_evidence`
  *   5. record authorised progress and evidence      → `aera_collab_record`
  *
+ * plus `aera_collab_repository_resource` and, for
+ * WO-AERA-AUTONOMOUS-FACTORY-CONTEXT-CONVERGENCE-002,
+ * `aera_collab_institutional_context`: the role-shaped typed-record packet
+ * compiled by `compileAgentInstitutionalContext`.
+ *
  * No second store, registry, harness or graph authority; no provider, gateway
  * or credential surface; read operations plus the TWO authorised write
  * operations (progress note, evidence reference) through the established
@@ -30,7 +35,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type InferValue } from '@deepseek-ai/dsh-tools'
 import { CollabHonestError, CollabWorkspaceService, resolveCollabConfig } from './aera-collab-service.ts'
 
 /** Stable Cordis plugin name. */
@@ -79,6 +84,56 @@ const NODE_REF_ITEM = {
     sourcePath: { type: 'string' },
   },
 } as const
+
+/**
+ * Output schema of `aera_collab_institutional_context`.
+ *
+ * The root and its records are OPEN objects (`additionalProperties: true`,
+ * accepted by `@deepseek-ai/dsh-tools`, which rejects only a missing
+ * openness flag). The full contract is enforced by
+ * `isAgentInstitutionalContextV1` in the service before the value is
+ * returned; this schema additionally pins the members that must never vary:
+ * the context version and the authority stamp, which grants nothing.
+ */
+const OPEN_RECORD = { type: 'object', additionalProperties: true } as const
+const INSTITUTIONAL_CONTEXT_OUTPUT = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    contextVersion: { type: 'string', const: 'AgentInstitutionalContextV1', required: true },
+    workOrderId: { type: 'string', required: true },
+    role: { type: 'string', enum: ['IMPLEMENTER', 'REVIEWER', 'ARCHITECT', 'RESEARCHER', 'INCIDENT_RESPONDER'], required: true },
+    reviewPass: { type: 'string', enum: ['PASS_A', 'PASS_B'] },
+    candidate: OPEN_RECORD,
+    authority: {
+      type: 'object',
+      additionalProperties: false,
+      required: true,
+      properties: {
+        mode: { type: 'string', const: 'RECORDED_NOT_ENFORCED', required: true },
+        casEnforced: { type: 'boolean', const: false, required: true },
+        sentinelRelease: { type: 'string', const: 'NOT_REPRESENTED', required: true },
+        ownerAcceptance: { type: 'string', const: 'NOT_DERIVED', required: true },
+      },
+    },
+    items: { type: 'array', required: true, items: OPEN_RECORD },
+    absences: { type: 'array', required: true, items: OPEN_RECORD },
+    exclusions: { type: 'array', required: true, items: OPEN_RECORD },
+    bounds: { type: 'array', required: true, items: OPEN_RECORD },
+    sourceManifest: { type: 'array', required: true, items: OPEN_RECORD },
+    compiledAt: { type: 'string', required: true },
+  },
+} as const
+
+/** Split one comma-separated scalar tool parameter into trimmed, non-empty ids. */
+function idList(value: string | undefined): string[] {
+  return value === undefined ? [] : value.split(',').map(entry => entry.trim()).filter(entry => entry !== '')
+}
+
+/** A scalar parameter, trimmed; `undefined` when absent or blank. */
+function scalar(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === '' ? undefined : value.trim()
+}
 
 /** Render any canonical tool value as pretty JSON for the model. */
 const renderJson = (_args: unknown, value: unknown): { type: 'text', text: string }[] =>
@@ -223,6 +278,70 @@ export function apply(ctx: Context, config: Config = {}): void {
   })), 'aera-collab-tools: governing_decisions')
 
   ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'aera_collab_institutional_context',
+    description:
+      'Role-shaped institutional context from durable Aera records; live facts are pointers; grants no authority. Returns the joined Work Order\'s typed records for your role: current and superseded decisions, typed evidence (class verbatim), Working Lines with their live location as a pointer, checkpoints, integration receipts, repository identity, provenance as recorded, stated absences and an authority stamp (RECORDED_NOT_ENFORCED; ownerAcceptance NOT_DERIVED). REVIEWER requires review_pass and the exact candidate; PASS_B also requires the recorded Pass A findings. Pass record_id to return only the items of one record. Requires a resolved WorkContext.',
+    parameters: {
+      role: {
+        type: 'string',
+        required: true,
+        enum: ['IMPLEMENTER', 'REVIEWER', 'ARCHITECT', 'RESEARCHER', 'INCIDENT_RESPONDER'],
+        description: 'The role the packet is shaped for. A REVIEWER-configured agent may request REVIEWER only.',
+      },
+      review_pass: { type: 'string', enum: ['PASS_A', 'PASS_B'], description: 'REVIEWER only: PASS_A (isolated) or PASS_B (reconciliation).' },
+      candidate_repository_id: { type: 'string', description: 'REVIEWER only: RepositoryId (aera-repo:<slug>) of the candidate under review.' },
+      candidate_revision: { type: 'string', description: 'REVIEWER only: the exact commit under review.' },
+      base_revision: { type: 'string', description: 'REVIEWER only: the pre-change baseline revision.' },
+      candidate_working_line_id: { type: 'string', description: 'REVIEWER only, optional: the candidate Working Line id.' },
+      implementer_principal_ids: { type: 'string', description: 'REVIEWER only: comma-separated implementer principal ids (non-empty).' },
+      pass_a_findings_evidence_id: { type: 'string', description: 'PASS_B only: evidence id of the recorded, frozen Pass A findings.' },
+      implementer_claim_evidence_ids: { type: 'string', description: 'PASS_B only, optional: comma-separated implementer claim evidence ids admitted for reconciliation.' },
+      record_id: { type: 'string', description: 'Optional: return only the items owned by this record id (decision, evidence, line, checkpoint, receipt, …).' },
+    },
+    output: {
+      schema: INSTITUTIONAL_CONTEXT_OUTPUT,
+      render: renderJson,
+    },
+    async execute(args) {
+      const pass = scalar(args.review_pass)
+      const repositoryId = scalar(args.candidate_repository_id)
+      const candidateRevision = scalar(args.candidate_revision)
+      const baseRevision = scalar(args.base_revision)
+      const codeWorkingLineId = scalar(args.candidate_working_line_id)
+      const passAFindingsEvidenceId = scalar(args.pass_a_findings_evidence_id)
+      const implementerPrincipalIds = idList(args.implementer_principal_ids)
+      const implementerClaimEvidenceIds = idList(args.implementer_claim_evidence_ids)
+      const recordId = scalar(args.record_id)
+      const reviewGiven = pass !== undefined || repositoryId !== undefined || candidateRevision !== undefined
+        || baseRevision !== undefined || codeWorkingLineId !== undefined || passAFindingsEvidenceId !== undefined
+        || implementerPrincipalIds.length > 0 || implementerClaimEvidenceIds.length > 0
+      const packet = await honest(() => service.agentInstitutionalContextPacket({
+        role: args.role,
+        ...(reviewGiven
+          ? {
+              review: {
+                pass: pass ?? '',
+                candidate: {
+                  repositoryId: repositoryId ?? '',
+                  candidateRevision: candidateRevision ?? '',
+                  baseRevision: baseRevision ?? '',
+                  ...(codeWorkingLineId === undefined ? {} : { codeWorkingLineId }),
+                },
+                implementerPrincipalIds,
+                ...(passAFindingsEvidenceId === undefined ? {} : { passAFindingsEvidenceId }),
+                ...(implementerClaimEvidenceIds.length === 0 ? {} : { implementerClaimEvidenceIds }),
+              },
+            }
+          : {}),
+        ...(recordId === undefined ? {} : { recordId }),
+      }))
+      // The packet is lossless JSON and has passed isAgentInstitutionalContextV1;
+      // its interfaces carry no index signature, hence the structural cast.
+      return packet as unknown as InferValue<typeof INSTITUTIONAL_CONTEXT_OUTPUT>
+    },
+  })), 'aera-collab-tools: institutional_context')
+
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'aera_collab_working_state',
     description:
       'Return the joined WorkContext\'s current canonical state nodes (with source locators) and the honestly observed mutable working state of the configured workspace (branch, head revision, dirty state), or the explicit reason the working state is unavailable. Requires a resolved WorkContext.',
@@ -296,6 +415,12 @@ export function apply(ctx: Context, config: Config = {}): void {
       render: renderJson,
     },
     async execute(args) {
+      // The legacy evidence list flattens implementer narrative (seam proposal
+      // D3); a REVIEWER-configured agent reads typed evidence through the
+      // role-shaped packet instead, which keeps Pass A isolation.
+      if (service.configuredAgentRole() === 'REVIEWER') {
+        throw new Error('REVIEWER_USE_INSTITUTIONAL_CONTEXT: A REVIEWER-configured agent reads evidence through aera_collab_institutional_context with role REVIEWER and the exact candidate.')
+      }
       if (args.node_id !== undefined && args.node_id.trim() !== '') {
         const nodeId = args.node_id
         const evidence = await honest(() => service.agentFindEvidence(nodeId))
