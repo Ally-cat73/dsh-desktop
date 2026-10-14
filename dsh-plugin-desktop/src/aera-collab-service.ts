@@ -457,11 +457,12 @@ export class CollabWorkspaceService {
     const effectiveStatus = effective === undefined
       ? 'UNRECORDED (source UNRECORDED)'
       : `${effective.lifecycleState} (source ${effective.source}${effective.stateSequence === undefined ? '' : `; state sequence ${effective.stateSequence}`})`
+    const recorder = this.effectiveStateRecorder(record.workOrderId, effective?.source, record.owner?.principalId)
     return [
       `Current canonical Work Order: ${record.workOrderId}`,
       `Title: ${record.title}`,
       ...(authorityClass === undefined ? [] : [`Authority: ${authorityClass}`]),
-      `Status: ${effectiveStatus}; revision ${record.revision ?? 1}`,
+      `Status: ${effectiveStatus}; revision ${record.revision ?? 1}${recorder === undefined ? '' : `; ${recorder}`}`,
       `Recorded progress events: ${this.requireStore().listEvents().filter(event =>
         !isUnattributedChange(event.attribution)
         && event.attribution.workOrderId === record.workOrderId).length}`,
@@ -469,6 +470,32 @@ export class CollabWorkspaceService {
       ...repositoryLines,
       'Institutional records (decisions incl. superseded, typed evidence, Working Lines, checkpoints, receipts): call aera_collab_institutional_context with your role.',
     ].join('\n')
+  }
+
+  /**
+   * PA-7: who recorded the effective state, so a reader never takes an
+   * agent's own completion claim for an unattributed fact. For a state record,
+   * its `recordedByPrincipalId`; for the admission, the admission's owner;
+   * otherwise nothing (no state was recorded). The principal kind is read from
+   * the store's participant registry, never inferred.
+   */
+  private effectiveStateRecorder(workOrderId: string, source: string | undefined, admissionOwner: string | undefined): string | undefined {
+    const store = this.requireStore()
+    const kindOf = (principalId: string): string =>
+      store.listParticipants().find(participant => participant.principalId === principalId)?.principalKind ?? 'kind not recorded'
+    if (source === 'STATE_RECORD') {
+      const latest = store.listWorkOrderStates()
+        .filter(row => row.workOrderId === workOrderId)
+        .sort((left, right) => left.stateSequence - right.stateSequence)
+        .at(-1)
+      if (latest === undefined) return undefined
+      const principalId = latest.authority.recordedByPrincipalId
+      return `state recorded by ${principalId} (${kindOf(principalId)})`
+    }
+    if (source === 'ADMISSION' && admissionOwner !== undefined) {
+      return `state recorded by ${admissionOwner} (${kindOf(admissionOwner)}) at admission`
+    }
+    return undefined
   }
 
   /**
@@ -2484,7 +2511,10 @@ export class CollabWorkspaceService {
    * store and the merged navigator: typed records, with live facts carried as
    * pointers and an authority stamp that grants nothing. A REVIEWER-configured
    * agent may request the REVIEWER role only, so it cannot widen its own input
-   * by asking for an IMPLEMENTER packet. With `recordId`, the packet keeps only
+   * by asking for an IMPLEMENTER packet. For REVIEWER, the reviewing principal
+   * is the joined session's principal (never a tool argument), and the
+   * implementer set is derived by the compiler from the store; caller ids only
+   * add to it (CD-16 PA-1, PA-5). With `recordId`, the packet keeps only
    * the items whose owning record is that id, compiled without per-class caps
    * so a capped item is still retrievable. Compiler refusals keep their code.
    */
@@ -2493,7 +2523,8 @@ export class CollabWorkspaceService {
     readonly review?: {
       readonly pass: string
       readonly candidate: { readonly repositoryId: string, readonly candidateRevision: string, readonly baseRevision: string, readonly codeWorkingLineId?: string }
-      readonly implementerPrincipalIds: readonly string[]
+      /** Optional additions to the derived implementer set. */
+      readonly implementerPrincipalIds?: readonly string[]
       readonly passAFindingsEvidenceId?: string
       readonly implementerClaimEvidenceIds?: readonly string[]
     }
@@ -2505,7 +2536,7 @@ export class CollabWorkspaceService {
         `This agent is configured as REVIEWER and may request only the REVIEWER role, not ${input.role}.`,
       )
     }
-    const { workOrderId } = this.requireAgentJoined()
+    const { workOrderId, session } = this.requireAgentJoined()
     const store = this.requireStore()
     const navigator = this.mergedNavigator()
     const uncapped = input.recordId === undefined
@@ -2517,7 +2548,10 @@ export class CollabWorkspaceService {
       : {
           pass: input.review.pass,
           candidate: input.review.candidate as ReviewCandidateV1,
-          implementerPrincipalIds: input.review.implementerPrincipalIds,
+          reviewerPrincipalId: session.principalId,
+          ...(input.review.implementerPrincipalIds === undefined || input.review.implementerPrincipalIds.length === 0
+            ? {}
+            : { implementerPrincipalIds: input.review.implementerPrincipalIds }),
           ...(input.review.passAFindingsEvidenceId === undefined ? {} : { passAFindingsEvidenceId: input.review.passAFindingsEvidenceId }),
           ...(input.review.implementerClaimEvidenceIds === undefined ? {} : { implementerClaimEvidenceIds: input.review.implementerClaimEvidenceIds }),
         } as AgentContextReviewInputV1

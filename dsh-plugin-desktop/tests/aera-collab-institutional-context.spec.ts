@@ -21,9 +21,15 @@
  * (4) The tool performs no store write: per-file sha256 is identical before
  *     and after the call. The session the join opens is measured separately.
  *
+ * (5) Review round 1 (CD-16): a REVIEWER-configured agent that calls PASS_A
+ *     with only role, repository, candidate revision and base revision gets
+ *     an isolated packet. The implementer set is derived from the store and
+ *     the reviewing principal is the joined session's principal.
+ *
  * With `AERA_FRESH_AGENT_OUT=<dir>`, case (1) also writes the exact snapshot
- * text the joined agent received and the tool's IMPLEMENTER JSON, with a
- * SHA256SUMS manifest. Without the variable nothing is written.
+ * text the joined agent received and the tool's IMPLEMENTER JSON, and case (5)
+ * writes the tool's REVIEWER PASS_A JSON, with a SHA256SUMS manifest over the
+ * files present. Without the variable nothing is written.
  */
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
@@ -51,6 +57,7 @@ import { CollabWorkspaceService } from '../src/aera-collab-service.ts'
 import * as collabTools from '../src/aera-collab-tools.ts'
 import {
   FIXTURE_PRINCIPALS,
+  FIXTURE_SENTINELS,
   FIXTURE_WORK_ORDERS,
   buildFactoryContextFixture,
   buildFactoryContextNavigator,
@@ -59,9 +66,11 @@ import {
 } from './support/institutional-context-fixture.ts'
 
 const COMPILED_AT = '2026-10-14T00:00:00.000Z'
-/** sha256 of the stack runner's packets at aera-stack e36d7cc0c (runner-output/SHA256SUMS). */
+/** sha256 of the stack runner's packets at aera-stack eb5bf17f6 (runner-output/SHA256SUMS). */
 const STACK_RUNNER_IMPLEMENTER_SHA256 = '648c38b13be7aff3cdbbe1717c97366270ca10e517746bd3d01b35b28334b1c5'
-const STACK_RUNNER_REVIEWER_PASS_A_SHA256 = '142a3b26e5ef063333c57847ddfae8d77da91745951af417db3629aecf0b1c76'
+const STACK_RUNNER_REVIEWER_PASS_A_SHA256 = 'b8c99b1f43c113f5db8dca7ae89fc60aa6c2bb523ae1ed569d2de5314ea2257f'
+/** The fresh-agent native output files, in SHA256SUMS order. */
+const FRESH_AGENT_OUTPUT_FILES = ['native-snapshot.txt', 'native-implementer-tool-output.json', 'native-reviewer-pass-a-tool-output.json'] as const
 const TARGET = FIXTURE_WORK_ORDERS.target
 const SNAPSHOT_SOURCE_PLUGIN = 'aera-collab-agent-tools'
 
@@ -157,6 +166,22 @@ function mergedNavigatorFor(store: ParticipationStore): ContextNavigator {
   return new ContextNavigator(mergeProjections(buildFactoryContextProjection(), participation.projection))
 }
 
+/**
+ * With `AERA_FRESH_AGENT_OUT` set, write one native output file and rewrite
+ * SHA256SUMS over every listed output file present in the directory.
+ */
+function writeFreshAgentOutput(name: typeof FRESH_AGENT_OUTPUT_FILES[number], content: string): void {
+  const out = process.env['AERA_FRESH_AGENT_OUT']
+  if (out === undefined || out.trim() === '') return
+  const directory = resolve(out)
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, name), content, 'utf8')
+  const present = new Set(readdirSync(directory))
+  const sums = FRESH_AGENT_OUTPUT_FILES.filter(file => present.has(file))
+    .map(file => `${sha256(readFileSync(join(directory, file), 'utf8'))}  ${file}`)
+  writeFileSync(join(directory, 'SHA256SUMS'), `${sums.join('\n')}\n`, 'utf8')
+}
+
 function freshFixture(): { ids: FactoryContextFixtureIds, storeDir: string } {
   const storeDir = join(mkdtempSync(join(tmpdir(), 'aera-collab-institutional-context-')), 'store')
   mkdirSync(storeDir, { recursive: true })
@@ -210,7 +235,7 @@ describe('(0) the ported fixture is the G1 fixture', () => {
     })
     const reviewerPassA = compileAgentInstitutionalContext({
       store, workOrderId: ids.workOrders.target, role: 'REVIEWER', navigator, now: () => COMPILED_AT,
-      review: { pass: 'PASS_A', candidate: ids.candidate, implementerPrincipalIds: [FIXTURE_PRINCIPALS.implementer] },
+      review: { pass: 'PASS_A', candidate: ids.candidate, reviewerPrincipalId: FIXTURE_PRINCIPALS.reviewer, implementerPrincipalIds: [FIXTURE_PRINCIPALS.implementer] },
     })
     expect(sha256(stable(implementer))).toBe(STACK_RUNNER_IMPLEMENTER_SHA256)
     expect(sha256(stable(reviewerPassA))).toBe(STACK_RUNNER_REVIEWER_PASS_A_SHA256)
@@ -275,23 +300,14 @@ describe('(1)+(4) a joined IMPLEMENTER agent receives exactly the stack projecti
     // CD-12: the snapshot and the packet now agree on the effective state.
     expect(snapshot).toContain('Status: COMPLETED (source STATE_RECORD; state sequence ')
     expect(snapshot).not.toContain('Status: ACTIVE')
+    // PA-7: the status line names who recorded the effective state: here the implementer's own completion claim.
+    expect(snapshot).toContain(`; revision 1; state recorded by ${FIXTURE_PRINCIPALS.implementer} (AGENT)`)
     expect(native.items.find(item => item.itemId === `WORK_ORDER:${TARGET}#effective-state`)?.fields['effectiveLifecycleState']).toBe('COMPLETED')
     expect(snapshot).toContain('Institutional records (decisions incl. superseded, typed evidence, Working Lines, checkpoints, receipts): call aera_collab_institutional_context with your role.')
 
-    const out = process.env['AERA_FRESH_AGENT_OUT']
-    if (out !== undefined && out.trim() !== '' && snapshot !== undefined) {
-      const directory = resolve(out)
-      mkdirSync(directory, { recursive: true })
-      const files: readonly [string, string][] = [
-        ['native-snapshot.txt', `${snapshot}\n`],
-        ['native-implementer-tool-output.json', stable(native)],
-      ]
-      const sums: string[] = []
-      for (const [name, content] of files) {
-        writeFileSync(join(directory, name), content, 'utf8')
-        sums.push(`${sha256(content)}  ${name}`)
-      }
-      writeFileSync(join(directory, 'SHA256SUMS'), `${sums.join('\n')}\n`, 'utf8')
+    if (snapshot !== undefined) {
+      writeFreshAgentOutput('native-snapshot.txt', `${snapshot}\n`)
+      writeFreshAgentOutput('native-implementer-tool-output.json', stable(native))
     }
   }, 60_000)
 
@@ -398,5 +414,86 @@ describe('(2)+(3) a REVIEWER-configured agent cannot widen its own input', () =>
       baseRevision: ids.candidate.baseRevision,
     })
     expect(passA.text).not.toContain('SENTINEL-')
+  }, 60_000)
+})
+
+describe('(5) a fresh REVIEWER Pass A call needs only role, repository, candidate revision and base revision (CD-16)', () => {
+  /** Implementer narrative and implementer locators of the fixture: none may reach a Pass A packet. */
+  const IMPLEMENTER_MARKERS = [
+    ...Object.values(FIXTURE_SENTINELS),
+    'review/self-check@',
+    'logs/implementer-unit-suite.log',
+    'Context compiler line',
+    'Context root line',
+  ]
+  const STRANGER = 'aera:participant:10000000-0000-4000-8000-000000000099'
+
+  it('the tool derives the implementer set and the reviewing principal from the store and the join; the packet carries no implementer narrative', async () => {
+    const { ids, storeDir } = freshFixture()
+    const service = serviceFor(storeDir, { name: 'Fixture Reviewer', role: 'REVIEWER', delegationId: 'delegation-fixture-reviewer' })
+    const fresh = {
+      role: 'REVIEWER',
+      review_pass: 'PASS_A',
+      candidate_repository_id: ids.candidate.repositoryId as string,
+      candidate_revision: ids.candidate.candidateRevision,
+      base_revision: ids.candidate.baseRevision,
+    }
+    const adapter = new ScriptedTestModelDouble([
+      toolCallTurn('f1', 'aera_collab_resolve_work_context', { work_order_id: TARGET }),
+      toolCallTurn('f2', 'aera_collab_institutional_context', fresh),
+      toolCallTurn('f3', 'aera_collab_institutional_context', { ...fresh, implementer_principal_ids: STRANGER }),
+      toolCallTurn('f4', 'aera_collab_institutional_context', { ...fresh, implementer_principal_ids: FIXTURE_PRINCIPALS.reviewer as string }),
+      toolCallTurn('f5', 'aera_collab_institutional_context', { ...fresh, candidate_working_line_id: 'aera:code_working_line:not-here' }),
+      toolCallTurn('f6', 'aera_collab_institutional_context', { ...fresh, candidate_revision: 'md' }),
+      textTurn('TEST DOUBLE: fresh reviewer sequence complete.'),
+    ])
+    const ctx = await runtimeFor(service, adapter)
+    const agent = ctx.agentLoop.create(SessionId('factory-context-fresh-reviewer'), { provider: 'scripted-test', model: 'TEST-scripted-double' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: `Review the candidate of ${TARGET}, Pass A.` }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(7)
+
+    const passA = toolResult(adapter.requests, 'f2')
+    expect(passA.isError).toBe(false)
+    const packet = JSON.parse(passA.text) as AgentInstitutionalContextV1
+    expect(isAgentInstitutionalContextV1(packet)).toBe(true)
+    expect(packet.reviewPass).toBe('PASS_A')
+    expect(packet.candidate).toEqual({
+      repositoryId: ids.candidate.repositoryId,
+      candidateRevision: ids.candidate.candidateRevision,
+      baseRevision: ids.candidate.baseRevision,
+    })
+    for (const marker of IMPLEMENTER_MARKERS) expect(passA.text).not.toContain(marker)
+    // The candidate line was resolved from the revision; the implementer's records are flagged.
+    expect(packet.items.find(item => item.itemId === `WORKING_LINE:${ids.lines.derived}`)?.fields['reviewCandidate']).toBe(true)
+    expect(packet.items.find(item => item.itemId === `TYPED_EVIDENCE:${ids.evidence.implementerVerification}`)?.assertedByCandidateAuthor).toBe(true)
+    // The joined reviewer is never an implementer: its own findings are not flagged.
+    expect(packet.items.find(item => item.itemId === `TYPED_EVIDENCE:${ids.evidence.passAFindings}`)?.assertedByCandidateAuthor).toBeUndefined()
+    // It is exactly the compiler's packet for the joined reviewer principal.
+    const store = new ParticipationStore(storeDir)
+    const direct = compileAgentInstitutionalContext({
+      store, workOrderId: TARGET, role: 'REVIEWER', navigator: mergedNavigatorFor(store), now: () => COMPILED_AT,
+      review: { pass: 'PASS_A', candidate: packet.candidate!, reviewerPrincipalId: FIXTURE_PRINCIPALS.reviewer },
+    })
+    expect(packet).toEqual(direct)
+
+    // ADV-1 in product: a wrong implementer id cannot open the packet.
+    const wrongId = toolResult(adapter.requests, 'f3')
+    expect(wrongId.isError).toBe(false)
+    for (const marker of IMPLEMENTER_MARKERS) expect(wrongId.text).not.toContain(marker)
+    // PA-5: naming oneself as an implementer is refused.
+    expect(toolResult(adapter.requests, 'f4').text).toContain('REVIEWER_IS_CANDIDATE_AUTHOR')
+    // PA-1: an explicit line id must exist.
+    expect(toolResult(adapter.requests, 'f5').text).toContain('CANDIDATE_LINE_NOT_FOUND')
+    // PA-3: a candidate revision that is not revision-shaped is refused.
+    expect(toolResult(adapter.requests, 'f6').text).toContain('REVIEW_CANDIDATE_REQUIRED')
+
+    writeFreshAgentOutput('native-reviewer-pass-a-tool-output.json', stable(packet))
+    const out = process.env['AERA_FRESH_AGENT_OUT']
+    if (out !== undefined && out.trim() !== '') {
+      const written = readFileSync(join(resolve(out), 'native-reviewer-pass-a-tool-output.json'), 'utf8')
+      expect(written).toBe(stable(packet))
+      for (const marker of IMPLEMENTER_MARKERS) expect(written).not.toContain(marker)
+    }
   }, 60_000)
 })
