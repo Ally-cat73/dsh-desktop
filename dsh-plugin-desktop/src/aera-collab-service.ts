@@ -191,6 +191,12 @@ export interface CollabWorkspaceHooks {
   readonly runProvider?: (args: readonly string[]) => string
   /** Clock for `compiledAt` of the institutional context packet; tests pin it. */
   readonly now?: () => string
+  /**
+   * Composition seam for the BASE graph projection (tests supply a validated
+   * fixture projection). When absent, the base projection is rebuilt from
+   * AERA_COLLAB_CORPUS_ROOT / AERA_COLLAB_STACK_ROOT as before.
+   */
+  readonly baseProjection?: () => EngineeringWorkGraphProjectionV1
 }
 
 /** Default read-only provider runner: the host's `gh` CLI, bounded by a timeout. */
@@ -440,11 +446,21 @@ export class CollabWorkspaceService {
             `${row.repositoryId} (${row.role}${row.providerIdentity === undefined ? '; no verified provider remote' : `; ${row.providerIdentity}`}${row.canonicalBranch === undefined ? '' : `; branch ${row.canonicalBranch}`})`).join('; ')}`,
           'Resolve any PR, commit or branch through aera_collab_repository_resource using these stable RepositoryIds; never infer a repository from the workspace path or name.',
         ]
+    // CD-12 (D11): the current state is the EFFECTIVE state from the
+    // append-only state series, never the immutable admission status, and an
+    // authority class is printed only when one is recorded.
+    const effective = this.requireStore().effectiveWorkOrderState(record.workOrderId)
+    const authorityClass = effective === undefined || effective.authorityClass === 'UNRECORDED'
+      ? undefined
+      : effective.authorityClass
+    const effectiveStatus = effective === undefined
+      ? 'UNRECORDED (source UNRECORDED)'
+      : `${effective.lifecycleState} (source ${effective.source}${effective.stateSequence === undefined ? '' : `; state sequence ${effective.stateSequence}`})`
     return [
       `Current canonical Work Order: ${record.workOrderId}`,
       `Title: ${record.title}`,
-      `Authority: ${record.authorityClass ?? 'RECORDED'}`,
-      `Status: ${record.lifecycleStatus ?? 'RECORDED'}; revision ${record.revision ?? 1}`,
+      ...(authorityClass === undefined ? [] : [`Authority: ${authorityClass}`]),
+      `Status: ${effectiveStatus}; revision ${record.revision ?? 1}`,
       `Recorded progress events: ${this.requireStore().listEvents().filter(event =>
         !isUnattributedChange(event.attribution)
         && event.attribution.workOrderId === record.workOrderId).length}`,
@@ -934,6 +950,10 @@ export class CollabWorkspaceService {
 
   private requireBaseProjection(): EngineeringWorkGraphProjectionV1 {
     if (this.baseProjection !== null) return this.baseProjection
+    if (this.hooks.baseProjection !== undefined) {
+      this.baseProjection = this.hooks.baseProjection()
+      return this.baseProjection
+    }
     const { corpusRoot, stackRoot } = this.config
     if (corpusRoot === undefined || stackRoot === undefined) {
       throw new CollabHonestError(

@@ -39,7 +39,6 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import { buildProjection } from '@aera/evidentiary-work-graph'
 import {
   ContextNavigator,
   ParticipationStore,
@@ -55,6 +54,7 @@ import {
   FIXTURE_WORK_ORDERS,
   buildFactoryContextFixture,
   buildFactoryContextNavigator,
+  buildFactoryContextProjection,
   type FactoryContextFixtureIds,
 } from './support/institutional-context-fixture.ts'
 
@@ -146,12 +146,15 @@ function changedFiles(before: Record<string, string>, after: Record<string, stri
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(file => before[file] !== after[file]).sort()
 }
 
-/** The navigator `CollabWorkspaceService.mergedNavigator()` builds: base corpus projection + store projection. */
+/**
+ * The navigator `CollabWorkspaceService.mergedNavigator()` builds: base
+ * projection + store projection. CD-13: the base is the fixture graph the
+ * stack runner orients against (two ADRs + the parent Work Order), supplied
+ * to the service through `CollabWorkspaceHooks.baseProjection`.
+ */
 function mergedNavigatorFor(store: ParticipationStore): ContextNavigator {
-  const base = buildProjection({ corpusRoot, stackRoot })
-  expect(base.validation.ok).toBe(true)
   const participation = buildParticipationProjection({ store, sourcePrefix: 'participation-store' })
-  return new ContextNavigator(mergeProjections(base.projection, participation.projection))
+  return new ContextNavigator(mergeProjections(buildFactoryContextProjection(), participation.projection))
 }
 
 function freshFixture(): { ids: FactoryContextFixtureIds, storeDir: string } {
@@ -168,7 +171,7 @@ function serviceFor(storeDir: string, agent: { name: string, role: string, deleg
     agentName: agent.name,
     agentRole: agent.role,
     delegationId: agent.delegationId,
-  }, { now: () => COMPILED_AT })
+  }, { now: () => COMPILED_AT, baseProjection: buildFactoryContextProjection })
 }
 
 async function runtimeFor(service: CollabWorkspaceService, adapter: ScriptedTestModelDouble): Promise<Context> {
@@ -251,6 +254,15 @@ describe('(1)+(4) a joined IMPLEMENTER agent receives exactly the stack projecti
     })
     expect(native).toEqual(direct)
     expect(isAgentInstitutionalContextV1(native)).toBe(true)
+    // CD-13: with the runner's graph governors and the same pinned compiledAt,
+    // the native packet IS the stack runner packet, byte for byte.
+    expect(sha256(stable(native))).toBe(STACK_RUNNER_IMPLEMENTER_SHA256)
+    expect(native.items.filter(item => item.factClass === 'GOVERNING_DOCUMENT').map(item => item.itemId)).toEqual(
+      expect.arrayContaining([
+        'GOVERNING_DOCUMENT:ewg:architecture_decision:ADR-FIXTURE-TYPED-RECORDS',
+        'GOVERNING_DOCUMENT:ewg:architecture_decision:ADR-FIXTURE-GRAPH-EVENTS',
+        `GOVERNING_DOCUMENT:ewg:work_order:${FIXTURE_WORK_ORDERS.authorising}`,
+      ]))
     expect(native.authority).toEqual({ mode: 'RECORDED_NOT_ENFORCED', casEnforced: false, sentinelRelease: 'NOT_REPRESENTED', ownerAcceptance: 'NOT_DERIVED' })
 
     // (4) The tool call wrote nothing; the join wrote only its session record.
@@ -260,6 +272,10 @@ describe('(1)+(4) a joined IMPLEMENTER agent receives exactly the stack projecti
     // The joined snapshot names the tool.
     const snapshot = snapshotText(adapter.requests[3])
     expect(snapshot).toContain(`Current canonical Work Order: ${TARGET}`)
+    // CD-12: the snapshot and the packet now agree on the effective state.
+    expect(snapshot).toContain('Status: COMPLETED (source STATE_RECORD; state sequence ')
+    expect(snapshot).not.toContain('Status: ACTIVE')
+    expect(native.items.find(item => item.itemId === `WORK_ORDER:${TARGET}#effective-state`)?.fields['effectiveLifecycleState']).toBe('COMPLETED')
     expect(snapshot).toContain('Institutional records (decisions incl. superseded, typed evidence, Working Lines, checkpoints, receipts): call aera_collab_institutional_context with your role.')
 
     const out = process.env['AERA_FRESH_AGENT_OUT']
@@ -290,6 +306,22 @@ describe('(1)+(4) a joined IMPLEMENTER agent receives exactly the stack projecti
     expect(line.items.map(item => item.itemId)).toContain(`WORKING_LINE:${ids.lines.derived}#location`)
     await expect(service.agentInstitutionalContextPacket({ role: 'IMPLEMENTER', recordId: 'aera:decision:not-in-store' }))
       .rejects.toMatchObject({ code: 'RECORD_NOT_IN_CONTEXT' })
+    await service.closeAgentWorkContext()
+  })
+})
+
+describe('CD-12 an unrecorded authority class is never printed', () => {
+  it('a minimal order (no authority class, no state record) prints no Authority line and its effective source', async () => {
+    const { storeDir } = freshFixture()
+    const service = serviceFor(storeDir, { name: 'Fixture Implementer', role: 'IMPLEMENTER', delegationId: 'delegation-fixture-implementer' })
+    await service.openAgentWorkContext(FIXTURE_WORK_ORDERS.minimal)
+    const snapshot = await service.agentInstitutionalContext() ?? ''
+    const effective = new ParticipationStore(storeDir).effectiveWorkOrderState(FIXTURE_WORK_ORDERS.minimal)
+    expect(effective?.authorityClass).toBe('UNRECORDED')
+    expect(snapshot).toContain(`Current canonical Work Order: ${FIXTURE_WORK_ORDERS.minimal}`)
+    expect(snapshot).not.toContain('Authority:')
+    expect(snapshot).toContain(`Status: ${effective?.lifecycleState} (source ${effective?.source}`)
+    expect(snapshot).not.toContain('RECORDED;')
     await service.closeAgentWorkContext()
   })
 })

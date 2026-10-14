@@ -243,6 +243,23 @@ describe('§34 — the real fresh-Desktop-Session failure', () => {
     await subject.closeAgentWorkContext()
   })
 
+  it('CD-12: the joined snapshot prints the EFFECTIVE state — a later COMPLETED record shows COMPLETED (STATE_RECORD), not the admission ACTIVE', async () => {
+    const subject = service()
+    await subject.openAgentWorkContext(COMPLETED_WO, 'test-native-session-cd12')
+    const snapshot = await subject.agentInstitutionalContext() ?? ''
+    const effective = new ParticipationStore(storeDir).effectiveWorkOrderState(COMPLETED_WO)
+    expect(effective?.lifecycleState).toBe('COMPLETED')
+    expect(effective?.source).toBe('STATE_RECORD')
+    expect(effective?.stateSequence).toBeDefined()
+    expect(snapshot).toContain(`Current canonical Work Order: ${COMPLETED_WO}`)
+    expect(snapshot).toContain(`Status: COMPLETED (source STATE_RECORD; state sequence ${effective?.stateSequence}); revision 1`)
+    expect(snapshot).not.toContain('Status: ACTIVE')
+    // Recorded at admission, so printed; never defaulted to RECORDED.
+    expect(snapshot).toContain('Authority: OWNER_SUPPLIED')
+    expect(snapshot).not.toContain('RECORDED;')
+    await subject.closeAgentWorkContext()
+  })
+
   it('recently completed work is reported as recent but NOT as current unfinished work', async () => {
     const subject = service()
     const text = await subject.agentOrientationContext() ?? ''
