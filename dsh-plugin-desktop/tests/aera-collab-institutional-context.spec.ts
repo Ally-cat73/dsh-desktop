@@ -66,7 +66,7 @@ import {
 } from './support/institutional-context-fixture.ts'
 
 const COMPILED_AT = '2026-10-14T00:00:00.000Z'
-/** sha256 of the stack runner's packets at aera-stack eb5bf17f6 (runner-output/SHA256SUMS). */
+/** sha256 of the stack runner's packets at aera-stack eb5bf17f6, unchanged at 6323987ff (runner-output/SHA256SUMS). */
 const STACK_RUNNER_IMPLEMENTER_SHA256 = '648c38b13be7aff3cdbbe1717c97366270ca10e517746bd3d01b35b28334b1c5'
 const STACK_RUNNER_REVIEWER_PASS_A_SHA256 = 'b8c99b1f43c113f5db8dca7ae89fc60aa6c2bb523ae1ed569d2de5314ea2257f'
 /** The fresh-agent native output files, in SHA256SUMS order. */
@@ -445,13 +445,16 @@ describe('(5) a fresh REVIEWER Pass A call needs only role, repository, candidat
       toolCallTurn('f4', 'aera_collab_institutional_context', { ...fresh, implementer_principal_ids: FIXTURE_PRINCIPALS.reviewer as string }),
       toolCallTurn('f5', 'aera_collab_institutional_context', { ...fresh, candidate_working_line_id: 'aera:code_working_line:not-here' }),
       toolCallTurn('f6', 'aera_collab_institutional_context', { ...fresh, candidate_revision: 'md' }),
+      toolCallTurn('f7', 'aera_collab_institutional_context', { ...fresh, candidate_working_line_id: ids.lines.root as string }),
+      toolCallTurn('f8', 'aera_collab_institutional_context', { ...fresh, candidate_revision: 'abcdef0123456', candidate_working_line_id: ids.lines.root as string }),
+      toolCallTurn('f9', 'aera_collab_institutional_context', { ...fresh, base_revision: 'not a revision' }),
       textTurn('TEST DOUBLE: fresh reviewer sequence complete.'),
     ])
     const ctx = await runtimeFor(service, adapter)
     const agent = ctx.agentLoop.create(SessionId('factory-context-fresh-reviewer'), { provider: 'scripted-test', model: 'TEST-scripted-double' })
     agent.followup(createUserMessage({ content: [{ type: 'text', text: `Review the candidate of ${TARGET}, Pass A.` }], source: { kind: 'user' } }))
     await agent.whenIdle()
-    expect(adapter.requests).toHaveLength(7)
+    expect(adapter.requests).toHaveLength(10)
 
     const passA = toolResult(adapter.requests, 'f2')
     expect(passA.isError).toBe(false)
@@ -487,6 +490,18 @@ describe('(5) a fresh REVIEWER Pass A call needs only role, repository, candidat
     expect(toolResult(adapter.requests, 'f5').text).toContain('CANDIDATE_LINE_NOT_FOUND')
     // PA-3: a candidate revision that is not revision-shaped is refused.
     expect(toolResult(adapter.requests, 'f6').text).toContain('REVIEW_CANDIDATE_REQUIRED')
+    // R2-1 (CD-18): an existing line id that carries no checkpoint at the candidate revision is refused.
+    const notAtRevision = toolResult(adapter.requests, 'f7')
+    expect(notAtRevision.isError).toBe(true)
+    expect(notAtRevision.text).toContain('CANDIDATE_LINE_NOT_AT_REVISION')
+    // R2-1: with an uncheckpointed revision, a line id never opens a packet, and the refusal invites none.
+    const uncheckpointed = toolResult(adapter.requests, 'f8')
+    expect(uncheckpointed.isError).toBe(true)
+    expect(uncheckpointed.text).toContain('IMPLEMENTER_SET_REQUIRED')
+    expect(uncheckpointed.text).not.toMatch(/no line id given/i)
+    for (const marker of IMPLEMENTER_MARKERS) expect(uncheckpointed.text).not.toContain(marker)
+    // R2-5: the base revision is revision-shaped too.
+    expect(toolResult(adapter.requests, 'f9').text).toContain('REVIEW_CANDIDATE_REQUIRED')
 
     writeFreshAgentOutput('native-reviewer-pass-a-tool-output.json', stable(packet))
     const out = process.env['AERA_FRESH_AGENT_OUT']
