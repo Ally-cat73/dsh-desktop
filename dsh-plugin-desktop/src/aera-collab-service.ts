@@ -84,6 +84,7 @@ import {
 import {
   INSTITUTIONAL_FACT_CLASSES,
   assessPacketState,
+  isAgentContextRole,
   isAgentInstitutionalContextV1,
   type AgentContextRole,
   type AgentInstitutionalContextV1,
@@ -437,7 +438,7 @@ export class CollabWorkspaceService {
     const record = this.requireStore().listWorkOrders()
       .find(order => order.workOrderId === this.agentWorkOrderId)
     if (record === undefined) return undefined
-    const packet = await this.agentContextPacket()
+    const countsLine = this.institutionalCountsLine(record.workOrderId)
     const { repositories } = resolveWorkOrderRepositories(this.requireStore(), record.workOrderId)
     const repositoryLines = repositories.length === 0
       ? ['Repository bindings: none recorded for this Work Order. Do not infer a repository from the workspace; ask for a bounded resolution.']
@@ -464,10 +465,51 @@ export class CollabWorkspaceService {
       `Recorded progress events: ${this.requireStore().listEvents().filter(event =>
         !isUnattributedChange(event.attribution)
         && event.attribution.workOrderId === record.workOrderId).length}`,
-      `Context: ${packet.currentCanonicalState.length} current-state item(s), ${packet.governingDecisions.length} governing decision(s), ${packet.knownResiduals.length} unresolved item(s).`,
+      ...(countsLine === undefined ? [] : [countsLine]),
       ...repositoryLines,
       'Institutional records (decisions incl. superseded, typed evidence, Working Lines, checkpoints, receipts): call aera_collab_institutional_context with your role.',
     ].join('\n')
+  }
+
+  /**
+   * CD-14: the snapshot's count line, derived from the role's
+   * `compileAgentInstitutionalContext` packet (never the legacy
+   * `agentContextPacket`, whose governing list includes superseded decisions
+   * and whose residuals omit open breaks). The role is the configured agent
+   * role when it is an agent-context role, else IMPLEMENTER. Counted:
+   * CURRENT_DECISION items; GOVERNING_DOCUMENT items not marked
+   * `current: false`; SUPERSEDED_DECISION records (included + capped); open
+   * BREAK_REPAIR items for roles entitled to them; stated absences.
+   * `undefined` — the line is omitted — when the compile fails.
+   */
+  private institutionalCountsLine(workOrderId: string): string | undefined {
+    const configured = this.config.agentRole
+    const role: AgentContextRole = configured !== undefined && isAgentContextRole(configured) ? configured : 'IMPLEMENTER'
+    let packet: AgentInstitutionalContextV1
+    try {
+      packet = compileAgentInstitutionalContext({
+        store: this.requireStore(),
+        workOrderId,
+        role,
+        navigator: this.mergedNavigator(),
+        ...(this.hooks.now === undefined ? {} : { now: this.hooks.now }),
+      })
+    } catch {
+      return undefined
+    }
+    const count = (factClass: InstitutionalFactClass, keep: (item: AgentInstitutionalContextV1['items'][number]) => boolean = () => true): number =>
+      packet.items.filter(item => item.factClass === factClass && keep(item)).length
+    const supersededBound = packet.bounds.find(bound => bound.factClass === 'SUPERSEDED_DECISION')
+    const superseded = supersededBound === undefined ? count('SUPERSEDED_DECISION') : supersededBound.included + supersededBound.omitted
+    const breakEntitled = role === 'IMPLEMENTER' || role === 'INCIDENT_RESPONDER'
+    const parts = [
+      `${count('CURRENT_DECISION')} current decision(s)`,
+      `${count('GOVERNING_DOCUMENT', item => item.current !== false)} current governing document(s)`,
+      `${superseded} superseded or revoked decision(s)`,
+      ...(breakEntitled ? [`${count('BREAK_REPAIR')} open break(s)`] : []),
+      `${packet.absences.length} stated absence(s)`,
+    ]
+    return `Counts from aera_collab_institutional_context (role ${role}): ${parts.join(', ')}.`
   }
 
   /**

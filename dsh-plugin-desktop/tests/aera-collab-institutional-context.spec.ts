@@ -310,6 +310,27 @@ describe('(1)+(4) a joined IMPLEMENTER agent receives exactly the stack projecti
   })
 })
 
+describe('CD-14 the snapshot counts come from in-force records', () => {
+  it('a superseded ADR is not counted as governing, and the open break is shown', async () => {
+    const { ids, storeDir } = freshFixture()
+    const service = serviceFor(storeDir, { name: 'Fixture Implementer', role: 'IMPLEMENTER', delegationId: 'delegation-fixture-implementer' })
+    await service.openAgentWorkContext(TARGET)
+    const snapshot = await service.agentInstitutionalContext() ?? ''
+    const packet = await service.agentInstitutionalContextPacket({ role: 'IMPLEMENTER' })
+    const governing = packet.items.filter(item => item.factClass === 'GOVERNING_DOCUMENT')
+    // The fixture graph holds the superseded ADR; it is in the packet, marked not current.
+    expect(governing.find(item => item.itemId === 'GOVERNING_DOCUMENT:ewg:architecture_decision:ADR-FIXTURE-GRAPH-EVENTS')?.current).toBe(false)
+    expect(governing).toHaveLength(4)
+    expect(packet.items.map(item => item.itemId)).toContain(`BREAK_REPAIR:${ids.events.openBreak}`)
+    expect(snapshot).toContain('Counts from aera_collab_institutional_context (role IMPLEMENTER): '
+      + `1 current decision(s), 3 current governing document(s), 2 superseded or revoked decision(s), 1 open break(s), ${packet.absences.length} stated absence(s).`)
+    // No legacy count line survives.
+    expect(snapshot).not.toContain('governing decision(s)')
+    expect(snapshot).not.toContain('unresolved item(s)')
+    await service.closeAgentWorkContext()
+  })
+})
+
 describe('CD-12 an unrecorded authority class is never printed', () => {
   it('a minimal order (no authority class, no state record) prints no Authority line and its effective source', async () => {
     const { storeDir } = freshFixture()
