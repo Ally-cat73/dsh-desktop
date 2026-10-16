@@ -130,6 +130,37 @@ describe('pi-ai active Responses streamed arguments', () => {
     const missing = await consume(eventsFor(raw, [raw], { ...item, call_id: '' }, { ...item, call_id: '', arguments: raw }))
     expect(missing.message.content[0]).toMatchObject({ id: '|fc_fixture', name: 'fixture' })
   })
+  for (const [label, initialIds, finalIds, expectedId] of [
+    ['opaque call ID', { call_id: 'call|opaque', id: 'fc_X' }, { call_id: '', id: '' }, 'call|opaque|fc_X'],
+    ['opaque item ID', { call_id: 'call_X', id: 'fc|opaque' }, { call_id: '', id: '' }, 'call_X|fc|opaque'],
+    ['both opaque IDs', { call_id: 'call|one|two', id: 'fc|three|four' }, { call_id: '', id: '' }, 'call|one|two|fc|three|four'],
+    ['late call ID', { call_id: '', id: 'fc|opaque' }, { call_id: 'late|call', id: '' }, 'late|call|fc|opaque'],
+    ['late item ID', { call_id: 'call|opaque', id: '' }, { call_id: '', id: 'late|item' }, 'call|opaque|late|item'],
+    ['partial identity update', { call_id: 'call|old', id: 'fc|retained' }, { call_id: 'call|new', id: '' }, 'call|new|fc|retained'],
+  ] as const) {
+    it(`preserves opaque identity components across ${label}`, async () => {
+      const result = await consume(eventsFor('{}', ['{', '}'], { ...item, ...initialIds },
+        { ...item, ...finalIds, name: '', arguments: '{}' }))
+      expect(result.message.content[0]).toMatchObject({ id: expectedId, name: 'fixture', arguments: {} })
+    })
+  }
+  it('preserves the independent reviewer opaque-ID counterexample through public provider and installed Harness consumer', async () => {
+    const initial = { ...item, call_id: 'call|opaque', id: 'fc_X' }
+    const final = { ...item, call_id: '', id: '', name: '', arguments: '{}' }
+    const wire = eventsFor('{}', ['{', '}'], initial, final)
+    mockWire(wire)
+    const providerEvents: AssistantMessageEvent[] = []
+    for await (const event of streamResponses(model, { messages: [] }, { apiKey: 'fixture', maxRetries: 0 } as StreamOptions)) providerEvents.push(event)
+    mockWire(wire)
+    const harnessChunks = []
+    for await (const chunk of fixtureAdapter().stream({ provider: model.provider, model: model.id, messages: [] })) harnessChunks.push(chunk)
+    const providerCall = providerEvents.find(event => event.type === 'toolcall_end')
+    const harnessCall = harnessChunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')
+    const actual = { provider: providerCall?.type === 'toolcall_end' ? providerCall.toolCall.id : undefined,
+      harness: harnessCall?.type === 'block-end' && harnessCall.block.type === 'tool-call' ? harnessCall.block.id : undefined }
+    console.log(JSON.stringify({ FIXTURE: 'R2_OPAQUE_ID', EXPECTED: 'call|opaque|fc_X', ...actual }))
+    expect(actual).toEqual({ provider: 'call|opaque|fc_X', harness: 'call|opaque|fc_X' })
+  })
   it('leaves an empty or whitespace name for the preserved agent-loop refusal guard', async () => {
     for (const name of ['', '  ']) {
       const blank = { ...item, name }

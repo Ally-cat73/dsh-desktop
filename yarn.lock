@@ -4986,7 +4986,7 @@ __metadata:
 
 "@earendil-works/pi-ai@patch:@earendil-works/pi-ai@npm%3A0.82.1#./patches/earendil-works-pi-ai@0.82.1.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.82.1
-  resolution: "@earendil-works/pi-ai@patch:@earendil-works/pi-ai@npm%3A0.82.1#./patches/earendil-works-pi-ai@0.82.1.patch::version=0.82.1&hash=de75dc&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@earendil-works/pi-ai@patch:@earendil-works/pi-ai@npm%3A0.82.1#./patches/earendil-works-pi-ai@0.82.1.patch::version=0.82.1&hash=842a16&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@anthropic-ai/sdk": "npm:0.91.1"
     "@aws-sdk/client-bedrock-runtime": "npm:3.1048.0"
@@ -5001,7 +5001,7 @@ __metadata:
     typebox: "npm:1.1.38"
   bin:
     pi-ai: dist/cli.js
-  checksum: 10c0/2f3c02649975f94ccd2bd3d7b0bb46423e0c625cdf366b28cb0e2eb59c908d41702852399f9a4734dca89162ec20f4f71e6c6444f938f17085e3963f2b6df72b
+  checksum: 10c0/554c7c2a83ccba411840ed92d46cd60f1b9ae0394cdb41ed58dc5696668c7067adae475e6935ca5df01f9db720a99122fc4e554cd32d23d669b726a64f8db306
   languageName: node
   linkType: hard
 

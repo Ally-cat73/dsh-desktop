@@ -17,7 +17,16 @@ diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-sha
                  name: item.name,
                  arguments: {},
                  partialJson: item.arguments || "",
-@@ -408,6 +407,10 @@
+@@ -354,6 +353,8 @@
+                 type: "toolCall",
+                 block,
+                 contentIndex: output.content.length - 1,
++                callId: item.call_id || "",
++                itemId: item.id || "",
+             };
+             outputSlots.set(outputIndex, slot);
+             stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+@@ -408,6 +409,10 @@
          }
      };
      const finalizeResponse = (response) => {
@@ -28,7 +37,7 @@ diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-sha
          sawTerminalResponseEvent = true;
          backfillReasoningSignatures(response.output ?? []);
          if (response?.id) {
-@@ -513,7 +516,6 @@
+@@ -513,7 +518,6 @@
              if (!slot || slot.block.partialJson === undefined)
                  continue;
              slot.block.partialJson += event.delta;
@@ -36,7 +45,7 @@ diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-sha
              pushToolCallDelta(slot, event.delta);
          }
          else if (event.type === "response.function_call_arguments.done") {
-@@ -522,7 +524,6 @@
+@@ -522,7 +526,6 @@
                  continue;
              const previousPartialJson = slot.block.partialJson;
              slot.block.partialJson = event.arguments;
@@ -44,7 +53,7 @@ diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-sha
              if (event.arguments.startsWith(previousPartialJson)) {
                  const delta = event.arguments.slice(previousPartialJson.length);
                  if (delta.length > 0)
-@@ -572,7 +573,15 @@
+@@ -572,7 +575,14 @@
              else if (item.type === "function_call" &&
                  slot?.type === "toolCall" &&
                  slot.block.partialJson !== undefined) {
@@ -54,8 +63,7 @@ diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-sha
 +                if (typeof item.arguments !== "string")
 +                    throw new Error("OpenAI Responses function call completed without argument JSON");
 +                slot.block.arguments = JSON.parse(item.arguments);
-+                const [callId, itemId] = slot.block.id.split("|");
-+                slot.block.id = `${item.call_id || callId}|${item.id || itemId}`;
++                slot.block.id = `${item.call_id || slot.callId}|${item.id || slot.itemId}`;
 +                if (item.name)
 +                    slot.block.name = item.name;
                  // Finalize in-place and strip the scratch buffer so replay only
