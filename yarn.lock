@@ -4963,7 +4963,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@earendil-works/pi-ai@npm:^0.82.1":
+"@earendil-works/pi-ai@npm:0.82.1":
   version: 0.82.1
   resolution: "@earendil-works/pi-ai@npm:0.82.1"
   dependencies:
@@ -4981,6 +4981,27 @@ __metadata:
   bin:
     pi-ai: dist/cli.js
   checksum: 10c0/dbd1b3f37434f86db99af50e4d1f44dbfcbf82b1a60be1d2da64363999179ec53c3eb4b0b380d5172fa60e7382317d4264c617b55435dc7559ee415f27a1aad3
+  languageName: node
+  linkType: hard
+
+"@earendil-works/pi-ai@patch:@earendil-works/pi-ai@npm%3A0.82.1#./patches/earendil-works-pi-ai@0.82.1.patch::locator=deepseek-harness-desktop%40workspace%3A.":
+  version: 0.82.1
+  resolution: "@earendil-works/pi-ai@patch:@earendil-works/pi-ai@npm%3A0.82.1#./patches/earendil-works-pi-ai@0.82.1.patch::version=0.82.1&hash=842a16&locator=deepseek-harness-desktop%40workspace%3A."
+  dependencies:
+    "@anthropic-ai/sdk": "npm:0.91.1"
+    "@aws-sdk/client-bedrock-runtime": "npm:3.1048.0"
+    "@google/genai": "npm:1.52.0"
+    "@mistralai/mistralai": "npm:2.2.6"
+    "@opentelemetry/api": "npm:1.9.0"
+    "@smithy/node-http-handler": "npm:4.7.3"
+    http-proxy-agent: "npm:7.0.2"
+    https-proxy-agent: "npm:7.0.6"
+    openai: "npm:6.26.0"
+    partial-json: "npm:0.1.7"
+    typebox: "npm:1.1.38"
+  bin:
+    pi-ai: dist/cli.js
+  checksum: 10c0/554c7c2a83ccba411840ed92d46cd60f1b9ae0394cdb41ed58dc5696668c7067adae475e6935ca5df01f9db720a99122fc4e554cd32d23d669b726a64f8db306
   languageName: node
   linkType: hard
 
