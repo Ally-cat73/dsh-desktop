@@ -1,0 +1,63 @@
+diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
+--- a/dist/api/openai-responses-shared.js
++++ b/dist/api/openai-responses-shared.js
+@@ -1,6 +1,5 @@
+ import { calculateCost } from "../models.js";
+ import { shortHash } from "../utils/hash.js";
+-import { parseStreamingJson } from "../utils/json-parse.js";
+ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+ import { appendGrammarToolInputJsonDelta, getGrammarToolInput, resolveGrammarConstrainedSampling, resolveJsonSchemaStrictSampling, } from "./constrained-sampling.js";
+ import { transformMessages } from "./transform-messages.js";
+@@ -344,7 +343,7 @@
+         if (item.type === "function_call") {
+             const block = {
+                 type: "toolCall",
+-                id: `${item.call_id}|${item.id}`,
++                id: `${item.call_id || ""}|${item.id || ""}`,
+                 name: item.name,
+                 arguments: {},
+                 partialJson: item.arguments || "",
+@@ -408,6 +407,10 @@
+         }
+     };
+     const finalizeResponse = (response) => {
++        for (const slot of outputSlots.values()) {
++            if (slot.type === "toolCall" && slot.block.partialJson !== undefined)
++                throw new Error("OpenAI Responses stream ended before function call argument validation");
++        }
+         sawTerminalResponseEvent = true;
+         backfillReasoningSignatures(response.output ?? []);
+         if (response?.id) {
+@@ -513,7 +516,6 @@
+             if (!slot || slot.block.partialJson === undefined)
+                 continue;
+             slot.block.partialJson += event.delta;
+-            slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+             pushToolCallDelta(slot, event.delta);
+         }
+         else if (event.type === "response.function_call_arguments.done") {
+@@ -522,7 +524,6 @@
+                 continue;
+             const previousPartialJson = slot.block.partialJson;
+             slot.block.partialJson = event.arguments;
+-            slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+             if (event.arguments.startsWith(previousPartialJson)) {
+                 const delta = event.arguments.slice(previousPartialJson.length);
+                 if (delta.length > 0)
+@@ -572,7 +573,15 @@
+             else if (item.type === "function_call" &&
+                 slot?.type === "toolCall" &&
+                 slot.block.partialJson !== undefined) {
+-                slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
++                // Partial argument objects are not consumed by the Harness bridge.
++                // Validate once, at the authoritative completed item boundary.
++                if (typeof item.arguments !== "string")
++                    throw new Error("OpenAI Responses function call completed without argument JSON");
++                slot.block.arguments = JSON.parse(item.arguments);
++                const [callId, itemId] = slot.block.id.split("|");
++                slot.block.id = `${item.call_id || callId}|${item.id || itemId}`;
++                if (item.name)
++                    slot.block.name = item.name;
+                 // Finalize in-place and strip the scratch buffer so replay only
+                 // carries parsed arguments.
+                 delete slot.block.partialJson;
