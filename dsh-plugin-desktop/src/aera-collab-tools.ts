@@ -205,6 +205,17 @@ export function apply(ctx: Context, config: Config = {}): void {
       ? await service.agentOrientationContext()
       : await service.agentInstitutionalContext()
     if (text === undefined) return decision
+    // Recompute above on every owner turn, but do not append identical context
+    // while the last snapshot is still on THIS Session's model-visible surface.
+    // Consult derived history rather than a process cache: compaction, a cold
+    // resume, or another Session must never suppress missing context. Changed
+    // snapshots remain ordinary history; this does not prune past evidence.
+    const previous = [...agent.session.deriveMessages(), ...decision.messages]
+      .findLast(message => message.source.kind === 'plugin'
+        && message.source.plugin === name && message.source.form === 'snapshot')
+    if (previous?.content.length === 1
+      && previous.content[0]?.type === 'text'
+      && previous.content[0].text === text) return decision
     return {
       kind: 'enter',
       messages: [
