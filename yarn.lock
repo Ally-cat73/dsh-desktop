@@ -2990,7 +2990,7 @@ __metadata:
 
 "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::locator=deepseek-harness-desktop%40workspace%3A.":
   version: 0.1.1-rc.2
-  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=b68874&locator=deepseek-harness-desktop%40workspace%3A."
+  resolution: "@deepseek-ai/dsh-llm-pi-ai@patch:@deepseek-ai/dsh-llm-pi-ai@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-llm-pi-ai-npm-0.1.1-rc.2-aera-policy-provenance.patch::version=0.1.1-rc.2&hash=f583fb&locator=deepseek-harness-desktop%40workspace%3A."
   dependencies:
     "@deepseek-ai/schemastery": "npm:^3.18.1"
     "@earendil-works/pi-ai": "npm:^0.82.1"
@@ -3004,7 +3004,7 @@ __metadata:
     "@deepseek-ai/dsh-llm": ^0.1.1-rc.2
     "@deepseek-ai/dsh-settings": ^0.1.1-rc.2
     "@deepseek-ai/dsh-timeout": ^0.1.1-rc.2
-  checksum: 10c0/77beb0a716210722c6f61f1840d92e5230ae5769bca5fb236def44e54f164de4cb0078f837d06c4e0f5dcc4639ea47b5d4dd85efc12be4833123031f12c4c245
+  checksum: 10c0/df98a05bdb33799f82a9342d2fdd313eca8da2796c8a9de985334750d1d5661353f534621897704f887f6fa02c3b7bcdb90a9a19965281ca187d53928c4aaa06
   languageName: node
   linkType: hard
 

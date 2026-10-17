@@ -209,17 +209,21 @@ index 0000000..aera001
 +	return operation;
 +}
 diff --git a/lib/index.js b/lib/index.js
-index 6e7a97d..aera002 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -13,5 +13,6 @@ import { homedir } from "node:os";
+@@ -12,6 +12,8 @@
+ import { homedir } from "node:os";
  import { access } from "node:fs/promises";
  import { resolve } from "node:path";
 +import { ensureAeraGatewaySessionReady, withAeraExecutionSession, withAeraPolicyProvenance } from "./aera-policy-provenance.js";
++import { settleStreamDemand, detachStreamReturn } from "./aera-stream-demand.js";
  //#region lib/types/replay.js
  /**
  * Durable pi-ai replay metadata and assistant-history reconstruction.
-@@ -1266,3 +1267,7 @@ function classifyPiAiError(message) {
+@@ -1263,6 +1265,10 @@
+ 	};
+ }
+ function classifyPiAiError(message) {
 +	if (message.includes("SENTINEL_DENIED") || message.includes("SENTINEL_OUTPUT_DENIED")) return "GOVERNANCE_POLICY";
 +	if (message.includes("SENTINEL_POLICY_UNAVAILABLE") || message.includes("GOVERNANCE_EVALUATION_UNAVAILABLE") || message.includes("EXECUTION_LINEAGE_RECONCILIATION_REQUIRED")) return "GOVERNANCE_UNAVAILABLE";
 +	if (message.includes("CURRENT_AUTHORITY_UNAVAILABLE") || message.includes("PROVIDER_EXECUTION_FORBIDDEN")) return "AUTHORITY";
@@ -227,8 +231,15 @@ index 6e7a97d..aera002 100644
  	if (/\b(?:401|403)\b/.test(message)) return "AUTH";
  	if (isQuotaExceededError(message)) return QUOTA_EXCEEDED_CODE;
  	if (/\b429\b|rate.?limit/i.test(message)) return "RATE_LIMIT";
-@@ -1739,14 +1745,15 @@ var PiAiAdapter = class extends LlmAdapter {
- 				}, attachments, onReplayDegrade, profile.maxRequestImageBytes, {
+@@ -1716,6 +1722,7 @@
+ 			const upstream = options.signal === void 0 ? consumer.signal : AbortSignal.any([options.signal, consumer.signal]);
+ 			const streamIdleTimeoutMs = profile.streamIdleTimeoutMs;
+ 			const watchdog = __addDisposableResource(env_1, idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"), false);
++			let iteratorFailed = false;
+ 			try {
+ 				const containsImage = options.messages.some((message) => contentHasImage(message.content));
+ 				if (containsImage && !model.input.includes("image")) throw new LlmError(`pi-ai model "${model.id}" does not support image input`, "UNSUPPORTED_CONTENT");
+@@ -1735,20 +1742,25 @@
  					maxPixels: profile.requestImagePixelBudget,
  					maxBytes: profile.requestImageMaxBytes
  				});
@@ -244,3 +255,83 @@ index 6e7a97d..aera002 100644
  				}), model.contextWindow)[Symbol.asyncIterator]();
  				let exhausted = false;
  				try {
+ 					while (true) {
+-						const result = await watchdog.next(iterator);
+-						const timeout = timeoutOf(watchdog.signal, "LLM_STREAM_IDLE_TIMEOUT");
+-						if (timeout !== void 0) throw timeout;
++						const demand = await settleStreamDemand(watchdog, iterator);
++						if (demand.kind === "abort") throw demand.reason;
++						if (demand.kind === "error") {
++							iteratorFailed = true;
++							throw demand.error;
++						}
++						const result = demand.result;
+ 						if (result.done) {
+ 							exhausted = true;
+ 							return;
+@@ -1757,13 +1769,13 @@
+ 					}
+ 				} finally {
+ 					if (!exhausted) {
+-						consumer.abort("pi-ai stream consumer stopped");
+-						try {
+-							await iterator.return(void 0);
+-						} catch (_abortedSdkTeardown) {}
++						consumer.abort("pi-ai stream consumer stopped locally; remote transport state unknown");
++						detachStreamReturn(iterator);
+ 					}
+ 				}
+ 			} catch (error) {
++				// A selected iterator failure is not replaced by a later cancellation.
++				if (iteratorFailed) throw error;
+ 				if (timeoutOf(watchdog.signal, "LLM_STREAM_IDLE_TIMEOUT") !== void 0) throw new LlmError(`pi-ai stream idle timeout after ${streamIdleTimeoutMs}ms`, "TIMEOUT", { cause: error });
+ 				if (options.signal?.aborted) throw new LlmError("pi-ai request aborted by caller", "ABORTED", { cause: error });
+ 				throw error;
+diff --git a/lib/aera-stream-demand.js b/lib/aera-stream-demand.js
+new file mode 100644
+--- /dev/null
++++ b/lib/aera-stream-demand.js
+@@ -0,0 +1,43 @@
++/**
++ * One local terminal owner per translated demand. The existing watchdog owns
++ * the idle timer; wire keepalives cannot rearm it here. Settling only releases
++ * this caller: neither abort nor detached return proves remote termination.
++ */
++export function settleStreamDemand(watchdog, iterator) {
++	return new Promise((resolve) => {
++		const signal = watchdog.signal;
++		let settled = false;
++		const settle = (outcome) => {
++			if (settled) return;
++			settled = true;
++			signal.removeEventListener("abort", onAbort);
++			resolve(outcome);
++		};
++		const onAbort = () => settle({ kind: "abort", reason: signal.reason });
++		signal.addEventListener("abort", onAbort, { once: true });
++		if (signal.aborted) {
++			onAbort();
++			return;
++		}
++		try {
++			Promise.resolve(watchdog.next(iterator)).then(
++				(result) => settle({ kind: "result", result }),
++				(error) => settle({ kind: "error", error })
++			);
++		} catch (error) {
++			settle({ kind: "error", error });
++		}
++	});
++}
++
++/**
++ * Translator return can queue behind its ignored next, or await SDK teardown.
++ * Observe rejection without awaiting either. Diagnostic state is DETACHED,
++ * remote transport state UNKNOWN, even if return subsequently resolves.
++ * An abandoned source promise may remain pending; this is not leak elimination.
++ */
++export function detachStreamReturn(iterator) {
++	try {
++		Promise.resolve(iterator.return(void 0)).catch(() => {});
++	} catch (_synchronousTeardownError) {}
++}
