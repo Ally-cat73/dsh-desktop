@@ -395,50 +395,55 @@ export function apply(ctx: Context, config: Config = {}): void {
     },
   })), 'aera-collab-tools: working_state')
 
-  ctx.effect(() => ctx.tools.register(defineTool({
-    name: 'aera_collab_find_evidence',
-    description:
-      'Return the joined WorkContext\'s evidence references and unresolved residual findings, each with graph node id and recorded source locator. Pass node_id to list the evidence attached to one specific node instead. Requires a resolved WorkContext.',
-    parameters: {
-      node_id: { type: 'string', description: 'Optional graph node id; when given, returns the evidence attached to that node.' },
-    },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          workOrderId: { type: 'string', required: true },
-          evidence: { type: 'array', required: true, items: NODE_REF_ITEM },
-          unresolvedResiduals: { type: 'array', required: true, items: NODE_REF_ITEM },
-        },
+  // C6: this legacy surface already refuses every configured REVIEWER call.
+  // Do not send its schema to that role; typed institutional context retains
+  // the supported Pass A/Pass B evidence path and its existing isolation.
+  if (service.configuredAgentRole() !== 'REVIEWER') {
+    ctx.effect(() => ctx.tools.register(defineTool({
+      name: 'aera_collab_find_evidence',
+      description:
+        'Return the joined WorkContext\'s evidence references and unresolved residual findings, each with graph node id and recorded source locator. Pass node_id to list the evidence attached to one specific node instead. Requires a resolved WorkContext.',
+      parameters: {
+        node_id: { type: 'string', description: 'Optional graph node id; when given, returns the evidence attached to that node.' },
       },
-      render: renderJson,
-    },
-    async execute(args) {
-      // The legacy evidence list flattens implementer narrative (seam proposal
-      // D3); a REVIEWER-configured agent reads typed evidence through the
-      // role-shaped packet instead, which keeps Pass A isolation.
-      if (service.configuredAgentRole() === 'REVIEWER') {
-        throw new Error('REVIEWER_USE_INSTITUTIONAL_CONTEXT: A REVIEWER-configured agent reads evidence through aera_collab_institutional_context with role REVIEWER and the exact candidate.')
-      }
-      if (args.node_id !== undefined && args.node_id.trim() !== '') {
-        const nodeId = args.node_id
-        const evidence = await honest(() => service.agentFindEvidence(nodeId))
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            workOrderId: { type: 'string', required: true },
+            evidence: { type: 'array', required: true, items: NODE_REF_ITEM },
+            unresolvedResiduals: { type: 'array', required: true, items: NODE_REF_ITEM },
+          },
+        },
+        render: renderJson,
+      },
+      async execute(args) {
+        // The legacy evidence list flattens implementer narrative (seam proposal
+        // D3); a REVIEWER-configured agent reads typed evidence through the
+        // role-shaped packet instead, which keeps Pass A isolation.
+        if (service.configuredAgentRole() === 'REVIEWER') {
+          throw new Error('REVIEWER_USE_INSTITUTIONAL_CONTEXT: A REVIEWER-configured agent reads evidence through aera_collab_institutional_context with role REVIEWER and the exact candidate.')
+        }
+        if (args.node_id !== undefined && args.node_id.trim() !== '') {
+          const nodeId = args.node_id
+          const evidence = await honest(() => service.agentFindEvidence(nodeId))
+          const packet = await honest(() => service.agentContextPacket())
+          return {
+            workOrderId: packet.workOrderId,
+            evidence: evidence.map(({ kind: _kind, ...ref }) => ref),
+            unresolvedResiduals: packet.knownResiduals,
+          }
+        }
         const packet = await honest(() => service.agentContextPacket())
         return {
           workOrderId: packet.workOrderId,
-          evidence: evidence.map(({ kind: _kind, ...ref }) => ref),
+          evidence: packet.evidence,
           unresolvedResiduals: packet.knownResiduals,
         }
-      }
-      const packet = await honest(() => service.agentContextPacket())
-      return {
-        workOrderId: packet.workOrderId,
-        evidence: packet.evidence,
-        unresolvedResiduals: packet.knownResiduals,
-      }
-    },
-  })), 'aera-collab-tools: find_evidence')
+      },
+    })), 'aera-collab-tools: find_evidence')
+  }
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'aera_collab_record',

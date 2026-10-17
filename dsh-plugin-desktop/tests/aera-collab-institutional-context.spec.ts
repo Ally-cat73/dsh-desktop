@@ -16,7 +16,7 @@
  *     and the JSON the model receives deep-equals
  *     `compileAgentInstitutionalContext` over the same store and navigator.
  * (2) A REVIEWER-configured agent gets ROLE_NOT_PERMITTED for role
- *     IMPLEMENTER and REVIEWER_USE_INSTITUTIONAL_CONTEXT from find_evidence.
+ *     IMPLEMENTER and no legacy find_evidence exposure.
  * (3) PASS_B is refused without frozen Pass A findings.
  * (4) The tool performs no store write: per-file sha256 is identical before
  *     and after the call. The session the join opens is measured separately.
@@ -364,7 +364,7 @@ describe('CD-12 an unrecorded authority class is never printed', () => {
 })
 
 describe('(2)+(3) a REVIEWER-configured agent cannot widen its own input', () => {
-  it('ROLE_NOT_PERMITTED for IMPLEMENTER, REVIEWER_USE_INSTITUTIONAL_CONTEXT from find_evidence, PASS_B refused without frozen findings', async () => {
+  it('ROLE_NOT_PERMITTED for IMPLEMENTER, no legacy find_evidence exposure, PASS_B refused without frozen findings', async () => {
     const { ids, storeDir } = freshFixture()
     const service = serviceFor(storeDir, { name: 'Fixture Reviewer', role: 'REVIEWER', delegationId: 'delegation-fixture-reviewer' })
     const candidate = {
@@ -394,7 +394,7 @@ describe('(2)+(3) a REVIEWER-configured agent cannot widen its own input', () =>
 
     const legacy = toolResult(adapter.requests, 'r3')
     expect(legacy.isError).toBe(true)
-    expect(legacy.text).toContain('REVIEWER_USE_INSTITUTIONAL_CONTEXT')
+    expect(legacy.text).toContain('unknown tool')
     expect(legacy.text).not.toContain('nodeId')
 
     const passB = toolResult(adapter.requests, 'r4')
@@ -511,4 +511,43 @@ describe('(5) a fresh REVIEWER Pass A call needs only role, repository, candidat
       for (const marker of IMPLEMENTER_MARKERS) expect(written).not.toContain(marker)
     }
   }, 60_000)
+})
+
+/** C6 measures the real model request, including schemas, rather than plugin counts. */
+describe('C6 configured-role request surface', () => {
+  for (const role of ['ORCHESTRATOR', 'IMPLEMENTER', 'REVIEWER', 'NAVIGATOR', 'ARCHITECT', 'RESEARCHER', 'INCIDENT_RESPONDER']) {
+    it(`captures the ${role} collaboration surface at the model seam`, async () => {
+      const { storeDir } = freshFixture()
+      const service = serviceFor(storeDir, { name: `Fixture ${role}`, role, delegationId: `delegation-fixture-${role.toLowerCase()}` })
+      const adapter = new ScriptedTestModelDouble([textTurn('TEST DOUBLE: role census complete.')])
+      const ctx = await runtimeFor(service, adapter)
+      try {
+        const agent = ctx.agentLoop.create(SessionId(`c6-${role.toLowerCase()}`), { provider: 'scripted-test', model: 'TEST-scripted-double' })
+        agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Identify the available collaboration surface.' }], source: { kind: 'user' } }))
+        await agent.whenIdle()
+        expect(adapter.requests).toHaveLength(1)
+        const request = adapter.requests[0]
+        if (!request) throw new Error('C6 fixture produced no model request')
+        const tools = request.tools ?? []
+        expect(tools.some(tool => tool.name === 'aera_collab_institutional_context')).toBe(true)
+        expect(tools.map(tool => tool.name).sort()).toEqual([
+          'aera_collab_resolve_work_context', 'aera_collab_governing_decisions',
+          'aera_collab_institutional_context', 'aera_collab_working_state',
+          'aera_collab_record', 'aera_collab_repository_resource',
+          ...(role === 'REVIEWER' ? [] : ['aera_collab_find_evidence']),
+        ].sort())
+        expect(tools.some(tool => tool.name === 'aera_collab_find_evidence')).toBe(role !== 'REVIEWER')
+        const out = process.env['AERA_C6_CENSUS_OUT']
+        if (out) {
+          mkdirSync(out, { recursive: true })
+          writeFileSync(join(out, `${role}.json`), `${JSON.stringify({
+            role, composition: 'real Cordis runtime plus desktop collaboration tools; scripted model only; no standard preset plugins',
+            tools, toolCount: tools.length, schemaBytes: Buffer.byteLength(JSON.stringify(tools)),
+            system: request.system ?? '', systemBytes: Buffer.byteLength(request.system ?? ''),
+            institutionalSnapshot: snapshotText(request) ?? '',
+          }, null, 2)}\n`)
+        }
+      } finally { await ctx.fiber.dispose() }
+    }, 60_000)
+  }
 })
