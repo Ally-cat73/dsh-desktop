@@ -1,0 +1,45 @@
+diff --git a/lib/index.js b/lib/index.js
+index 0c90ecca7a55e24f52cad72e0f85a048e3810ef7..3b0b505abd2c77669274c44dbc2163bb103d2fd0 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -88,14 +88,25 @@ const ENV_OVERRIDES = {
+ const DEFAULT_GRACE_MS = 3e3;
+ /** Default per-stream spill cap (the `maxSpillBytes` config). */
+ const DEFAULT_MAX_SPILL_BYTES = 64 * 1024 * 1024;
++/** Concise collector facts, separate from the command's exit/cancellation outcome. */
++function recoverySummary(read) {
++    const c = read.capture;
++    if (c === void 0)
++        return void 0;
++    const counts = `retained ${c.capturedBytes}/${c.observedBytes ?? c.originalBytes} observed bytes; omitted ${c.omittedBytes}${c.originalBytes === 'UNKNOWN' ? '; original stream size UNKNOWN' : ''}`;
++    const artifact = c.artifactAvailability === 'AVAILABLE' ? 'artifact readable at collection; temporary lifetime not guaranteed' : c.artifactAvailability === 'NOT_NEEDED' ? 'inline complete' : `artifact UNAVAILABLE${c.reason ? ` (${c.reason})` : ''}`;
++    const failure = c.failure ? `; capture ${c.failure.stage} failed (${c.failure.code})` : '';
++    return `capture ${c.state}; ${counts}; ${artifact}${failure}`;
++}
+ /** Project a settled collect-mode reader into the final CollectedOutput shape. */
+ function finalOutput(reader) {
+-	const read = reader.readFrom(0);
+-	return {
+-		text: read.text,
+-		truncated: read.lossy,
+-		...read.spillPath !== void 0 ? { spillPath: read.spillPath } : {}
+-	};
++    const read = reader.readFrom(0);
++    return {
++        text: read.text,
++        truncated: read.lossy,
++        ...(recoverySummary(read) !== void 0 ? { recovery: recoverySummary(read) } : {}),
++        ...read.spillPath !== void 0 ? { spillPath: read.spillPath } : {}
++    };
+ }
+ function assertPositiveFinite(name, value) {
+ 	if (!Number.isFinite(value) || value <= 0) throw new Error(`bash-local: ${name} must be a positive finite number`);
+@@ -304,6 +315,8 @@ var LocalBashExecutor = class LocalBashExecutor extends ShellExecutor {
+ 				return {
+ 					delta: out.text + (errText.length > 0 ? `${separator}[stderr]\n${errText}` : ""),
+ 					lossy: out.lossy || err.lossy,
++                    ...(out.lossy||out.capture?.state!=='COMPLETE'?{stdoutRecovery:recoverySummary(out)}:{}),
++                    ...(err.lossy||err.capture?.state!=='COMPLETE'?{stderrRecovery:recoverySummary(err)}:{}),
+ 					...out.spillPath !== void 0 ? { stdoutSpillPath: out.spillPath } : {},
+ 					...err.spillPath !== void 0 ? { stderrSpillPath: err.spillPath } : {}
+ 				};

@@ -1,0 +1,32 @@
+diff --git a/lib/types/types.d.ts b/lib/types/types.d.ts
+index 7a3215f759b380db90e0702483dd28a06615e726..513388600d3bd343d9206a57994343f6d710e9ec 100644
+--- a/lib/types/types.d.ts
++++ b/lib/types/types.d.ts
+@@ -15,6 +15,8 @@ export type DshEnvironmentKey = `${typeof DSH_ENV_PREFIX}${string}`;
+ export type DshEnvironment = Readonly<Record<DshEnvironmentKey, string>>;
+ /** One captured stream: the (possibly truncated) text plus recovery info. */
+ export interface CollectedOutput {
++    /** Concise recovery facts supplied by the collector-backed shell, not execution status. */
++    recovery?: string;
+     /** Collected text — the TAIL of the stream when truncated. */
+     text: string;
+     /** True when bytes were dropped from `text`. */
+@@ -109,6 +111,18 @@ export interface SubprocessOutcome {
+ }
+ /** One incremental {@link SubprocessOutputReader.readFrom} read. */
+ export interface SubprocessOutputRead {
++    /** Observed raw stream bytes; availability is checked when this read occurs. */
++    capture?: {
++        state: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
++        observedBytes: number;
++        originalBytes: number | 'UNKNOWN';
++        capturedBytes: number;
++        omittedBytes: number | 'UNKNOWN';
++        artifactAvailability: 'AVAILABLE' | 'UNAVAILABLE' | 'NOT_NEEDED';
++        artifactReference?: string;
++        reason?: string;
++        failure?: { stage: 'CREATE' | 'WRITE' | 'FINALIZE'; code: string };
++    };
+     /** Stream text from the requested offset (the whole retained tail when lossy). */
+     text: string;
+     /** Whole-stream offset to resume from on the next read. */

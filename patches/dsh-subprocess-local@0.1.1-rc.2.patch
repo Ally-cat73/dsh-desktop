@@ -1,7 +1,13 @@
 diff --git a/lib/index.js b/lib/index.js
-index 698efc9357d249cf03adf82a9962499f9455fe66..f9869255f7a47e5c89ea72da46046e4863758024 100644
+index 698efc9357d249cf03adf82a9962499f9455fe66..54f4119e78d9f1f4247e7af76b0c49744a64a467 100644
 --- a/lib/index.js
 +++ b/lib/index.js
+@@ -1,4 +1,4 @@
+-import { closeSync, constants, mkdtempSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from "node:fs";
++import { accessSync, fstatSync, lstatSync, closeSync, constants, mkdtempSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from "node:fs";
+ import { access, stat } from "node:fs/promises";
+ import { delimiter, extname, isAbsolute, join, resolve } from "node:path";
+ import * as nodePty from "node-pty";
 @@ -106,7 +106,10 @@ function taskkillTree(pid, force) {
  		String(pid),
  		"/T",
@@ -14,7 +20,305 @@ index 698efc9357d249cf03adf82a9962499f9455fe66..f9869255f7a47e5c89ea72da46046e48
  }
  /**
  * True for NULL and INVALID_HANDLE_VALUE returns from Win32 handle APIs.
-@@ -746,7 +749,10 @@ function taskkillProcessTree(pid) {
+@@ -608,129 +611,175 @@ function privateSpillDir() {
+ * Tail-keep rationale (pi/OpenCode): errors and final results cluster at the
+ * end of command output; the spill file covers the head.
+ */
++// Capture I/O is injectable only through the existing trusted test internals.
++const CAPTURE_IO = { openSync, writeSync, closeSync, unlinkSync, accessSync, lstatSync, fstatSync };
+ var OutputCollector = class {
+-	maxBytes;
+-	maxSpillBytes;
+-	label;
+-	spillDir;
+-	chunks = [];
+-	bytes = 0;
+-	dropped = false;
+-	spillFd;
+-	spillFile;
+-	spillDisabled;
+-	/** Total bytes ever pushed (not just retained). */
+-	total = 0;
+-	constructor(maxBytes, maxSpillBytes, label, spillDir) {
+-		this.maxBytes = maxBytes;
+-		this.maxSpillBytes = maxSpillBytes;
+-		this.label = label;
+-		this.spillDir = spillDir;
+-		this.spillDisabled = maxSpillBytes === void 0;
+-	}
+-	/**
+-	* Ingest one stream chunk, counting it toward the whole-stream total. On
+-	* first overflow of the in-memory cap a spill file is opened (when spilling
+-	* is enabled) and every chunk (already-collected ones included) is appended
+-	* there from then on; the in-memory tail then drops whole chunks from its
+-	* head (or the head of a single over-cap chunk) until it fits the cap again.
+-	* @param chunk - the raw bytes from one stream 'data' event.
+-	*/
+-	push(chunk) {
+-		this.total += chunk.length;
+-		const overflows = this.bytes + chunk.length > this.maxBytes;
+-		if (!this.spillDisabled && (overflows || this.spillFd !== void 0)) this.spillAll(chunk);
+-		this.chunks.push(chunk);
+-		this.bytes += chunk.length;
+-		while (this.bytes > this.maxBytes) {
+-			const head = this.chunks[0];
+-			const excess = this.bytes - this.maxBytes;
+-			if (head.length <= excess) {
+-				this.chunks.shift();
+-				this.bytes -= head.length;
+-			} else {
+-				this.chunks[0] = head.subarray(excess);
+-				this.bytes -= excess;
+-			}
+-			this.dropped = true;
+-		}
+-	}
+-	/** Open the spill file lazily and append `chunk` (and any prior chunks once). */
+-	spillAll(chunk) {
+-		if (this.maxSpillBytes !== void 0 && this.total > this.maxSpillBytes) {
+-			this.discardSpill();
+-			return;
+-		}
+-		if (this.spillFd === void 0) {
+-			this.spillFile = join(this.spillDir, `dsh-subprocess-${process.pid}-${++spillCounter}-${randomBytes(6).toString("hex")}-${this.label}.log`);
+-			this.spillFd = openSync(this.spillFile, "wx", 384);
+-			for (const prior of this.chunks) writeSync(this.spillFd, prior);
+-		}
+-		writeSync(this.spillFd, chunk);
+-	}
+-	/** Stop spilling and remove the file once it can no longer hold the complete stream. */
+-	discardSpill() {
+-		const fd = this.spillFd;
+-		const file = this.spillFile;
+-		this.spillFd = void 0;
+-		this.spillFile = void 0;
+-		this.spillDisabled = true;
+-		if (fd !== void 0) try {
+-			closeSync(fd);
+-		} catch {
+-			this.spillFd = fd;
+-		}
+-		if (file !== void 0) try {
+-			unlinkSync(file);
+-		} catch {}
+-	}
+-	/**
+-	* Incremental read in whole-stream byte coordinates: returns everything
+-	* pushed since `fromByte`. When `fromByte` has already slid out of the
+-	* in-memory tail window, the read is `lossy` — it returns the whole
+-	* retained tail and the gap is only recoverable from the spill file.
+-	* @param fromByte - whole-stream offset to resume from (a prior read's `nextOffset`; 0 for the first read).
+-	* @returns the delta text, the offset for the next read, the `lossy` flag, and the spill path when one was created.
+-	*/
+-	readFrom(fromByte) {
+-		const windowStart = this.total - this.bytes;
+-		const buffer = Buffer.concat(this.chunks);
+-		const lossy = fromByte < windowStart;
+-		return {
+-			text: (lossy ? buffer : buffer.subarray(fromByte - windowStart)).toString("utf8"),
+-			nextOffset: this.total,
+-			lossy,
+-			...this.spillFile !== void 0 ? { spillPath: this.spillFile } : {}
+-		};
+-	}
+-	/**
+-	* Close the spill file once the stream has ended. A failed close (delayed
+-	* writeback fault) stops advertising the spill path — the file may be
+-	* missing its tail — while every in-memory read keeps working. Idempotent;
+-	* the spawn path seals both collectors at settlement so reads after exit
+-	* never point at a still-open file.
+-	*/
+-	seal() {
+-		if (this.spillFd === void 0) return;
+-		try {
+-			closeSync(this.spillFd);
+-		} catch {
+-			this.spillFile = void 0;
+-		}
+-		this.spillFd = void 0;
+-	}
+-	/**
+-	* Seal the spill file and return the final output.
+-	* @returns the final collected output: tail text, truncation flag, and the spill path when intact.
+-	*/
+-	finalize() {
+-		this.seal();
+-		return {
+-			text: Buffer.concat(this.chunks).toString("utf8"),
+-			truncated: this.dropped,
+-			...this.spillFile !== void 0 ? { spillPath: this.spillFile } : {}
+-		};
+-	}
++    maxBytes;
++    maxSpillBytes;
++    label;
++    spillDir;
++    io;
++    chunks = [];
++    bytes = 0;
++    dropped = false;
++    total = 0;
++    spillFd;
++    spillFile;
++    spillIdentity;
++    spillReference;
++    spillDisabled;
++    captureFailure;
++    captureReason;
++    incompleteReason;
++    constructor(maxBytes, maxSpillBytes, label, spillDir, io) {
++        this.maxBytes = maxBytes;
++        this.maxSpillBytes = maxSpillBytes;
++        this.label = label;
++        this.spillDir = spillDir;
++        this.spillDisabled = maxSpillBytes === void 0;
++        this.io = { ...CAPTURE_IO, ...io };
++    }
++    failure(stage, error) {
++        // Codes only: never incorporate command output or arbitrary exception text.
++        this.captureFailure ??= { stage, code: typeof error?.code === 'string' ? error.code : 'IO_ERROR' };
++    }
++    push(chunk) {
++        this.total += chunk.length;
++        const overflows = this.bytes + chunk.length > this.maxBytes;
++        if (!this.spillDisabled && (overflows || this.spillFd !== void 0)) {
++            try {
++                this.spillAll(chunk);
++            }
++            catch (error) {
++                this.failure(this.spillFd === void 0 ? 'CREATE' : 'WRITE', error);
++                this.discardSpill();
++            }
++        }
++        this.chunks.push(chunk);
++        this.bytes += chunk.length;
++        while (this.bytes > this.maxBytes) {
++            const head = this.chunks[0], excess = this.bytes - this.maxBytes;
++            if (head.length <= excess) {
++                this.chunks.shift();
++                this.bytes -= head.length;
++            }
++            else {
++                this.chunks[0] = head.subarray(excess);
++                this.bytes -= excess;
++            }
++            this.dropped = true;
++        }
++    }
++    writeAll(chunk) {
++        let offset = 0;
++        while (offset < chunk.length) {
++            const written = this.io.writeSync(this.spillFd, chunk, offset, chunk.length - offset);
++            if (!Number.isInteger(written) || written <= 0 || written > chunk.length - offset) {
++                const error = new Error('capture write made no valid progress');
++                error.code = 'EIO';
++                throw error;
++            }
++            offset += written;
++        }
++    }
++    spillAll(chunk) {
++        if (this.maxSpillBytes !== void 0 && this.total > this.maxSpillBytes) {
++            this.captureReason = 'SPILL_CAP_EXCEEDED';
++            this.discardSpill();
++            return;
++        }
++        if (this.spillFd !== void 0) {
++            const reason = this.artifactProblem(this.total - chunk.length);
++            if (reason !== void 0) {
++                this.captureReason = reason;
++                this.discardSpill();
++                return;
++            }
++        }
++        if (this.spillFd === void 0) {
++            const file = join(this.spillDir, `dsh-subprocess-${process.pid}-${++spillCounter}-${randomBytes(6).toString("hex")}-${this.label}.log`);
++            this.spillFd = this.io.openSync(file, 'wx', 384);
++            this.spillFile = file;
++            this.spillReference = file;
++            const stat = this.io.fstatSync(this.spillFd, { bigint: true });
++            this.spillIdentity = { dev: stat.dev, ino: stat.ino, mtime: stat.mtimeNs, ctime: stat.ctimeNs };
++            for (const prior of this.chunks)
++                this.writeAll(prior);
++        }
++        this.writeAll(chunk);
++        // Record the metadata after our own writes; detect subsequent file changes without rescanning bytes.
++        const stat = this.io.fstatSync(this.spillFd, { bigint: true });
++        this.spillIdentity = { dev: stat.dev, ino: stat.ino, mtime: stat.mtimeNs, ctime: stat.ctimeNs };
++    }
++    markIncomplete(reason) { this.incompleteReason = reason; }
++    discardSpill() {
++        const fd = this.spillFd, file = this.spillFile;
++        this.spillFd = void 0;
++        this.spillFile = void 0;
++        this.spillDisabled = true;
++        if (fd !== void 0)
++            try {
++                this.io.closeSync(fd);
++            }
++            catch (error) {
++                this.spillFd = fd;
++                this.failure('FINALIZE', error);
++            }
++        if (file !== void 0)
++            try {
++                this.io.unlinkSync(file);
++            }
++            catch { }
++    }
++    artifactProblem(expectedBytes) {
++        try {
++            const stat = this.io.lstatSync(this.spillFile, { bigint: true });
++            this.io.accessSync(this.spillFile, constants.R_OK);
++            if (!stat.isFile() || stat.dev !== this.spillIdentity?.dev || stat.ino !== this.spillIdentity?.ino || stat.size !== BigInt(expectedBytes) || stat.mtimeNs !== this.spillIdentity.mtime || stat.ctimeNs !== this.spillIdentity.ctime)
++                return 'ARTIFACT_CHANGED';
++        }
++        catch {
++            return 'ARTIFACT_UNAVAILABLE';
++        }
++    }
++    captureSnapshot() {
++        const problem = this.spillFile !== void 0 ? this.artifactProblem(this.total) : void 0;
++        const available = this.spillFile !== void 0 && problem === void 0, reason = problem ?? this.captureReason;
++        const retainedComplete = !this.dropped || available;
++        const complete = retainedComplete && this.incompleteReason === void 0;
++        const capturedBytes = retainedComplete ? this.total : this.bytes;
++        return { state: complete ? 'COMPLETE' : this.spillFile !== void 0 && !available ? 'UNAVAILABLE' : 'PARTIAL',
++            observedBytes: this.total, originalBytes: this.incompleteReason === void 0 ? this.total : 'UNKNOWN', capturedBytes, omittedBytes: this.incompleteReason === void 0 ? this.total - capturedBytes : 'UNKNOWN',
++            artifactAvailability: available ? 'AVAILABLE' : this.spillReference !== void 0 || this.dropped ? 'UNAVAILABLE' : 'NOT_NEEDED',
++            ...(this.spillReference !== void 0 ? { artifactReference: this.spillReference } : {}),
++            ...(this.incompleteReason !== void 0 ? { reason: this.incompleteReason } : reason !== void 0 ? { reason } : {}), ...(this.captureFailure !== void 0 ? { failure: { ...this.captureFailure } } : {}) };
++    }
++    readFrom(fromByte) {
++        const windowStart = this.total - this.bytes, buffer = Buffer.concat(this.chunks), lossy = fromByte < windowStart;
++        const capture = this.captureSnapshot();
++        return { text: (lossy ? buffer : buffer.subarray(fromByte - windowStart)).toString('utf8'), nextOffset: this.total, lossy, capture,
++            ...(capture.artifactAvailability === 'AVAILABLE' ? { spillPath: this.spillFile } : {}) };
++    }
++    seal() {
++        if (this.spillFd === void 0)
++            return;
++        try {
++            this.io.closeSync(this.spillFd);
++        }
++        catch (error) {
++            this.failure('FINALIZE', error);
++            const file = this.spillFile;
++            this.spillFile = void 0;
++            this.spillDisabled = true;
++            if (file !== void 0)
++                try {
++                    this.io.unlinkSync(file);
++                }
++                catch { }
++        }
++        this.spillFd = void 0;
++    }
++    finalize() { this.seal(); const read = this.readFrom(0); return { text: read.text, truncated: read.lossy, capture: read.capture, ...(read.spillPath !== void 0 ? { spillPath: read.spillPath } : {}) }; }
+ };
+ /**
+ * Terminate one Windows process tree with `taskkill /T /F`. Contained like
+@@ -746,7 +795,10 @@ function taskkillProcessTree(pid) {
  		String(pid),
  		"/T",
  		"/F"
@@ -26,7 +330,7 @@ index 698efc9357d249cf03adf82a9962499f9455fe66..f9869255f7a47e5c89ea72da46046e48
  }
  /**
  * Signal a detached process tree with platform-correct semantics: POSIX
-@@ -802,7 +808,8 @@ function spawnSubprocess(spec, internals = {}) {
+@@ -802,11 +854,12 @@ function spawnSubprocess(spec, internals = {}) {
  			outMode === "inherit" ? "inherit" : "pipe",
  			errMode === "inherit" ? "inherit" : "pipe"
  		],
@@ -36,3 +340,32 @@ index 698efc9357d249cf03adf82a9962499f9455fe66..f9869255f7a47e5c89ea72da46046e48
  	});
  	const collectStream = (mode, stream, label) => {
  		if (!isCollect(mode) || stream === null) return void 0;
+-		const collector = new OutputCollector(mode.maxBytes, mode.spill?.maxBytes, label, spillDir);
++		const collector = new OutputCollector(mode.maxBytes, mode.spill?.maxBytes, label, spillDir, internals.captureIo);
+ 		stream.on("data", (chunk) => {
+ 			collector.push(chunk);
+ 		});
+@@ -886,8 +939,8 @@ function spawnSubprocess(spec, internals = {}) {
+ 		const settle = (exitCode, signal) => {
+ 			if (settled) return;
+ 			settled = true;
+-			if (stdoutCollector !== void 0) child.stdout?.destroy();
+-			if (stderrCollector !== void 0) child.stderr?.destroy();
++			if (stdoutCollector !== void 0) { if (!child.stdout?.readableEnded) stdoutCollector.markIncomplete("PIPE_CLOSED_BEFORE_EOF"); child.stdout?.destroy(); }
++			if (stderrCollector !== void 0) { if (!child.stderr?.readableEnded) stderrCollector.markIncomplete("PIPE_CLOSED_BEFORE_EOF"); child.stderr?.destroy(); }
+ 			stdoutCollector?.seal();
+ 			stderrCollector?.seal();
+ 			cleanup();
+diff --git a/lib/types/spawn.d.ts b/lib/types/spawn.d.ts
+index 07f0b8b227cd20200fb234bf591440014836c3f8..23d53730341a17745324744b82ae8c457f6a26d2 100644
+--- a/lib/types/spawn.d.ts
++++ b/lib/types/spawn.d.ts
+@@ -18,6 +18,8 @@ import type { CollectedOutput, SubprocessHandle, SubprocessSpawnSpec } from '@de
+ export declare function childEnv(extra?: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv;
+ /** Injectable knobs so tests can exercise spill and platform behavior deterministically. */
+ export interface SpawnInternals {
++    /** Synthetic capture-failure injection; production defaults to the real filesystem. */
++    captureIo?: Partial<Pick<typeof import('node:fs'), 'openSync' | 'writeSync' | 'closeSync' | 'unlinkSync' | 'accessSync' | 'lstatSync' | 'fstatSync'>>;
+     /** Directory for spill files (defaults to the OS temp dir). */
+     spillDir?: string;
+     /** Windows tree-termination runner (defaults to `taskkill /PID <pid> /T /F`). */
