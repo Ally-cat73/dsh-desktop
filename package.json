@@ -71,7 +71,15 @@
     "@deepseek-ai/dsh-web-frontend@npm:^0.1.1-rc.2": "patch:@deepseek-ai/dsh-web-frontend@npm%3A0.1.1-rc.2#./.yarn/patches/@deepseek-ai-dsh-web-frontend-npm-0.1.1-rc.2-819bc7dd83.patch",
     "@deepseek-ai/dsh-subagent@npm:0.1.1-rc.2": "patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch",
     "@deepseek-ai/dsh-subagent@npm:^0.1.1-rc.2": "patch:@deepseek-ai/dsh-subagent@npm%3A0.1.1-rc.2#~/.yarn/patches/@deepseek-ai-dsh-subagent-npm-0.1.1-rc.2-eecd7caf2c.patch",
-    "@earendil-works/pi-ai@npm:^0.82.1": "patch:@earendil-works/pi-ai@npm%3A0.82.1#./patches/earendil-works-pi-ai@0.82.1.patch"
+    "@earendil-works/pi-ai@npm:^0.82.1": "patch:@earendil-works/pi-ai@npm%3A0.82.1#./patches/earendil-works-pi-ai@0.82.1.patch",
+    "@deepseek-ai/dsh-subprocess@npm:0.1.1-rc.2": "patch:@deepseek-ai/dsh-subprocess@npm%3A0.1.1-rc.2#./patches/dsh-subprocess@0.1.1-rc.2.patch",
+    "@deepseek-ai/dsh-subprocess@npm:^0.1.1-rc.2": "patch:@deepseek-ai/dsh-subprocess@npm%3A0.1.1-rc.2#./patches/dsh-subprocess@0.1.1-rc.2.patch",
+    "@deepseek-ai/dsh-bash-local@npm:0.1.1-rc.2": "patch:@deepseek-ai/dsh-bash-local@npm%3A0.1.1-rc.2#./patches/dsh-bash-local@0.1.1-rc.2.patch",
+    "@deepseek-ai/dsh-bash-local@npm:^0.1.1-rc.2": "patch:@deepseek-ai/dsh-bash-local@npm%3A0.1.1-rc.2#./patches/dsh-bash-local@0.1.1-rc.2.patch",
+    "@deepseek-ai/dsh-shell@npm:0.1.1-rc.2": "patch:@deepseek-ai/dsh-shell@npm%3A0.1.1-rc.2#./patches/dsh-shell@0.1.1-rc.2.patch",
+    "@deepseek-ai/dsh-shell@npm:^0.1.1-rc.2": "patch:@deepseek-ai/dsh-shell@npm%3A0.1.1-rc.2#./patches/dsh-shell@0.1.1-rc.2.patch",
+    "@deepseek-ai/dsh-tool-bash@npm:0.1.1-rc.2": "patch:@deepseek-ai/dsh-tool-bash@npm%3A0.1.1-rc.2#./patches/dsh-tool-bash@0.1.1-rc.2.patch",
+    "@deepseek-ai/dsh-tool-bash@npm:^0.1.1-rc.2": "patch:@deepseek-ai/dsh-tool-bash@npm%3A0.1.1-rc.2#./patches/dsh-tool-bash@0.1.1-rc.2.patch"
   },
   "dependenciesMeta": {
     "@deepseek-ai/dsh-subprocess-local": {

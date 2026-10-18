@@ -1,0 +1,14 @@
+diff --git a/lib/types/types.d.ts b/lib/types/types.d.ts
+index 1bb8da6afcf8cb29036b2725ef028997c67fb0dc..181401dd690aeed1d5988b368500b73c801d9828 100644
+--- a/lib/types/types.d.ts
++++ b/lib/types/types.d.ts
+@@ -134,6 +134,9 @@ export interface ShellRunResult {
+ export type ShellProcessStatus = 'running' | 'completed' | 'killed';
+ /** One incremental {@link ShellProcess.readOutput} read. */
+ export interface ShellProcessRead {
++    /** Stream recovery facts, independent from this read cursor and execution status. */
++    stdoutRecovery?: string;
++    stderrRecovery?: string;
+     /** Output produced since the previous read (stderr in a marked section). */
+     delta: string;
+     /** True when truncation dropped unread bytes the delta cannot include. */

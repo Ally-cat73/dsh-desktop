@@ -1,0 +1,138 @@
+diff --git a/lib/index.js b/lib/index.js
+index e597cadca437f5326c687f976903dd9fec16dc37..eaf9fa61848b13daf0c3e4007b8a311855921ffa 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -35,10 +35,13 @@ function processOutcome(proc) {
+ *
+ * @module @deepseek-ai/dsh-tool-bash/render
+ */
+-/** Append the truncation notice (with the full-output spill path) to a stream's text. */
++/** Append concise recovery facts to an inline-truncated stream. */
+ function streamText(output) {
+-	if (!output.truncated) return output.text;
+-	return `${output.text}\n[output truncated; full output: ${output.spillPath ?? "(unavailable)"}]`;
++    if (!output.truncated && !output.recovery?.startsWith('capture PARTIAL') && !output.recovery?.startsWith('capture UNAVAILABLE'))
++        return output.text;
++    const facts = output.recovery ?? 'capture completeness UNKNOWN; omitted amount UNKNOWN';
++    const artifact = output.spillPath !== void 0 ? `; artifact reference (temporary): ${output.spillPath}` : '';
++    return `${output.text}\n[${output.truncated ? 'inline truncated; ' : ''}${facts}${artifact}]`;
+ }
+ /**
+ * Shape one finished run into the text the model sees: stdout, then a marked
+@@ -83,18 +86,27 @@ function renderResult(result, escalationModes = []) {
+ * @returns the delta text with any loss or sandbox notice appended.
+ */
+ function renderProcessRead(read, sandbox, escalationModes = []) {
+-	const notices = [];
+-	if (read.lossy) {
+-		const paths = [read.stdoutSpillPath, read.stderrSpillPath].filter((path) => path !== void 0);
+-		notices.push(`[some output was dropped from memory; full output: ${paths.length > 0 ? paths.join(", ") : "(unavailable)"}]`);
+-	}
+-	if (sandbox?.runnerFailed) notices.push(`[sandbox: the sandbox runner itself failed under ${sandbox.mode} mode — the command did not run; this is a sandbox problem, not a command failure]`);
+-	else if (sandbox?.denied) {
+-		notices.push(sandboxDenialMarker(sandbox.mode));
+-		if (escalationModes.length > 0) notices.push(escalationHintMarker("command"));
+-	}
+-	if (notices.length === 0) return read.delta;
+-	return `${read.delta}${read.delta.length > 0 && !read.delta.endsWith("\n") ? "\n" : ""}${notices.join("\n")}`;
++    const notices = [];
++    if (read.stdoutRecovery !== void 0 || read.stderrRecovery !== void 0) {
++        if (read.stdoutRecovery !== void 0)
++            notices.push(`[stdout ${read.stdoutRecovery}${read.stdoutSpillPath !== void 0 ? `; artifact reference (temporary): ${read.stdoutSpillPath}` : ''}]`);
++        if (read.stderrRecovery !== void 0)
++            notices.push(`[stderr ${read.stderrRecovery}${read.stderrSpillPath !== void 0 ? `; artifact reference (temporary): ${read.stderrSpillPath}` : ''}]`);
++    }
++    else if (read.lossy) {
++        const paths = [read.stdoutSpillPath, read.stderrSpillPath].filter(path => path !== void 0);
++        notices.push(`[capture completeness UNKNOWN; omitted amount UNKNOWN${paths.length ? `; artifact reference (temporary, availability unverified): ${paths.join(', ')}` : '; artifact UNAVAILABLE'}]`);
++    }
++    if (sandbox?.runnerFailed)
++        notices.push(`[sandbox: the sandbox runner itself failed under ${sandbox.mode} mode — the command did not run; this is a sandbox problem, not a command failure]`);
++    else if (sandbox?.denied) {
++        notices.push(sandboxDenialMarker(sandbox.mode));
++        if (escalationModes.length > 0)
++            notices.push(escalationHintMarker("command"));
++    }
++    if (notices.length === 0)
++        return read.delta;
++    return `${read.delta}${read.delta.length > 0 && !read.delta.endsWith("\n") ? "\n" : ""}${notices.join("\n")}`;
+ }
+ //#endregion
+ //#region lib/types/index.js
+@@ -124,7 +136,7 @@ function validateBashArgs(args) {
+ }
+ function bashDescription(backgroundEnabled, escalationModes) {
+ 	const background = backgroundEnabled ? "Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`." : "Background execution is not available; long-running commands must finish within the timeout.";
+-	const base = `Execute a bash command (\`bash -c\`) and return its stdout/stderr. Each call runs in a fresh shell: no state (cwd, variables, functions) persists between calls — pass \`workdir\` instead of using \`cd\`. Non-zero exits are reported as \`[exit code: N]\`. Current harness environment facts are exposed through managed \`$${DSH_ENV_PREFIX}*\` variables; inspect them when needed. Commands may run under a file sandbox; a blocked file operation is reported as \`[sandbox: file access denied under <mode> mode]\` — a policy denial, not a bug in the command; do not retry another way. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. ` + background;
++	const base = `Execute a bash command (\`bash -c\`) and return its stdout/stderr. Each call runs in a fresh shell: no state (cwd, variables, functions) persists between calls — pass \`workdir\` instead of using \`cd\`. Non-zero exits are reported as \`[exit code: N]\`. Current harness environment facts are exposed through managed \`$${DSH_ENV_PREFIX}*\` variables; inspect them when needed. Commands may run under a file sandbox; a blocked file operation is reported as \`[sandbox: file access denied under <mode> mode]\` — a policy denial, not a bug in the command; do not retry another way. Long output keeps a bounded tail. Recovery notices distinguish complete, partial or unavailable capture; temporary artifact references do not guarantee retention. ` + background;
+ 	if (escalationModes.length === 0) return base;
+ 	return base + " Attempting a command the sandbox may deny is safe and expected: run it and read the marker rather than assuming the denial. When a command is denied and a wider mode would let it succeed, escalate immediately in the same turn — the one sanctioned exception to a denial: retry the exact same command once with `sandbox_permissions` (the narrowest wider mode that suffices) plus a one-sentence `justification`. Do not detour through chat to ask permission first — the approval prompt raised by that retry is how the user consents. If the session states approval prompts are disabled, there is no exception: a denial is final — do not set `sandbox_permissions`. Never escalate speculatively: ground the request in a real denial — normally the one this command just hit; escalating up front is fine only when this session already denied the same access. A rejected escalation is final for that command — stop and explain, never work around it — but it does not forbid attempting or escalating other commands later.";
+ }
+@@ -183,26 +195,27 @@ function resolveWorkdir(modelWorkdir, exec, policyWorkspaceRoot) {
+ }
+ /** Detach the executor DTO from readonly Service Definition types into plain JSON data. */
+ function canonicalBashResult(result) {
+-	const output = (stream) => ({
+-		text: stream.text,
+-		truncated: stream.truncated,
+-		...stream.spillPath !== void 0 ? { spillPath: stream.spillPath } : {}
+-	});
+-	return {
+-		exitCode: result.exitCode,
+-		signal: result.signal,
+-		timedOut: result.timedOut,
+-		aborted: result.aborted,
+-		timeoutMs: result.timeoutMs,
+-		stdout: output(result.stdout),
+-		stderr: output(result.stderr),
+-		...result.sandbox !== void 0 ? { sandbox: {
+-			mode: result.sandbox.mode,
+-			denied: result.sandbox.denied,
+-			...result.sandbox.enforcement !== void 0 ? { enforcement: result.sandbox.enforcement } : {},
+-			...result.sandbox.runnerFailed !== void 0 ? { runnerFailed: result.sandbox.runnerFailed } : {}
+-		} } : {}
+-	};
++    const output = (stream) => ({
++        text: stream.text,
++        truncated: stream.truncated,
++        ...(stream.recovery !== void 0 ? { recovery: stream.recovery } : {}),
++        ...stream.spillPath !== void 0 ? { spillPath: stream.spillPath } : {}
++    });
++    return {
++        exitCode: result.exitCode,
++        signal: result.signal,
++        timedOut: result.timedOut,
++        aborted: result.aborted,
++        timeoutMs: result.timeoutMs,
++        stdout: output(result.stdout),
++        stderr: output(result.stderr),
++        ...result.sandbox !== void 0 ? { sandbox: {
++                mode: result.sandbox.mode,
++                denied: result.sandbox.denied,
++                ...result.sandbox.enforcement !== void 0 ? { enforcement: result.sandbox.enforcement } : {},
++                ...result.sandbox.runnerFailed !== void 0 ? { runnerFailed: result.sandbox.runnerFailed } : {}
++            } } : {}
++    };
+ }
+ /** Canonical background-handle properties shared by the bash output union. */
+ const BACKGROUND_OUTPUT_PROPERTIES = {
+@@ -341,7 +354,8 @@ function apply(ctx, config = {}) {
+ 								type: "boolean",
+ 								required: true
+ 							},
+-							spillPath: { type: "string" }
++							spillPath: { type: "string" },
++                            recovery: { type: "string" }
+ 						}
+ 					},
+ 					stderr: {
+@@ -357,7 +371,8 @@ function apply(ctx, config = {}) {
+ 								type: "boolean",
+ 								required: true
+ 							},
+-							spillPath: { type: "string" }
++							spillPath: { type: "string" },
++                            recovery: { type: "string" }
+ 						}
+ 					},
+ 					sandbox: {
