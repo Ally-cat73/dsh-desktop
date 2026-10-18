@@ -16,7 +16,7 @@
  *     and the JSON the model receives deep-equals
  *     `compileAgentInstitutionalContext` over the same store and navigator.
  * (2) A REVIEWER-configured agent gets ROLE_NOT_PERMITTED for role
- *     IMPLEMENTER and REVIEWER_USE_INSTITUTIONAL_CONTEXT from find_evidence.
+ *     IMPLEMENTER and no legacy find_evidence exposure.
  * (3) PASS_B is refused without frozen Pass A findings.
  * (4) The tool performs no store write: per-file sha256 is identical before
  *     and after the call. The session the join opens is measured separately.
@@ -36,7 +36,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { CallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -364,7 +364,7 @@ describe('CD-12 an unrecorded authority class is never printed', () => {
 })
 
 describe('(2)+(3) a REVIEWER-configured agent cannot widen its own input', () => {
-  it('ROLE_NOT_PERMITTED for IMPLEMENTER, REVIEWER_USE_INSTITUTIONAL_CONTEXT from find_evidence, PASS_B refused without frozen findings', async () => {
+  it('ROLE_NOT_PERMITTED for IMPLEMENTER, no legacy find_evidence exposure, PASS_B refused without frozen findings', async () => {
     const { ids, storeDir } = freshFixture()
     const service = serviceFor(storeDir, { name: 'Fixture Reviewer', role: 'REVIEWER', delegationId: 'delegation-fixture-reviewer' })
     const candidate = {
@@ -394,7 +394,7 @@ describe('(2)+(3) a REVIEWER-configured agent cannot widen its own input', () =>
 
     const legacy = toolResult(adapter.requests, 'r3')
     expect(legacy.isError).toBe(true)
-    expect(legacy.text).toContain('REVIEWER_USE_INSTITUTIONAL_CONTEXT')
+    expect(legacy.text).toContain('unknown tool')
     expect(legacy.text).not.toContain('nodeId')
 
     const passB = toolResult(adapter.requests, 'r4')
@@ -511,4 +511,114 @@ describe('(5) a fresh REVIEWER Pass A call needs only role, repository, candidat
       for (const marker of IMPLEMENTER_MARKERS) expect(written).not.toContain(marker)
     }
   }, 60_000)
+})
+
+/** C6 measures the real model request, including schemas, rather than plugin counts. */
+describe('C6 configured-role request surface', () => {
+  for (const role of ['ORCHESTRATOR', 'IMPLEMENTER', 'REVIEWER', 'NAVIGATOR', 'ARCHITECT', 'RESEARCHER', 'INCIDENT_RESPONDER']) {
+    it(`captures the ${role} collaboration surface at the model seam`, async () => {
+      const { storeDir } = freshFixture()
+      const service = serviceFor(storeDir, { name: `Fixture ${role}`, role, delegationId: `delegation-fixture-${role.toLowerCase()}` })
+      const adapter = new ScriptedTestModelDouble([textTurn('TEST DOUBLE: role census complete.')])
+      const ctx = await runtimeFor(service, adapter)
+      try {
+        const agent = ctx.agentLoop.create(SessionId(`c6-${role.toLowerCase()}`), { provider: 'scripted-test', model: 'TEST-scripted-double' })
+        agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Identify the available collaboration surface.' }], source: { kind: 'user' } }))
+        await agent.whenIdle()
+        expect(adapter.requests).toHaveLength(1)
+        const request = adapter.requests[0]
+        if (!request) throw new Error('C6 fixture produced no model request')
+        const tools = request.tools ?? []
+        expect(tools.some(tool => tool.name === 'aera_collab_institutional_context')).toBe(true)
+        expect(tools.map(tool => tool.name).sort()).toEqual([
+          'aera_collab_resolve_work_context', 'aera_collab_governing_decisions',
+          'aera_collab_institutional_context', 'aera_collab_working_state',
+          'aera_collab_record', 'aera_collab_repository_resource',
+          ...(role === 'REVIEWER' ? [] : ['aera_collab_find_evidence']),
+        ].sort())
+        expect(tools.some(tool => tool.name === 'aera_collab_find_evidence')).toBe(role !== 'REVIEWER')
+        const out = process.env['AERA_C6_CENSUS_OUT']
+        if (out) {
+          mkdirSync(out, { recursive: true })
+          writeFileSync(join(out, `${role}.json`), `${JSON.stringify({
+            role, composition: 'real Cordis runtime plus desktop collaboration tools; scripted model only; no standard preset plugins',
+            tools, toolCount: tools.length, schemaBytes: Buffer.byteLength(JSON.stringify(tools)),
+            system: request.system ?? '', systemBytes: Buffer.byteLength(request.system ?? ''),
+            institutionalSnapshot: snapshotText(request) ?? '',
+          }, null, 2)}\n`)
+        }
+      } finally { await ctx.fiber.dispose() }
+    }, 60_000)
+  }
+})
+
+
+describe('C6 retained institutional snapshots', () => {
+  const snapshots = (request: GenerateOptions): readonly LooseMessage[] =>
+    (request.messages as unknown as readonly LooseMessage[]).filter(message =>
+      message.source?.kind === 'plugin' && message.source.plugin === SNAPSHOT_SOURCE_PLUGIN && message.source.form === 'snapshot')
+  const follow = async (agent: ReturnType<Context['agentLoop']['create']>, text: string): Promise<void> => {
+    agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+  }
+
+  it('recomputes every owner turn but retains one unchanged snapshot, independently for each native session', async () => {
+    const { storeDir } = freshFixture()
+    const service = serviceFor(storeDir, { name: 'C6 retention', role: 'IMPLEMENTER', delegationId: 'c6-retention' })
+    const orientation = vi.spyOn(service, 'agentOrientationContext')
+    const adapter = new ScriptedTestModelDouble(Array.from({ length: 10 }, () => textTurn('fixture completion')))
+    const ctx = await runtimeFor(service, adapter)
+    try {
+      const agent = ctx.agentLoop.create(SessionId('c6-retention-one'), { provider: 'scripted-test', model: 'TEST' })
+      for (let i = 0; i < 8; i++) await follow(agent, 'Continue the same bounded task.')
+      expect(orientation).toHaveBeenCalledTimes(8)
+      for (const request of adapter.requests) expect(snapshots(request)).toHaveLength(1)
+      const second = ctx.agentLoop.create(SessionId('c6-retention-two'), { provider: 'scripted-test', model: 'TEST' })
+      await follow(second, 'Start this independent task.')
+      expect(snapshots(adapter.requests[8]!)).toHaveLength(1)
+      expect(orientation).toHaveBeenCalledTimes(9)
+    } finally { orientation.mockRestore(); await ctx.fiber.dispose() }
+  })
+
+  it('delivers changed context and a return to an older value; compares only the latest retained snapshot', async () => {
+    const { storeDir } = freshFixture()
+    const service = serviceFor(storeDir, { name: 'C6 changed', role: 'IMPLEMENTER', delegationId: 'c6-changed' })
+    const original = await service.agentOrientationContext()
+    const orientation = vi.spyOn(service, 'agentOrientationContext')
+      .mockResolvedValueOnce(original).mockResolvedValueOnce(original)
+      .mockResolvedValueOnce(`${original}\nA newly recorded authority constraint.`).mockResolvedValueOnce(original)
+    const adapter = new ScriptedTestModelDouble(Array.from({ length: 4 }, () => textTurn('fixture completion')))
+    const ctx = await runtimeFor(service, adapter)
+    try {
+      const agent = ctx.agentLoop.create(SessionId('c6-changed'), { provider: 'scripted-test', model: 'TEST' })
+      for (let i = 0; i < 4; i++) await follow(agent, 'Refresh the institutional context.')
+      expect(adapter.requests.map(request => snapshots(request).length)).toEqual([1, 1, 2, 3])
+      expect(snapshotText(adapter.requests[2])).toContain('newly recorded authority constraint')
+      expect(snapshotText(adapter.requests[3])).toBe(original)
+    } finally { orientation.mockRestore(); await ctx.fiber.dispose() }
+  })
+
+  it('reinjects missing context after a real session surface replacement; old raw log entries do not suppress it', async () => {
+    const { storeDir } = freshFixture()
+    const service = serviceFor(storeDir, { name: 'C6 compacted', role: 'IMPLEMENTER', delegationId: 'c6-compacted' })
+    const adapter = new ScriptedTestModelDouble([textTurn('first'), textTurn('second')])
+    const ctx = await runtimeFor(service, adapter)
+    try {
+      const agent = ctx.agentLoop.create(SessionId('c6-compacted'), { provider: 'scripted-test', model: 'TEST' })
+      await follow(agent, 'Inspect the fixture.')
+      const snapshot = agent.session.events.find(event => event.type === 'user/message'
+        && event.data.source.kind === 'plugin' && event.data.source.plugin === SNAPSHOT_SOURCE_PLUGIN)
+      if (!snapshot) throw new Error('Missing original snapshot event')
+      agent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Fixture compaction summary; snapshot not retained.' }],
+        source: { kind: 'plugin', plugin: 'c6-fixture-compactor' },
+      }), { surfaceOp: { op: 'replace', start: snapshot.seq, end: snapshot.seq }, sourceEventSeqs: [snapshot.seq] })
+      expect(agent.session.deriveMessages().some(message => message.source.kind === 'plugin' && message.source.plugin === SNAPSHOT_SOURCE_PLUGIN)).toBe(false)
+      await follow(agent, 'Continue after compaction.')
+      expect(snapshots(adapter.requests[1]!)).toHaveLength(1)
+      expect(snapshotText(adapter.requests[1])).toBe(snapshotText(adapter.requests[0]))
+      expect(agent.session.events.filter(event => event.type === 'user/message'
+        && event.data.source.kind === 'plugin' && event.data.source.plugin === SNAPSHOT_SOURCE_PLUGIN)).toHaveLength(2)
+    } finally { await ctx.fiber.dispose() }
+  })
 })
