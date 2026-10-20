@@ -1,4 +1,4 @@
-> **CANONICAL AERA CODE DSH:** See `CANONICAL_AERA_CODE_DSH.md`. This repository is the ONLY current Aera Code product (productFamily AERA_CODE_DSH, status CANONICAL_ACTIVE). Legacy AERA IDE / pre-DSH Aera Code sources in aera-stack must never be substituted.
+> **LEGACY — AERA_CODE_DSH SUPERSEDED:** See `CANONICAL_AERA_CODE_DSH.md`. This repository is no longer current Aera Code (status LEGACY_DO_NOT_USE). The canonical product is AERA_CODE_T3 (Ally-cat73/Aera-Code-T3). Do not build, package, install or dogfood this repository as Aera Code.
 
 # DSH Desktop repository rules
 

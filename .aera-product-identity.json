@@ -1,9 +1,9 @@
 {
   "schema": "aera.product-identity.v1",
   "productFamily": "AERA_CODE_DSH",
-  "status": "CANONICAL_ACTIVE",
-  "currentUse": "AERA_CODE",
-  "dogfoodEligible": true,
+  "status": "LEGACY_DO_NOT_USE",
+  "currentUse": "NONE",
+  "dogfoodEligible": false,
   "displayName": "Aera Code",
   "displayNameIsNotIdentity": true,
   "sourceRepository": "https://github.com/Ally-cat73/dsh-desktop.git",
@@ -17,6 +17,12 @@
     "lib/aera-gateway-agc-binding.js"
   ],
   "registry": "Aera_Studios_Docs/central-authority/wo-aera-code-product-identity-hygiene-001/AERA_CODE_PRODUCT_VARIANTS_REGISTRY.json",
-  "labelledOn": "2026-09-11",
-  "labelledUnder": "OWNER_EXECUTION_ORDER_AERA_CODE_PRODUCT_IDENTITY_HYGIENE"
+  "labelledOn": "2026-10-20",
+  "labelledUnder": "WO-AERA-CODE-T3-GOVERNED-NATIVE-PROVIDER-CONTINUATION-001 (owner decision: AERA CODE PRODUCT IDENTITY; supersedes 2026-09-11 CANONICAL_ACTIVE label)",
+  "canonicalCurrentProduct": {
+    "productFamily": "AERA_CODE_T3",
+    "sourceRepository": "https://github.com/Ally-cat73/Aera-Code-T3.git",
+    "buildTarget": "apps/desktop (scripts/build-desktop-artifact.ts)",
+    "bundleId": "com.t3tools.t3code"
+  }
 }
